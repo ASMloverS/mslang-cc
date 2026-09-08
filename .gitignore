@@ -1,0 +1,8 @@
+# Build artifacts (must stay in build/ per AGENTS.md)
+build/
+
+# Editor and OS noise
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
