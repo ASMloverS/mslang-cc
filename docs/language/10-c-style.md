@@ -11,12 +11,14 @@
 ```c
 #ifndef MSLANG_SRC_MS_LEXER_H_
 #define MSLANG_SRC_MS_LEXER_H_
-/* ... */
-#endif  /* MSLANG_SRC_MS_LEXER_H_ */
+// ...
+#endif  // MSLANG_SRC_MS_LEXER_H_
 ```
 
 - guard 宏 = 项目名 + 相对路径大写蛇形。
 - include 顺序（组间空行）：对应头文件 → C 系统头 → 项目内头文件。组内按字母序。
+- 头文件必须自包含：可独立编译，自行 `#include` 其全部依赖，不依赖包含者的包含顺序。
+- include 路径形式：公开 API 用尖括号 `<mslang/mslang.h>`；项目内部用引号 + `src/` 根相对路径（如 `"lexer/ms_lexer.h"`），由 CMake 将 `src/` 加入 include path。
 - 头文件中只做声明；公开头文件（`include/mslang/`）仅前向声明不透明类型，结构体定义放 `src/` 内部头文件。
 
 ## 2. 格式化
@@ -41,13 +43,19 @@ while (msLexerPeek(lexer) != '\0') {
 
 - 单语句块也必须带大括号。
 - 指针星号靠左：`MsObject *obj`（Google 允许两种，本项目固定靠左）。
-- `switch` 每个 `case` 要么以 `break`/`return` 结尾，要么标注 `/* fallthrough */`。
+- `switch` 每个 `case` 要么以 `break`/`return` 结尾，要么标注 `// fallthrough`。
 - 二元运算符换行时运算符在行首（Java 风格）：
 
 ```c
 bool ok = msTypeOf(obj) == MS_TYPE_INT
     && msAsInt(state, obj) > 0;
 ```
+
+- 函数声明/定义换行：返回类型与函数名同行；参数一行放不下时每行一个参数、缩进 4 空格。
+- 行宽例外：不可拆分的长字符串字面量（如 URL）可超过 80 列。
+- `switch` 必须含 `default` 分支；确实无默认处理时在 `default` 内注释说明。
+- 允许循环内声明：`for (size_t i = 0; i < n; ++i)`。
+- 变量声明靠近首次使用处，声明即初始化；聚合初始化用指定初始化器（如 `MsConfig config = {.gcThreshold = 1024};`）。
 
 ## 3. 命名（Java 规范 → C 映射）
 
@@ -62,10 +70,15 @@ bool ok = msTypeOf(obj) == MS_TYPE_INT
 | 枚举类型 | `Ms` + UpperCamelCase | `MsResult` |
 | 枚举值 | `MS_` + UPPER_SNAKE | `MS_ERROR_SYNTAX` |
 | 宏 | `MS_` + UPPER_SNAKE | `MS_ARRAY_LEN(x)` |
+| 文件级 static 变量、全局变量 | lowerCamelCase | `lexerKeywordTable` |
 | 文件内 static 函数 | 同函数规则 | `static bool matchKeyword(...)` |
 | 测试函数 | `test` + UpperCamelCase 主题 | `testLexerSkipsComments` |
 
 模块内聚命名：同一模块的函数共享语义前缀，如 lexer 模块 `msLexerInit/msLexerNext/msLexerPeek`。
+
+- 模块前缀规则：操作某类型的函数以该类型名作为前缀（`msLexerInit`/`msLexerPeek`）；动词性全局操作除外（`msNewState`、`msEvalFile`）。
+- 枚举值命名维持短名现状（`MS_OK` 等），但取值须全局唯一，避免过于通用的词。
+- 文件内 static 函数不使用 `_impl` 蛇形后缀（09-c-api.md 旧示例作废），统一 lowerCamelCase；需要区分导出函数与内部实现时用 `Impl` 驼峰后缀。
 
 ## 4. C 语言特性使用规则
 
@@ -73,12 +86,17 @@ bool ok = msTypeOf(obj) == MS_TYPE_INT
 - 允许：定长数组、`restrict`、`_Static_assert`、匿名 union/struct（内部）。
 - 禁止：VLA（变长数组）、`alloca`、递归宏、K&R 函数定义、`gets` 类危险函数。
 - 整数：对外接口用定宽类型（`int64_t`、`size_t`）；循环下标可用 `int`。
-- 不定义 `bool` 之外的单字母缩写类型别名；`typedef` 仅用于不透明类型与枚举，结构体一律 `struct MsLexer`（Google 风格：类型名即结构体名，不加 `_t` 后缀）。
+- 禁止自定义整型缩写别名（`u8`、`i32` 等），统一使用 `<stdint.h>`/`<stddef.h>` 的定宽类型。
+- `typedef`：公开 API 中的纯数据配置结构体允许 `typedef`（`MsMethodDef`、`MsModuleDef`、`MsTypeDef`、`MsConfig`）；其余 typedef 仅限不透明类型与枚举。内部结构体一律 `struct MsLexer`（类型名即结构体名，不加 `_t` 后缀）。
+- 布尔用 `<stdbool.h>` 的 `bool`/`true`/`false`；空指针用 `NULL`，不用 `0`。
+- 优先 `static inline` 函数；函数式宏仅限编译期求值等函数无法替代的场景（如 `MS_ARRAY_LEN`）。
+- const 正确性：不修改的指针参数必须声明为 `const`。
+- 禁止非 const 可变全局变量；必要的状态挂到 `MsState`。
 
 ## 5. 错误处理与资源管理
 
 - 无 setjmp 异常：内部函数用 `MsResult` 或 `NULL` + 状态错误位报告失败。
-- 资源获取即初始化（C 版）：函数内申请的资源在函数内释放，单一出口模式：
+- 资源获取即初始化（C 版）：函数内申请的资源在函数内释放。失败路径采用早返回，资源按获取的逆序释放；输出参数（如 `MsProto **out`）置于参数列表末尾：
 
 ```c
 MsResult msCompileFile(MsState *L, const char *path, MsProto **out) {
@@ -106,12 +124,12 @@ MsResult msCompileFile(MsState *L, const char *path, MsProto **out) {
 - 公开 API（`include/mslang/`）每个函数必须有文档注释：功能、参数语义、返回值、错误行为、根纪律要求。
 - 注释用英文（代码国际化惯例），设计文档用中文。
 - 注释说明"为什么"，不复述代码；非显然的算法附参考（如标记-清除的伪代码出处）。
+- C 代码注释仅允许 `//`（含文档注释，每行以 `// ` 开头）；不使用 `/* */`。
+- TODO 格式：`// TODO(owner): 说明`。
 
 ```c
-/*
- * Pushes obj onto the GC root stack so it survives allocation-triggered
- * collections. Must be paired with msRootPop in LIFO order.
- */
+// Pushes obj onto the GC root stack so it survives allocation-triggered
+// collections. Must be paired with msRootPop in LIFO order.
 void msRootPush(MsState *L, MsObject *obj);
 ```
 
