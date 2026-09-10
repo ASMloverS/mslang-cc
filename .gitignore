@@ -1,8 +1,49 @@
 # Build artifacts (must stay in build/ per AGENTS.md)
 build/
 
-# Editor and OS noise
+# Compiled output
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.pdb
+*.ilk
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# JavaScript
+node_modules/
+dist/
+
+# Editors and IDEs
 *.swp
 *.swo
+*~
+.vscode/
+.idea/
+
+# OS noise
 Thumbs.db
 Desktop.ini
+.DS_Store
+
+# Caches and temp
+.cache/
+tmp/
+temp/
+*.log
