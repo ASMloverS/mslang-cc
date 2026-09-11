@@ -28,60 +28,64 @@
 
 ```c
 struct MsProto {
-    MsObjectHeader header;
-    uint32_t     *code;         // 指令流
-    MsObject    **consts;       // 常量池（数字、字符串、子 Proto）
-    int           codeLen, constsLen;
-    int           paramCount;   // 参数个数
-    int           localCount;   // 寄存器窗口大小（局部变量槽位数）
-    int           stackSize;    // 求值栈最大深度（编译期算出）
-    MsTryBlock   *tryBlocks;    // 异常表：{pcStart, pcEnd, handlerPc, finallyPc}
-    MsLineEntry  *lines;        // pc → 行号映射
-    MsString     *name;
-    MsString     *sourceFile;
-    bool          isAsync;
-    bool          hasVarArgs, hasKwArgs;
+  MsObjectHeader header;
+  uint32_t      *code;        // instruction stream
+  MsObject     **consts;      // constant pool: numbers, strings, child protos
+  int            codeLen;
+  int            constsLen;
+  int            paramCount;  // parameter count
+  int            localCount;  // register window size (local variable slots)
+  int            stackSize;   // max eval stack depth (set at compile time)
+  MsTryBlock    *tryBlocks;   // exception table
+  MsLineEntry   *lines;       // pc -> line number map
+  MsString      *name;
+  MsString      *sourceFile;
+  bool           isAsync;
+  bool           hasVarArgs;
+  bool           hasKwArgs;
 };
 ```
+
+- `tryBlocks` 为异常表，元素布局 `{pcStart, pcEnd, handlerPc, finallyPc}`。
 
 ### 2.2 指令集（按类别，代表性列举）
 
 | 类别 | 指令 |
 |---|---|
-| 常量/移动 | `OP_LOAD_CONST` `OP_LOAD_NIL` `OP_LOAD_TRUE` `OP_LOAD_FALSE` `OP_MOVE` |
-| 局部/闭包 | `OP_LOAD_LOCAL` `OP_STORE_LOCAL` `OP_LOAD_UPVAL` `OP_STORE_UPVAL` `OP_CLOSE_UPVALS` |
-| 全局/模块 | `OP_LOAD_GLOBAL` `OP_STORE_GLOBAL` `OP_IMPORT` `OP_IMPORT_FROM` |
-| 算术 | `OP_ADD` `OP_SUB` `OP_MUL` `OP_DIV` `OP_FLOORDIV` `OP_MOD` `OP_POW` `OP_NEG` `OP_NOT` `OP_BITAND/OR/XOR/SHL/SHR/INVERT` |
-| 比较 | `OP_EQ` `OP_NE` `OP_LT` `OP_LE` `OP_GT` `OP_GE` `OP_IS` `OP_IN` `OP_CMP_CHAIN` |
-| 跳转 | `OP_JUMP` `OP_JUMP_IF_FALSE` `OP_JUMP_IF_TRUE` `OP_JUMP_IF_NIL` |
-| 容器 | `OP_BUILD_LIST` `OP_BUILD_TUPLE` `OP_BUILD_DICT` `OP_BUILD_SET` `OP_INDEX` `OP_SET_INDEX` `OP_DEL_INDEX` `OP_SLICE` `OP_APPEND` |
-| 调用 | `OP_CALL` `OP_CALL_KW` `OP_TAIL_CALL` `OP_RETURN` `OP_LOAD_METHOD` `OP_CALL_METHOD` |
-| 函数/类 | `OP_MAKE_FUNCTION` `OP_MAKE_CLASS` `OP_MAKE_LAMBDA` |
-| 属性 | `OP_GET_ATTR` `OP_SET_ATTR` `OP_DEL_ATTR` |
-| 迭代 | `OP_GET_ITER` `OP_ITER_NEXT`（失败时跳转，避免 StopIteration 异常开销） `OP_UNPACK` |
-| 异常 | `OP_SETUP_TRY` `OP_POP_TRY` `OP_RAISE` `OP_RERAISE` |
-| 并发 | `OP_SPAWN`（async 调用） `OP_AWAIT` `OP_CHAN_NEW` `OP_CHAN_SEND` `OP_CHAN_RECV` `OP_CHAN_TRY_RECV` `OP_SELECT_BEGIN/ADD_RECV/ADD_SEND/EXEC` |
-| 其他 | `OP_PRINT_EXPR`（REPL 用） `OP_NOP` |
+| 常量/移动 | `MS_OP_LOAD_CONST` `MS_OP_LOAD_NIL` `MS_OP_LOAD_TRUE` `MS_OP_LOAD_FALSE` `MS_OP_MOVE` |
+| 局部/闭包 | `MS_OP_LOAD_LOCAL` `MS_OP_STORE_LOCAL` `MS_OP_LOAD_UPVAL` `MS_OP_STORE_UPVAL` `MS_OP_CLOSE_UPVALS` |
+| 全局/模块 | `MS_OP_LOAD_GLOBAL` `MS_OP_STORE_GLOBAL` `MS_OP_IMPORT` `MS_OP_IMPORT_FROM` |
+| 算术 | `MS_OP_ADD` `MS_OP_SUB` `MS_OP_MUL` `MS_OP_DIV` `MS_OP_FLOORDIV` `MS_OP_MOD` `MS_OP_POW` `MS_OP_NEG` `MS_OP_NOT` `MS_OP_BITAND/OR/XOR/SHL/SHR/INVERT` |
+| 比较 | `MS_OP_EQ` `MS_OP_NE` `MS_OP_LT` `MS_OP_LE` `MS_OP_GT` `MS_OP_GE` `MS_OP_IS` `MS_OP_IN` `MS_OP_CMP_CHAIN` |
+| 跳转 | `MS_OP_JUMP` `MS_OP_JUMP_IF_FALSE` `MS_OP_JUMP_IF_TRUE` `MS_OP_JUMP_IF_NIL` |
+| 容器 | `MS_OP_BUILD_LIST` `MS_OP_BUILD_TUPLE` `MS_OP_BUILD_DICT` `MS_OP_BUILD_SET` `MS_OP_INDEX` `MS_OP_SET_INDEX` `MS_OP_DEL_INDEX` `MS_OP_SLICE` `MS_OP_APPEND` |
+| 调用 | `MS_OP_CALL` `MS_OP_CALL_KW` `MS_OP_TAIL_CALL` `MS_OP_RETURN` `MS_OP_LOAD_METHOD` `MS_OP_CALL_METHOD` |
+| 函数/类 | `MS_OP_MAKE_FUNCTION` `MS_OP_MAKE_CLASS` `MS_OP_MAKE_LAMBDA` |
+| 属性 | `MS_OP_GET_ATTR` `MS_OP_SET_ATTR` `MS_OP_DEL_ATTR` |
+| 迭代 | `MS_OP_GET_ITER` `MS_OP_ITER_NEXT`（失败时跳转，避免 StopIteration 异常开销） `MS_OP_UNPACK` |
+| 异常 | `MS_OP_SETUP_TRY` `MS_OP_POP_TRY` `MS_OP_RAISE` `MS_OP_RERAISE` |
+| 并发 | `MS_OP_SPAWN`（async 调用） `MS_OP_AWAIT` `MS_OP_CHAN_NEW` `MS_OP_CHAN_SEND` `MS_OP_CHAN_RECV` `MS_OP_CHAN_TRY_RECV` `MS_OP_SELECT_BEGIN/ADD_RECV/ADD_SEND/EXEC` |
+| 其他 | `MS_OP_PRINT_EXPR`（REPL 用） `MS_OP_NOP` |
 
-目标指令数控制在 80 条以内。分派方式：首版 `switch` 分派；`computed goto`（GCC/Clang 扩展）作为非 MSVC 平台的编译期可选优化。
+目标指令数控制在 80 条以内。分派方式：首版 `switch` 分派；`computed goto`（GCC/Clang 扩展）作为非 MSVC 平台的编译期可选优化，经 CMake 构建选项选择分派实现源文件，不在 VM 代码中散布 `#ifdef`（见 [10-c-style.md](10-c-style.md) §9）。
 
 ## 3. 对象模型
 
 ```c
 typedef enum {
-    MS_TYPE_NIL, MS_TYPE_BOOL, MS_TYPE_INT, MS_TYPE_FLOAT,
-    MS_TYPE_STRING, MS_TYPE_BYTES, MS_TYPE_LIST, MS_TYPE_TUPLE,
-    MS_TYPE_DICT, MS_TYPE_SET, MS_TYPE_FUNCTION, MS_TYPE_CLASS,
-    MS_TYPE_INSTANCE, MS_TYPE_MODULE, MS_TYPE_CHANNEL, MS_TYPE_COROUTINE,
-    MS_TYPE_ITERATOR, MS_TYPE_BOUND_METHOD, MS_TYPE_C_FUNCTION,
-    MS_TYPE_C_TYPE,        /* C 扩展定义的类型的实例 */
-    MS_TYPE_COUNT
+  MS_TYPE_NIL, MS_TYPE_BOOL, MS_TYPE_INT, MS_TYPE_FLOAT,
+  MS_TYPE_STRING, MS_TYPE_BYTES, MS_TYPE_LIST, MS_TYPE_TUPLE,
+  MS_TYPE_DICT, MS_TYPE_SET, MS_TYPE_FUNCTION, MS_TYPE_CLASS,
+  MS_TYPE_INSTANCE, MS_TYPE_MODULE, MS_TYPE_CHANNEL, MS_TYPE_COROUTINE,
+  MS_TYPE_ITERATOR, MS_TYPE_BOUND_METHOD, MS_TYPE_C_FUNCTION,
+  MS_TYPE_C_TYPE,        // instance of a C-extension-defined type
+  MS_TYPE_COUNT
 } MsTypeTag;
 
 struct MsObjectHeader {
-    MsType     *type;        /* 类型对象 */
-    uint8_t     markColor;   /* GC 标记位 */
-    MsObject   *gcNext;      /* 全对象链表 */
+  MsType   *type;       // the type object
+  uint8_t   markColor;  // GC mark color
+  MsObject *gcNext;     // next node in the all-objects list
 };
 ```
 
@@ -105,7 +109,7 @@ struct MsObjectHeader {
   - 模块注册表、内建类型表
   - C API 显式根（`msRootPush` 压入的对象，见 [09-c-api.md](09-c-api.md)）
 - **清除**：遍历全对象链表，回收未标记对象。
-- **STW 协作**：GC 线程设置全局标记 → 各工作线程在最近 safepoint（让出点/函数调用/回边）自旋等待 → 标记清除 → 恢复。safepoint 检查是读取一个原子标志，开销可忽略。
+- **STW 协作**：GC 线程设置全局标记 → 各工作线程在最近 safepoint（让出点/函数调用/回边）自旋等待 → 标记清除 → 恢复。safepoint 检查是读取一个原子标志（经 `src/platform/` 原子抽象，见 [10-c-style.md](10-c-style.md) §9），开销可忽略。
 - **终结器**：首版不支持 `__del__`（GC 语言终结器的坑不值得踩），列入路线图候选并附警示。
 - 演进路径：增量三色标记（需写屏障）→ 并发标记。首版架构上把"标记"实现为可中断的步骤函数，为增量改造留口。
 
@@ -115,14 +119,14 @@ struct MsObjectHeader {
 
 ```c
 struct MsCoroutine {
-    MsObjectHeader header;
-    MsCallFrame  *frames;       /* 调用栈 */
-    MsObject    **stack;        /* 求值栈 */
-    int           state;        /* READY / RUNNING / SUSPENDED / DEAD */
-    MsObject     *result;       /* return 值或未捕获异常 */
-    MsObject     *waiters;      /* await 此协程的等待者队列 */
-    MsWaitQueue  *blockedOn;    /* 阻塞在哪个 channel/句柄上 */
-    ...
+  MsObjectHeader header;
+  MsCallFrame *frames;      // call stack
+  MsObject   **stack;       // evaluation stack
+  int          state;       // READY / RUNNING / SUSPENDED / DEAD
+  MsObject    *result;      // return value or uncaught exception
+  MsObject    *waiters;     // queue of coroutines awaiting this one
+  MsWaitQueue *blockedOn;   // channel/handle this coroutine is blocked on
+  // ...
 };
 ```
 
