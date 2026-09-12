@@ -63,29 +63,32 @@ IEEE 754 双精度。特殊值：`math.inf`、`math.nan`（`nan != nan`，用 `m
 
 ### 5.1 list
 
-```go
+```ms
 xs := [1, "two", 3.0]
-xs.append(4); xs.insert(0, "x"); xs.pop(); xs.remove("two")
-xs[1:3]            // 切片，返回新 list
-xs[::2]            // 步长切片
+xs.append(4)
+xs.insert(0, "x")
+xs.pop()
+xs.remove("two")
+xs[1:3]            // slice, returns a new list
+xs[::2]            // slice with step
 len(xs)
 ```
 
 ### 5.2 tuple
 
-```go
-t := (1, "two")    // 圆括号 + 逗号
-single := (1,)     // 单元素元组必须有尾逗号
-a, b := t          // 解包
+```ms
+t := (1, "two")    // parentheses + comma
+single := (1,)     // a 1-tuple requires a trailing comma
+a, b := t          // unpacking
 ```
 
 ### 5.3 dict
 
-```go
+```ms
 m := {"a": 1, "b": 2}
 m["c"] = 3
 del m["a"]
-"a" in m           // 键成员测试
+"a" in m           // key membership test
 m.keys() m.values() m.items() m.get(k, default) m.pop(k) m.update(other)
 ```
 
@@ -93,10 +96,12 @@ m.keys() m.values() m.items() m.get(k, default) m.pop(k) m.update(other)
 
 ### 5.4 set
 
-```go
-s := {1, 2, 3}     // 区别于 dict 字面量：无冒号
-empty := set()     // 空集合（{} 是空 dict）
-s.add(4); s.remove(2); s.contains(1)
+```ms
+s := {1, 2, 3}     // unlike a dict literal: no colons
+empty := set()     // empty set ({} is an empty dict)
+s.add(4)
+s.remove(2)
+s.contains(1)
 s.union(t) s.intersect(t) s.diff(t)
 ```
 
@@ -107,10 +112,10 @@ s.union(t) s.intersect(t) s.diff(t)
 
 ## 7. 迭代协议
 
-```go
-it := iter(xs)     // 调用 xs.__iter__()
-v := next(it)      // 调用 it.__next__()，耗尽抛 StopIteration
-v := next(it, d)   // 带默认值
+```ms
+it := iter(xs)     // calls xs.__iter__()
+v := next(it)      // calls it.__next__(); raises StopIteration when exhausted
+v := next(it, d)   // with a default value
 ```
 
 `for x in xs` 即上述协议的语法糖。`range(start, stop, step)` 返回惰性序列对象。
@@ -130,9 +135,9 @@ v := next(it, d)   // 带默认值
 
 ## 9. 类型判断
 
-```go
-type(x)                    // 类型对象
-isinstance(x, int)         // 含继承
+```ms
+type(x)                    // the type object
+isinstance(x, int)         // includes subclasses
 isinstance(x, (int, float))
 issubclass(Dog, Animal)
 ```

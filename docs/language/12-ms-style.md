@@ -25,7 +25,7 @@
 
 - 分三组：**标准库 → 第三方 → 本地（相对路径）**，组间一个空行，组内按路径字母序：
 
-```go
+```ms
 import "encoding/json"
 import "strings"
 
@@ -43,7 +43,7 @@ import "./utils/helper"
 
 直接运行与被导入共存的脚本，用 `__name__` 守卫保护执行入口（见 [05-modules.md](05-modules.md) §5）：
 
-```go
+```ms
 func doWork() {
     // ...
 }
@@ -66,7 +66,7 @@ if __name__ == "__main__" {
 
 - 左花括号挂行尾（语言的分号插入规则已强制）；`else` / `except` / `finally` 与前一个 `}` 同行：
 
-```go
+```ms
 if condition {
     doSomething()
 } else {
@@ -76,24 +76,27 @@ if condition {
 
 - **禁止单行块**。即使只有一个语句也必须多行展开：
 
-```go
-// 禁止：if n < 2 { return n }
+```ms
+// not allowed: if n < 2 { return n }
 if n < 2 {
     return n
 }
 ```
+
+- 例外：语言设计文档中的语法演示片段（如 `{ ... }` 占位体、极短语法示意）豁免本条。
 
 ### 3.3 语句
 
 - 不写显式分号，依赖分号自动插入。
 - 一行只写一条语句。
 - 空块用 `pass`，不留空。
+- 例外：文档中的 API 签名清单（参考表形式，如 `strings.toUpper(s)  strings.toLower(s)`）不受"一行一条语句"约束。
 
 ### 3.4 表达式换行
 
 - 二元运算符换行时**运算符在续行行首**，续行缩进 4 空格：
 
-```go
+```ms
 ok := statusCode == 200
     && contentLength > 0
     && contentLength <= MAX_BODY_SIZE
@@ -101,7 +104,7 @@ ok := statusCode == 200
 
 - 函数调用/定义参数一行放不下时，每行一个参数、缩进 4 空格，右括号独占一行回到原缩进：
 
-```go
+```ms
 func createClient(
     host,
     port,
@@ -115,7 +118,7 @@ func createClient(
 
 多行排版的字面量、参数表、实参列表，**最后一项强制尾逗号**（语法已支持），增删元素时 diff 最小：
 
-```go
+```ms
 config := {
     "host": "localhost",
     "port": 8080,
@@ -131,7 +134,7 @@ config := {
 - 调用/下标/属性访问内部不加空格：`f(x)`、`a[i]`、`obj.field`。
 - 关键字与条件之间一个空格：`if cond`、`for x in xs`、`while ok`。
 - 切片冒号两侧不加空格（与 Python 一致）：`a[1:10]`、`a[::2]`。
-- 默认参数 `=` 两侧加空格：`func f(retries = 3)`（与 Python PEP 8 不同，统一赋值视觉）。
+- 默认参数 `=` 两侧加空格：`func f(retries = 3)`（与 Python PEP 8 不同，统一赋值视觉）。API 签名清单中允许紧凑形式（`n=-1`）。
 
 ### 3.7 空行
 
@@ -189,7 +192,7 @@ config := {
 - 禁止裸 `except`（不指定异常类型）；捕获具体异常类型。
 - `except` 块不得为空；确实忽略异常时用 `pass` 并注释说明理由：
 
-```go
+```ms
 try {
     cache.clear()
 } except CacheError {
@@ -204,8 +207,8 @@ try {
 
 默认参数在**定义时只求值一次**（见 [03-syntax.md](03-syntax.md) §4）。禁止可变对象作默认值，用 `nil` 占位再初始化：
 
-```go
-// 禁止：func f(items = []) { ... }
+```ms
+// not allowed: func f(items = []) { ... }
 func f(items = nil) {
     if items is nil {
         items = []
@@ -243,9 +246,10 @@ func f(items = nil) {
 
 - 注释用英文（对齐 [10-c-style.md](10-c-style.md) §7）；设计文档用中文。
 - 注释说明"为什么"，不复述代码。
+- 设计文档中 MS 代码块的围栏语言标记统一为 `ms`（不借用 `go`）。
 - 公开函数、class、模块级常量用 `//` 前置注释块：首行一句话摘要（以名字开头、祈使句或陈述句），后接参数语义、返回值、可能抛出的异常：
 
-```go
+```ms
 // parseConfig reads the config file at path and returns a dict.
 // Raises IOError if the file is unreadable, ValueError on bad syntax.
 func parseConfig(path) {

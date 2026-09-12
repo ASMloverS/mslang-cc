@@ -4,15 +4,15 @@
 
 ## 1. 导入形式
 
-```go
-import "fmt"                          // 标准库模块
-import "encoding/json"                // 带子路径；绑定名为末段 json
-import "encoding/json" as encjson     // 别名
-import "./utils/helper"               // 相对路径（以当前文件目录为基准）
-import "github.com/user/lib"          // 预留：外部包路径（首版不实现下载）
+```ms
+import "fmt"                          // standard library module
+import "encoding/json"                // subpath; binds the last segment, json
+import "encoding/json" as encjson     // alias
+import "./utils/helper"               // relative path (resolved against the importing file's directory)
+import "github.com/user/lib"          // reserved: external package path (no downloading in v1)
 
 from "strings" import toUpper, split
-from "os" import (getEnv, listDir)    // 多行形式
+from "os" import (getEnv, listDir)    // parenthesized multi-name form
 ```
 
 绑定规则：
@@ -40,9 +40,9 @@ from "os" import (getEnv, listDir)    // 多行形式
 
 目录含 `__init__.ms` 即为包。`import "a/b"` 加载 `a/b/__init__.ms`；`import "a/b/c"` 优先匹配子模块文件。包内相对导入：
 
-```go
-import "./sibling"          // 同包兄弟模块
-import "../other"           // 父包
+```ms
+import "./sibling"          // sibling module in the same package
+import "../other"           // parent package
 ```
 
 ## 4. 执行语义
@@ -60,14 +60,14 @@ import "../other"           // 父包
 
 脚本顶层语句总是顺序执行，无需入口函数。`__name__` 惯用法用于**保护不希望被导入时执行的顶层代码**：
 
-```go
-// tool.ms：既可直接运行，也可被导入复用函数
+```ms
+// tool.ms: runnable directly, or imported to reuse its functions
 import "lib"
 
 func doWork() { ... }
 
 if __name__ == "__main__" {
-    doWork()        // 仅直接运行时执行；被导入时不执行
+    doWork()        // runs only when executed directly, not when imported
 }
 ```
 
@@ -75,9 +75,9 @@ if __name__ == "__main__" {
 
 ## 6. 动态导入与内省
 
-```go
-m := importlib.importModule("encoding/json")   // 动态导入（importlib 标准库）
-dir(m)                                          // 模块内名字列表
+```ms
+m := importlib.importModule("encoding/json")   // dynamic import (the importlib stdlib module)
+dir(m)                                         // lists names in the module
 ```
 
 ## 7. 与 C 扩展的关系

@@ -4,14 +4,14 @@
 
 ## 1. async 函数与协程句柄
 
-```go
+```ms
 async func fetch(url) {
     resp := http.get(url)
     return resp.body
 }
 
-h := fetch("https://example.com")    // 调用 async 函数 = 派生协程，立即返回句柄
-body := await h                      // 挂起当前协程，直到目标协程完成
+h := fetch("https://example.com")    // calling an async func spawns a coroutine and returns a handle immediately
+body := await h                      // suspend the current coroutine until the target coroutine completes
 ```
 
 语义要点：
@@ -26,17 +26,17 @@ body := await h                      // 挂起当前协程，直到目标协程�
 
 ## 2. channel
 
-```go
-c := chan()            // 无缓冲：send 阻塞到有 recv（会合语义）
-c := chan(16)          // 带缓冲：容量 16
+```ms
+c := chan()            // unbuffered: send blocks until a recv (rendezvous semantics)
+c := chan(16)          // buffered: capacity 16
 
-c.send(v)              // 发送；缓冲满/无接收者时让出调度
-v := c.recv()          // 接收；缓冲空时让出调度；已关闭且排空时抛 ChannelClosedError
-v, ok := c.tryRecv()   // 非阻塞；无值时 ok 为 false
-ok := c.trySend(v)     // 非阻塞发送，缓冲满返回 false
-c.close()              // 关闭；再 send 抛 ChannelClosedError
-n := c.len()           // 当前缓冲内元素数
-m := cap(c)            // 缓冲容量（内建函数）
+c.send(v)              // send; yields when the buffer is full or no receiver is ready
+v := c.recv()          // receive; yields when empty; raises ChannelClosedError once closed and drained
+v, ok := c.tryRecv()   // non-blocking; ok is false when no value is available
+ok := c.trySend(v)     // non-blocking send; returns false when the buffer is full
+c.close()              // close; further sends raise ChannelClosedError
+n := c.len()           // number of elements currently buffered
+m := cap(c)            // buffer capacity (builtin)
 ```
 
 - channel 是一等值，可作为参数/返回值/字典值传递。
@@ -45,7 +45,7 @@ m := cap(c)            // 缓冲容量（内建函数）
 
 ## 3. select
 
-```go
+```ms
 select {
 case v := c1.recv():
     print("from c1:", v)
@@ -90,15 +90,15 @@ sendStmt   = expr "." "send" "(" expr ")"
 
 **不在上述边内的共享可变状态是数据竞争，行为未定义**。mslang 不提供 volatile/原子语义的脚本级类型；需要底层同步时用 `sync.Mutex`：
 
-```go
+```ms
 import "sync"
 
 mu := sync.mutex()
 mu.lock()
 shared.count += 1
 mu.unlock()
-// 或
-with mu { shared.count += 1 }     // Mutex 实现 __enter__/__exit__
+// or
+with mu { shared.count += 1 }     // Mutex implements __enter__/__exit__
 ```
 
 ## 6. 与 GC 的协作
@@ -109,7 +109,7 @@ with mu { shared.count += 1 }     // Mutex 实现 __enter__/__exit__
 
 ## 7. 完整示例：生产者-消费者
 
-```go
+```ms
 async func producer(c, n) {
     for i := 0; i < n; i++ {
         c.send(i * i)
@@ -119,7 +119,7 @@ async func producer(c, n) {
 
 async func consumer(c, out) {
     total := 0
-    for v in c {            // 迭代至 channel 关闭
+    for v in c {            // iterate until the channel is closed
         total += v
     }
     out.send(total)
@@ -127,8 +127,8 @@ async func consumer(c, out) {
 
 jobs := chan(8)
 results := chan(1)
-p := producer(jobs, 100)
-consumer(jobs, results)
-await p                                // 等待生产完成（可选，recv 本身会等）
+prod := producer(jobs, 100)
+consumer(jobs, results)                // handle dropped on purpose; the result is read from the channel
+await prod                             // wait for production to finish (optional; recv itself blocks)
 print(results.recv())                  // 328350
 ```

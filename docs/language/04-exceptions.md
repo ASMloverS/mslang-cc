@@ -4,17 +4,17 @@
 
 ## 1. 基本语法
 
-```go
+```ms
 try {
     risky()
 } except ValueError as e {
     print("值错误: ", e)
-} except (TypeError, KeyError) as e {      // 捕获多种类型
+} except (TypeError, KeyError) as e {      // catch multiple types
     print("类型或键错误: ", e)
-} except {                                  // 捕获所有 Exception 子类
+} except {                                  // catch any Exception subclass
     print("未知错误")
 } finally {
-    cleanup()                               // 总会执行
+    cleanup()                               // always runs
 }
 ```
 
@@ -28,11 +28,11 @@ try {
 
 ## 2. 抛出与链化
 
-```go
-raise ValueError("bad input")               // 类调用即构造异常实例
-raise ValueError                            // 等价于 raise ValueError()
-raise e                                     // 重新抛出（保留原 traceback）
-raise RuntimeError("wrap") from e           // 显式链化：__cause__ = e
+```ms
+raise ValueError("bad input")               // calling the class constructs the exception instance
+raise ValueError                            // equivalent to raise ValueError()
+raise e                                     // re-raise (keeps the original traceback)
+raise RuntimeError("wrap") from e           // explicit chaining: __cause__ = e
 ```
 
 `raise` 的对象必须是 `BaseException` 的实例或子类，否则抛 `TypeError`。

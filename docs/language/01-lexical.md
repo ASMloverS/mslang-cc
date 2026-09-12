@@ -10,12 +10,12 @@
 
 ## 2. 注释
 
-```go
-// 单行注释
+```ms
+// single-line comment
 
 /*
-   块注释，
-   不支持嵌套。
+   Block comments
+   do not nest.
 */
 ```
 
@@ -26,7 +26,7 @@ identifier = letter { letter | digit | "_" }
 letter     = "a".."z" | "A".."Z" | "_" | unicodeLetter
 ```
 
-标识符区分大小写。约定俗成：普通变量/函数用小写蛇形或小驼峰均可，类型（class 名）用大驼峰。
+标识符区分大小写。命名约定（变量/函数用小驼峰、类型用大驼峰等）见 [12-ms-style.md](12-ms-style.md) §4。
 
 ## 4. 关键字
 
@@ -48,30 +48,30 @@ true     try      while    with
 
 ### 5.1 整数（任意精度）
 
-```go
+```ms
 42
-1_000_000        // 下划线分隔，仅视觉用途
-0x1F             // 十六进制
-0o755            // 八进制
-0b1010           // 二进制
+1_000_000        // underscores are visual separators only
+0x1F             // hex
+0o755            // octal
+0b1010           // binary
 ```
 
 ### 5.2 浮点（float64）
 
-```go
+```ms
 3.14
 1e-9
 2.5e+4
-.5               // 合法
-5.               // 非法（小数点后须有数字，避免与属性访问歧义）
+.5               // legal
+5.               // illegal: a digit must follow the dot (avoids ambiguity with attribute access)
 ```
 
 ### 5.3 字符串（不可变，UTF-8）
 
-```go
-"hello\n"            // 普通字符串，支持转义
-`raw \n string`      // 反引号原始字符串，不处理转义（Go 风格）
-f"x = {x + 1}"       // f-string，花括号内是任意表达式
+```ms
+"hello\n"            // regular string with escapes
+`raw \n string`      // raw string in backticks; escapes are not processed (Go style)
+f"x = {x + 1}"       // f-string: braces hold any expression
 ```
 
 转义序列：`\n \t \r \\ \" \' \0 \x41 \u4e2d \U0001F600`。
@@ -80,13 +80,13 @@ f-string 内 `{expr}` 可带格式说明：`f"{pi:.2f}"`、`f"{n:08d}"`，格式
 
 ### 5.4 字节串
 
-```go
-b"\x00\x01"          // bytes 类型，不可变
+```ms
+b"\x00\x01"          // bytes type, immutable
 ```
 
 ### 5.5 布尔与空
 
-```go
+```ms
 true  false  nil
 ```
 

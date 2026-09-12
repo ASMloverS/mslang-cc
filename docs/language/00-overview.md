@@ -40,41 +40,49 @@ mslang 是一门**通用脚本语言**，脚本文件以 `.ms` 为后缀。它�
 
 hello.ms（顶层语句即程序，无需入口函数）：
 
-```go
+```ms
 print("hello, mslang")
 ```
 
 特性速览——以下是一个可直接 `mslang` 运行的完整脚本：
 
-```go
-import "strings"
-import "log"
+```ms
 import "encoding/json"
+import "log"
 import "net/http"
+import "strings"
 
-// 变量与容器
+// Variables and containers
 x := 42
 name := "world"
 xs := [1, 2, 3]
 m := {"a": 1, "b": 2}
 squares := [v * v for v in xs if v > 1]
 
-// 函数与 class
+// Functions and classes
 func fib(n) {
-    if n < 2 { return n }
-    return fib(n-1) + fib(n-2)
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
 }
 
 class Animal {
-    func __init__(self, name) { self.name = name }
-    func speak(self) { return f"{self.name} makes a sound" }
+    func __init__(self, name) {
+        self.name = name
+    }
+    func speak(self) {
+        return f"{self.name} makes a sound"
+    }
 }
 
-class Dog < Animal {          // 单继承
-    func speak(self) { return f"{self.name} barks" }
+class Dog < Animal {                   // single inheritance
+    func speak(self) {
+        return f"{self.name} barks"
+    }
 }
 
-// 异常
+// Exceptions
 func parse(text) {
     try {
         return json.loads(text)
@@ -84,19 +92,19 @@ func parse(text) {
     }
 }
 
-// 并发
+// Concurrency
 async func fetch(url) {
     resp := http.get(url)
     return resp.body
 }
 
-h1 := fetch("https://example.com/a")   // 派生协程，返回句柄
+h1 := fetch("https://example.com/a")   // calling an async func spawns a coroutine and returns a handle
 h2 := fetch("https://example.com/b")
-body := await h1                       // 挂起当前协程直到 h1 完成
+body := await h1                       // suspend the current coroutine until h1 completes
 
-c := chan(16)                          // 带缓冲 channel
-c.send(body)                           // 发送（满了则让出调度）
-v := c.recv()                          // 接收（空了则让出调度）
+c := chan(16)                          // buffered channel
+c.send(body)                           // send (yields when the buffer is full)
+v := c.recv()                          // receive (yields when the buffer is empty)
 
 d := Dog("Rex")
 print(d.speak())                       // Rex barks
@@ -118,6 +126,7 @@ print(strings.toUpper(name))           // WORLD
 | [09-c-api.md](09-c-api.md) | C API 完整规范：对象模型、嵌入、扩展、命名约定 |
 | [10-c-style.md](10-c-style.md) | C 编码规范（Google 风格基础 + Java 命名映射） |
 | [11-project-layout.md](11-project-layout.md) | 仓库结构、构建、测试策略、路线图 |
+| [12-ms-style.md](12-ms-style.md) | MS 编码规范（Google Java 风格指南结构） |
 
 ## 5. 设计哲学
 

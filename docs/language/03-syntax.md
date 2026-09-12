@@ -31,7 +31,7 @@ augOp       = "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**="
 ifStmt      = "if" expr block { "else" "if" expr block } [ "else" block ]
 
 forStmt     = "for" [ forClause | identList "in" expr ] block
-forClause   = simpleStmt ";" expr ";" simpleStmt     // Go 风格三段式
+forClause   = simpleStmt ";" expr ";" simpleStmt     // Go-style three-part clause
 
 whileStmt   = "while" expr block
 
@@ -60,18 +60,18 @@ passStmt    = "pass"
 
 两种形态：
 
-```go
-for i := 0; i < 10; i++ { ... }     // 三段式（i++/i-- 仅此处合法的语句形式）
-for x in xs { ... }                 // 迭代协议
+```ms
+for i := 0; i < 10; i++ { ... }     // three-part clause (i++/i-- statements are legal only here)
+for x in xs { ... }                 // iteration protocol
 for i, x in enumerate(xs) { ... }
-for k, v in m { ... }               // dict 迭代产出 (key, value) 对
+for k, v in m { ... }               // dict iteration yields (key, value) pairs
 ```
 
 `for` 无 else 子句（刻意删减）。
 
 ### 3.2 with 语句
 
-```go
+```ms
 with open("a.txt") as f {
     data := f.readAll()
 }
@@ -88,15 +88,15 @@ param       = identifier [ "=" expr ] | "*" identifier | "**" identifier
 lambdaExpr  = "lambda" [ identList ] ":" expr
 ```
 
-```go
+```ms
 func add(a, b) { return a + b }
-func greet(name, greeting = "hello") { ... }     // 默认参数
-func sum(*nums) { ... }                          // 可变位置参数（tuple）
-func config(**opts) { ... }                      // 关键字参数（dict）
-func f(a, b = 1, *rest, **kw) { ... }            // 组合，顺序固定如此
+func greet(name, greeting = "hello") { ... }     // default parameter
+func sum(*nums) { ... }                          // variadic positional parameters (tuple)
+func config(**opts) { ... }                      // keyword parameters (dict)
+func f(a, b = 1, *rest, **kw) { ... }            // combination; the order is fixed as shown
 
 add(1, 2)
-greet("bob", greeting = "hi")                    // 关键字实参
+greet("bob", greeting = "hi")                    // keyword argument
 ```
 
 - 函数是一等值，支持闭包（词法作用域，upvalue 捕获）。
@@ -110,11 +110,11 @@ greet("bob", greeting = "hi")                    // 关键字实参
 classDecl   = "class" identifier [ "<" expr ] block
 ```
 
-```go
+```ms
 class Animal {
     func __init__(self, name) { self.name = name }
     func speak(self) { return "..." }
-    static func create(name) { return Animal(name) }   // 静态方法
+    static func create(name) { return Animal(name) }   // static method
 }
 
 class Dog < Animal {
@@ -161,20 +161,20 @@ class Dog < Animal {
 
 ### 6.1 下标与切片
 
-```go
-a[i]                 // 负索引从尾部计数
-a[start:stop]        // 半开区间
+```ms
+a[i]                 // negative indices count from the end
+a[start:stop]        // half-open interval
 a[start:stop:step]
-a[:]                 // 浅拷贝
+a[:]                 // shallow copy
 ```
 
 ### 6.2 推导式
 
-```go
+```ms
 [x * x for x in xs]
 [x for x in xs if x > 0]
-[k: v * 2 for k, v in m]            // dict 推导
-{x % 10 for x in xs}                // set 推导
+[k: v * 2 for k, v in m]            // dict comprehension
+{x % 10 for x in xs}                // set comprehension
 ```
 
 嵌套循环：`[x + y for x in a for y in b]`。生成器表达式（惰性版本）列入路线图。
@@ -191,9 +191,9 @@ importStmt  = "import" stringLit [ "as" identifier ]
             | "from" stringLit "import" "(" identList [ "," ] ")"
 ```
 
-```go
+```ms
 import "fmt"
-import "encoding/json"                    // 绑定名 json（路径末段）
+import "encoding/json"                    // binds the name json (last path segment)
 import "encoding/json" as encjson
 from "strings" import toUpper, split
 ```
@@ -210,7 +210,7 @@ from "strings" import toUpper, split
 ## 9. 内建函数
 
 ```
-len(x)  cap(c)                 // cap 仅对 channel 有意义
+len(x)  cap(c)                 // cap is only meaningful for channels
 type(x) isinstance(x, T) issubclass(A, B)
 str(x) int(x) float(x) bool(x) bytes(x) repr(x)
 list(x) tuple(x) dict(x) set(x)
@@ -220,9 +220,9 @@ abs(x) min(...) max(...) sum(x) round(x, n=0) divmod(a, b) pow(a, b)
 chr(i) ord(c) hex(i) oct(i) bin(i)
 hasattr(o, n) getattr(o, n, d=nil) setattr(o, n, v) delattr(o, n)
 id(x) hash(x) callable(x)
-iter(x) next(it, default) 
+iter(x) next(it, default)
 open(path, mode="r") input(prompt="")
-chan(capacity=0)               // 创建 channel，见并发文档
+chan(capacity=0)               // creates a channel; see the concurrency doc
 vars() globals() locals() dir(x)
 ```
 
@@ -237,7 +237,7 @@ print(*values, sep=" ", end="\n", file=nil, flush=false)
 - `file`：输出目标，需实现 `io.Writer` 协议；`nil` 表示标准输出
 - `flush`：是否立即冲刷，默认 `false`；返回 `nil`
 
-```go
+```ms
 print("hello, mslang")              // hello, mslang
 print(1, 2, 3)                      // 1 2 3
 print("a", "b", sep=", ")           // a, b

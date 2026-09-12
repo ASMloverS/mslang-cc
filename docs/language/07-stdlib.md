@@ -36,17 +36,17 @@
 
 职责定位：**仅负责格式化输出**。常规输出用内建 `print`（见 [03-syntax.md](03-syntax.md) §9.1）；需要宽度、精度、进制、对齐等格式控制时才用 fmt。简单插值优先用 f-string 而非 `fmt.sprintf`。
 
-```go
-fmt.printf(format, ...)             // 格式化输出到 stdout
-fmt.sprintf(format, ...)            // 返回格式化字符串
-fmt.fprintf(writer, format, ...)    // 格式化输出到 io.Writer
+```ms
+fmt.printf(format, ...)             // formatted output to stdout
+fmt.sprintf(format, ...)            // returns the formatted string
+fmt.fprintf(writer, format, ...)    // formatted output to an io.Writer
 ```
 
 格式动词对齐 Go：`%v %s %d %f %.2f %x %o %b %q %t %p %%`。不提供 `fmt.print`/`fmt.println`——与内建 `print` 功能重叠，刻意删除（"一种事一种做法"）。
 
 ## 2. strings
 
-```go
+```ms
 strings.toUpper(s)  strings.toLower(s)  strings.title(s)
 strings.split(s, sep)  strings.splitN(s, sep, n)  strings.fields(s)
 strings.join(xs, sep)
@@ -55,16 +55,16 @@ strings.indexOf(s, sub)  strings.lastIndexOf(s, sub)  strings.count(s, sub)
 strings.replace(s, old, new, n=-1)
 strings.trimSpace(s)  strings.trim(s, cutset)  strings.trimPrefix(s, p)  strings.trimSuffix(s, p)
 strings.repeat(s, n)  strings.padLeft(s, n, pad=" ")  strings.padRight(s, n, pad=" ")
-strings.builder()                    // Builder 对象：write(s)/toString()，高效拼接
+strings.builder()                    // Builder object: write(s)/toString(); efficient concatenation
 ```
 
 ## 3. strconv
 
-```go
-strconv.parseInt(s, base=10)         // 失败抛 ValueError
+```ms
+strconv.parseInt(s, base=10)         // raises ValueError on failure
 strconv.parseFloat(s)
 strconv.formatInt(i, base=10)
-strconv.formatFloat(f, prec=-1)      // prec=-1 最短往返表示
+strconv.formatFloat(f, prec=-1)      // prec=-1 gives the shortest round-trip representation
 strconv.quote(s)  strconv.unquote(s)
 ```
 
@@ -72,7 +72,7 @@ strconv.quote(s)  strconv.unquote(s)
 
 常量：`math.pi math.e math.inf math.nan`
 
-```go
+```ms
 math.floor(x) math.ceil(x) math.trunc(x) math.abs(x)
 math.sqrt(x) math.pow(x, y) math.exp(x) math.log(x, base=math.e) math.log2(x) math.log10(x)
 math.sin(x) math.cos(x) math.tan(x) math.asin(x) math.acos(x) math.atan(x) math.atan2(y, x)
@@ -82,27 +82,27 @@ math.gcd(a, b) math.lcm(a, b) math.factorial(n)
 
 ## 5. sort
 
-```go
-sort.sort(xs)                        // 原地排序
-sort.sorted(xs)                      // 返回新列表
-sort.sortBy(xs, key)                 // key 为函数
+```ms
+sort.sort(xs)                        // sorts in place
+sort.sorted(xs)                      // returns a new list
+sort.sortBy(xs, key)                 // key is a function
 sort.reverse(xs)
-sort.binarySearch(xs, v)             // 返回插入位（bisect 语义）
+sort.binarySearch(xs, v)             // returns the insertion index (bisect semantics)
 sort.isSorted(xs)
 ```
 
 ## 6. os
 
-```go
-os.args                              // list，命令行参数
-os.getEnv(key, default=nil)  os.setEnv(key, value)  os.environ()    // dict
+```ms
+os.args                              // list of command-line arguments
+os.getEnv(key, default=nil)  os.setEnv(key, value)  os.environ()    // environ() returns a dict
 os.cwd()  os.chdir(path)
-os.exit(code=0)                      // 抛 SystemExit
-os.stat(path)                        // StatInfo：size/mode/modTime/isDir/isFile
+os.exit(code=0)                      // raises SystemExit
+os.stat(path)                        // StatInfo: size/mode/modTime/isDir/isFile
 os.listDir(path)                     // list[str]
 os.mkdir(path)  os.mkdirAll(path)  os.remove(path)  os.removeAll(path)  os.rename(old, new)
 os.exists(path)
-os.exec(cmd, args=[])                // 执行外部命令，返回 (exitCode, stdout, stderr)
+os.exec(cmd, args=nil)               // runs an external command; returns (exitCode, stdout, stderr)
 os.platform                          // "windows" | "linux" | "darwin"
 ```
 
@@ -113,8 +113,8 @@ os.platform                          // "windows" | "linux" | "darwin"
 - **Reader**：`read(n=-1)` → bytes/str；`readAll()`；`readLine()`；`close()`
 - **Writer**：`write(data)` → int；`flush()`；`close()`
 
-```go
-io.copy(dst, src)                    // 返回拷贝字节数
+```ms
+io.copy(dst, src)                    // returns the number of bytes copied
 io.readAll(reader)
 io.tee(reader, writer)
 ```
@@ -123,29 +123,29 @@ io.tee(reader, writer)
 
 ## 8. path/filepath
 
-```go
+```ms
 filepath.join(p1, p2, ...)  filepath.split(path)     // → (dir, name)
 filepath.dir(path)  filepath.base(path)  filepath.ext(path)
 filepath.abs(path)  filepath.clean(path)  filepath.isAbs(path)
-filepath.match(pattern, name)            // glob 匹配
-filepath.glob(pattern)                   // 返回 list
+filepath.match(pattern, name)            // glob matching
+filepath.glob(pattern)                   // returns a list
 ```
 
 ## 9. time 与 datetime
 
-```go
-time.now()                           // float，Unix 秒（含小数）
-time.sleep(seconds)                  // 协程感知：挂起协程而非线程
-time.monotonic()                     // 单调时钟
+```ms
+time.now()                           // float, Unix seconds (with fraction)
+time.sleep(seconds)                  // coroutine-aware: suspends the coroutine, not the thread
+time.monotonic()                     // monotonic clock
 time.format(ts, layout)  time.parse(layout, text)
 ```
 
 `datetime` 提供对象化 API：
 
-```go
-dt := datetime.now()                 // DateTime 对象
+```ms
+dt := datetime.now()                 // a DateTime object
 dt.year dt.month dt.day dt.hour dt.minute dt.second
-dt + datetime.timedelta(days=1)      // 运算
+dt + datetime.timedelta(days=1)      // arithmetic
 dt.strftime("%Y-%m-%d")
 datetime.strptime(text, fmt)
 datetime.date(2025, 1, 1)  datetime.time(12, 30)
@@ -153,19 +153,19 @@ datetime.date(2025, 1, 1)  datetime.time(12, 30)
 
 ## 10. errors
 
-```go
-errors.new(message)                  // 构造 RuntimeError 实例
-errors.wrap(err, message)            // 包装：raise X from err 的便捷形式
-errors.isInstance(err, type)         // isinstance 的语义别名（沿 __cause__ 链查找）
-errors.unwrap(err)                   // 返回 __cause__
+```ms
+errors.new(message)                  // constructs a RuntimeError instance
+errors.wrap(err, message)            // wrapping: convenient form of raise X from err
+errors.isInstance(err, type)         // semantic alias of isinstance (walks the __cause__ chain)
+errors.unwrap(err)                   // returns __cause__
 ```
 
 ## 11. log
 
-```go
+```ms
 log.debug(...) log.info(...) log.warn(...) log.error(...)
 log.setLevel(log.INFO)               // DEBUG < INFO < WARN < ERROR
-log.setOutput(writer)                // 默认 stderr
+log.setOutput(writer)                // defaults to stderr
 log.setFormat("{time} [{level}] {message}")
 ```
 
@@ -173,22 +173,22 @@ log.setFormat("{time} [{level}] {message}")
 
 自研正则引擎（实现子集：字符类、量词、分组、捕获、锚点、交替；**不支持回溯灾难构造**，采用 Thompson NFA 保证线性时间）：
 
-```go
+```ms
 re := regexp.compile(`\d+`)
-re.match(text)                       // 从开头匹配 → Match 或 nil
-re.search(text)                      // 任意位置
+re.match(text)                       // matches from the start → Match or nil
+re.search(text)                      // matches anywhere
 re.findAll(text)                     // list[Match]
 re.replaceAll(text, repl)
 re.split(text)
 m.group(0) m.group(1) m.start() m.end() m.groups()
-regexp.match(pattern, text)          // 免编译便捷版
+regexp.match(pattern, text)          // convenience form without compile
 ```
 
 ## 13. encoding/json
 
-```go
-json.dumps(value, indent=0)          // mslang 值 → JSON 字符串
-json.loads(text)                     // JSON → mslang 值（dict/list/str/float/int/bool/nil）
+```ms
+json.dumps(value, indent=0)          // mslang value → JSON string
+json.loads(text)                     // JSON → mslang value (dict/list/str/float/int/bool/nil)
 json.dump(value, writer)  json.load(reader)
 ```
 
@@ -196,7 +196,7 @@ json.dump(value, writer)  json.load(reader)
 
 ## 14. encoding/base64
 
-```go
+```ms
 base64.encode(data)                  // str/bytes → str
 base64.decode(text)                  // → bytes
 base64.urlEncode(data)  base64.urlDecode(text)
@@ -204,100 +204,101 @@ base64.urlEncode(data)  base64.urlDecode(text)
 
 ## 15. crypto/md5 与 crypto/sha256
 
-```go
-md5.sum(data)                        // → bytes（摘要）
+```ms
+md5.sum(data)                        // → bytes (digest)
 sha256.sum(data)
-h := sha256.new()                    // Hasher：write(data)/digest()/hexDigest()
+h := sha256.new()                    // Hasher: write(data)/digest()/hexDigest()
 ```
 
 ## 16. net
 
-```go
-conn := net.dial("tcp", "example.com:80")    // 协程感知
+```ms
+conn := net.dial("tcp", "example.com:80")    // coroutine-aware
 conn.read(n) conn.write(data) conn.close()
 conn.setDeadline(seconds)
 
 listener := net.listen("tcp", ":8080")
-conn := listener.accept()                    // 协程感知
+conn := listener.accept()                    // coroutine-aware
 ```
 
 ## 17. net/http
 
 客户端：
 
-```go
+```ms
 resp := http.get(url, headers=nil, timeout=30)
 resp := http.post(url, body, headers=nil)
-resp.status resp.headers resp.body           // body 为 str（按 Content-Type 解码）
-resp.json()                                  // 便捷：json.loads(body)
+resp.status resp.headers resp.body           // body is str (decoded per Content-Type)
+resp.json()                                  // shorthand for json.loads(body)
 req := http.request(method, url, body=nil, headers=nil)
 ```
 
 服务器：
 
-```go
+```ms
 func handler(req) {
-    return http.response(200, "ok")          // 或返回 str/dict（自动 JSON）
+    return http.response(200, "ok")          // or return str/dict (auto JSON)
 }
 
 srv := http.server(":8080", handler)
-srv.serve()                                  // 每个连接一个协程
+srv.serve()                                  // one coroutine per connection
 ```
 
 首版仅 HTTP/1.1，不含 TLS（TLS 依赖第三方库，列入路线图评估）。
 
 ## 18. sync
 
-```go
-mu := sync.mutex()                   // lock() unlock()，支持 with
+```ms
+mu := sync.mutex()                   // lock() unlock(); supports with
 rw := sync.rwMutex()                 // rlock() runlock() lock() unlock()
-wg := sync.waitGroup()               // add(n) done() wait()（协程感知）
+wg := sync.waitGroup()               // add(n) done() wait() (coroutine-aware)
 once := sync.once()                  // once.do(f)
-sync.setMaxThreads(n)                // 调整调度器工作线程数
+sync.setMaxThreads(n)                // adjusts the scheduler's worker thread count
 ```
 
 ## 19. testing
 
 约定：测试文件 `xxx_test.ms`，测试函数名以 `test` 开头。
 
-```go
+```ms
+import "strconv"
 import "testing"
 import "testing/assert"
 
 func testAdd() {
     assert.equal(1 + 1, 2)
-    assert.true(len([]) == 0)
-    assert.raises(ValueError, func() { strconv.parseInt("abc") })
+    assert.isTrue(len([]) == 0)
+    assert.raises(ValueError, lambda: strconv.parseInt("abc"))
 }
 
-testing.run()                        // 发现并运行当前模块的 test* 函数
+testing.run()                        // discovers and runs the current module's test* functions
 ```
 
 CLI 支持 `mslang test ./...`（发现 `*_test.ms` 并汇总报告）。
 
 ## 20. collections
 
-```go
-collections.deque(xs=[])             // append/appendLeft/pop/popLeft/rotate
-collections.heap()                   // push/pop/peek/pushPop（最小堆）
-collections.counter(xs)              // 计数 dict，mostCommon(n)
-collections.defaultdict(factory)     // 缺键自动调用 factory
-collections.orderedDict()            // dict 已有插入序，此为显式语义别名
+```ms
+collections.deque(xs=nil)            // append/appendLeft/pop/popLeft/rotate
+collections.heap()                   // push/pop/peek/pushPop (min-heap)
+collections.counter(xs)              // counting dict; mostCommon(n)
+collections.defaultdict(factory)     // calls factory for missing keys
+collections.orderedDict()            // dict already keeps insertion order; this is an explicit semantic alias
 ```
 
 ## 21. random
 
-```go
+```ms
 random.seed(n)
 random.random()                      // [0, 1)
-random.randInt(a, b)                 // [a, b] 闭区间
+random.randInt(a, b)                 // closed interval [a, b]
 random.choice(xs)  random.shuffle(xs)  random.sample(xs, k)
 random.gauss(mu, sigma)
 ```
 
 ## 22. itertools
 
-```go
+```ms
 itertools.count(start=0, step=1)  itertools.cycle(xs)  itertools.repeat(v, n=-1)
 itertools.chain(a, b, ...)  itertools.islice(it, start, stop, step=1)
 itertools.zipLongest(a, b, fill=nil)
@@ -308,24 +309,24 @@ itertools.accumulate(xs, f=nil)  itertools.takewhile(pred, xs)  itertools.dropwh
 
 ## 23. functools
 
-```go
-functools.reduce(f, xs, init)  // init 可选
+```ms
+functools.reduce(f, xs, init)  // init is optional
 functools.partial(f, *args, **kwargs)
-functools.lruCache(maxSize=128)      // 装饰器用法：见下
+functools.lruCache(maxSize=128)      // decorator usage: see below
 functools.compose(f, g)              // compose(f, g)(x) == f(g(x))
 ```
 
 装饰器语法（`@decorator`）列入路线图；首版用显式包装：
 
-```go
+```ms
 fib = functools.lruCache()(fib)
 ```
 
 ## 24. importlib
 
-```go
-importlib.importModule(path)         // 动态导入，返回模块对象
-importlib.reload(module)             // 重新执行模块代码（REPL 调试用）
+```ms
+importlib.importModule(path)         // dynamic import; returns the module object
+importlib.reload(module)             // re-executes the module code (for REPL debugging)
 ```
 
 ## 25. 协程感知 API 标注
