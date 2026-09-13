@@ -16,6 +16,10 @@ any code.
 
 - All C code MUST strictly follow `docs/language/10-c-style.md`.
 
+## MS Code
+
+- All MS (mslang) code MUST strictly follow `docs/language/12-ms-style.md`.
+
 ## Python Scripts
 
 - All Python code MUST follow PEP 8.
