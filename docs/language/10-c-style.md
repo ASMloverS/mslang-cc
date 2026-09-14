@@ -26,7 +26,7 @@
 对齐 Google 风格（C 子集）：
 
 - **缩进 2 空格**，禁止 Tab。
-- **行宽 80 列**；超长表达式按语义换行，续行缩进 4 空格。
+- **行宽 120 列**（Google 为 80 列，本项目放宽，与 MS 规范对齐）；超长表达式按语义换行，续行缩进 4 空格。
 - 大括号挂行尾（K&R 附着式），`else` 与前 `}` 同行：
 
 ```c
@@ -42,7 +42,8 @@ while (msLexerPeek(lexer) != '\0') {
 ```
 
 - 单语句块也必须带大括号。
-- 指针星号靠左：`MsObject *obj`（Google 允许两种，本项目固定靠左）。
+- 指针星号贴类型：`MsObject* obj` 为正确写法，`MsObject *obj` 为错误写法（Google 允许两种，本项目固定贴类型）。
+- 禁止同一声明语句声明多个指针变量（如 `MsObject* a, b;` 中 `b` 实际不是指针），每个指针变量单独声明。
 - `switch` 每个 `case` 要么以 `break`/`return` 结尾，要么标注 `// fallthrough`。
 - 二元运算符换行时运算符在行首（Java 风格）：
 
@@ -52,7 +53,7 @@ bool ok = msTypeOf(obj) == MS_TYPE_INT
 ```
 
 - 函数声明/定义换行：返回类型与函数名同行；参数一行放不下时每行一个参数、缩进 4 空格。
-- 行宽例外：不可拆分的长字符串字面量（如 URL）可超过 80 列。
+- 行宽例外：不可拆分的长字符串字面量（如 URL）可超过 120 列。
 - `switch` 必须含 `default` 分支；确实无默认处理时在 `default` 内注释说明。
 - 允许循环内声明：`for (size_t i = 0; i < n; ++i)`。
 - 变量声明靠近首次使用处，声明即初始化；聚合初始化用指定初始化器（如 `MsConfig config = {.gcThreshold = 1024};`）。
@@ -96,10 +97,10 @@ bool ok = msTypeOf(obj) == MS_TYPE_INT
 ## 5. 错误处理与资源管理
 
 - 无 setjmp 异常：内部函数用 `MsResult` 或 `NULL` + 状态错误位报告失败。
-- 资源获取即初始化（C 版）：函数内申请的资源在函数内释放。失败路径采用早返回，资源按获取的逆序释放；输出参数（如 `MsProto **out`）置于参数列表末尾：
+- 资源获取即初始化（C 版）：函数内申请的资源在函数内释放。失败路径采用早返回，资源按获取的逆序释放；输出参数（如 `MsProto** out`）置于参数列表末尾：
 
 ```c
-MsResult msCompileFile(MsState *L, const char *path, MsProto **out) {
+MsResult msCompileFile(MsState* L, const char* path, MsProto** out) {
   MsLexer lexer;
   MsResult result = msLexerInit(&lexer, path);
   if (result != MS_OK) {
@@ -130,7 +131,7 @@ MsResult msCompileFile(MsState *L, const char *path, MsProto **out) {
 ```c
 // Pushes obj onto the GC root stack so it survives allocation-triggered
 // collections. Must be paired with msRootPop in LIFO order.
-void msRootPush(MsState *L, MsObject *obj);
+void msRootPush(MsState* L, MsObject* obj);
 ```
 
 ## 8. 断言与防御
