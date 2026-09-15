@@ -51,17 +51,17 @@ msRootPop(L);        // pop, in LIFO order
 #define MS_VERSION_MINOR 1
 #define MS_VERSION_PATCH 0
 
-MsState *msNewState(void);
+MsState*  msNewState(void);
 // config carries thread count, GC threshold, etc.
-MsState *msNewStateWithConfig(const MsConfig *config);
-void     msCloseState(MsState *L);
+MsState*  msNewStateWithConfig(const MsConfig* config);
+void      msCloseState(MsState* L);
 
-MsResult msEvalString(MsState *L, const char *source);
-MsResult msEvalFile(MsState *L, const char *path);
-MsResult msEvalStringAs(MsState *L, const char *source, const char *chunkName);
+MsResult  msEvalString(MsState* L, const char* source);
+MsResult  msEvalFile(MsState* L, const char* path);
+MsResult  msEvalStringAs(MsState* L, const char* source, const char* chunkName);
 
-MsObject *msGetGlobal(MsState *L, const char *name);
-void      msSetGlobal(MsState *L, const char *name, MsObject *value);
+MsObject* msGetGlobal(MsState* L, const char* name);
+void      msSetGlobal(MsState* L, const char* name, MsObject* value);
 ```
 
 `MsResult` 为枚举：`MS_OK` / `MS_ERROR_RUNTIME` / `MS_ERROR_SYNTAX` / `MS_ERROR_OOM`。
@@ -70,79 +70,79 @@ void      msSetGlobal(MsState *L, const char *name, MsObject *value);
 
 ```c
 // Constructors
-MsObject *msNewNil(MsState *L);
-MsObject *msNewBool(MsState *L, bool v);
-MsObject *msNewInt(MsState *L, int64_t v);
-MsObject *msNewIntFromString(MsState *L, const char *text, int64_t base);
-MsObject *msNewFloat(MsState *L, double v);
-MsObject *msNewString(MsState *L, const char *utf8);
-MsObject *msNewStringN(MsState *L, const char *data, size_t len);
-MsObject *msNewBytes(MsState *L, const uint8_t *data, size_t len);
-MsObject *msNewList(MsState *L, int64_t capacity);
-MsObject *msNewDict(MsState *L);
-MsObject *msNewTuple(MsState *L, int64_t len);
+MsObject*   msNewNil(MsState* L);
+MsObject*   msNewBool(MsState* L, bool v);
+MsObject*   msNewInt(MsState* L, int64_t v);
+MsObject*   msNewIntFromString(MsState* L, const char* text, int64_t base);
+MsObject*   msNewFloat(MsState* L, double v);
+MsObject*   msNewString(MsState* L, const char* utf8);
+MsObject*   msNewStringN(MsState* L, const char* data, size_t len);
+MsObject*   msNewBytes(MsState* L, const uint8_t* data, size_t len);
+MsObject*   msNewList(MsState* L, int64_t capacity);
+MsObject*   msNewDict(MsState* L);
+MsObject*   msNewTuple(MsState* L, int64_t len);
 
 // Type checks and conversions
-MsTypeTag   msTypeOf(MsObject *obj);
-bool        msIsNil(MsObject *obj);
-bool        msIsInstance(MsState *L, MsObject *obj, MsObject *classObj);
-bool        msAsBool(MsState *L, MsObject *obj);
+MsTypeTag   msTypeOf(MsObject* obj);
+bool        msIsNil(MsObject* obj);
+bool        msIsInstance(MsState* L, MsObject* obj, MsObject* classObj);
+bool        msAsBool(MsState* L, MsObject* obj);
 // Raises TypeError if not convertible.
-int64_t     msAsInt(MsState *L, MsObject *obj);
-double      msAsFloat(MsState *L, MsObject *obj);
+int64_t     msAsInt(MsState* L, MsObject* obj);
+double      msAsFloat(MsState* L, MsObject* obj);
 // Internal buffer; valid until the next allocation.
-const char *msAsCString(MsState *L, MsObject *obj);
-size_t      msStringLen(MsObject *strObj);
+const char* msAsCString(MsState* L, MsObject* obj);
+size_t      msStringLen(MsObject* strObj);
 ```
 
 ## 6. 容器操作（container.h）
 
 ```c
-int64_t   msLen(MsState *L, MsObject *container);
+int64_t   msLen(MsState* L, MsObject* container);
 
-MsObject *msListGet(MsState *L, MsObject *list, int64_t index);
-void      msListSet(MsState *L, MsObject *list, int64_t index, MsObject *v);
-void      msListAppend(MsState *L, MsObject *list, MsObject *v);
+MsObject* msListGet(MsState* L, MsObject* list, int64_t index);
+void      msListSet(MsState* L, MsObject* list, int64_t index, MsObject* v);
+void      msListAppend(MsState* L, MsObject* list, MsObject* v);
 
 // Returns nil when the key is missing.
-MsObject *msDictGet(MsState *L, MsObject *dict, MsObject *key);
-void      msDictSet(MsState *L, MsObject *dict, MsObject *key, MsObject *v);
-bool      msDictContains(MsState *L, MsObject *dict, MsObject *key);
-void      msDictDelete(MsState *L, MsObject *dict, MsObject *key);
+MsObject* msDictGet(MsState* L, MsObject* dict, MsObject* key);
+void      msDictSet(MsState* L, MsObject* dict, MsObject* key, MsObject* v);
+bool      msDictContains(MsState* L, MsObject* dict, MsObject* key);
+void      msDictDelete(MsState* L, MsObject* dict, MsObject* key);
 
-MsObject *msStrConcat(MsState *L, MsObject *a, MsObject *b);
+MsObject* msStrConcat(MsState* L, MsObject* a, MsObject* b);
 ```
 
 ## 7. 调用与属性（call.h）
 
 ```c
-MsObject *msCallObject(MsState *L,
-    MsObject *callable,
+MsObject* msCallObject(MsState* L,
+    MsObject* callable,
     int64_t argc,
-    MsObject **argv);
-MsObject *msCallMethod(MsState *L,
-    MsObject *obj,
-    const char *method,
+    MsObject** argv);
+MsObject* msCallMethod(MsState* L,
+    MsObject* obj,
+    const char* method,
     int64_t argc,
-    MsObject **argv);
+    MsObject** argv);
 
-MsObject *msGetAttr(MsState *L, MsObject *obj, const char *name);
-void      msSetAttr(MsState *L, MsObject *obj, const char *name, MsObject *v);
-bool      msHasAttr(MsState *L, MsObject *obj, const char *name);
+MsObject* msGetAttr(MsState* L, MsObject* obj, const char* name);
+void      msSetAttr(MsState* L, MsObject* obj, const char* name, MsObject* v);
+bool      msHasAttr(MsState* L, MsObject* obj, const char* name);
 ```
 
 ## 8. 错误处理（error.h）
 
 ```c
-bool        msErrorOccurred(MsState *L);
+bool        msErrorOccurred(MsState* L);
 // Takes and clears the current exception object.
-MsObject   *msErrorGet(MsState *L);
-void        msErrorClear(MsState *L);
-void        msRaise(MsState *L, MsObject *excObj);
-void        msRaiseTypeError(MsState *L, const char *fmt, ...);
-void        msRaiseValueError(MsState *L, const char *fmt, ...);
-void        msRaiseRuntimeError(MsState *L, const char *fmt, ...);
-void        msRaiseOSError(MsState *L, int sysErrno, const char *fmt, ...);
+MsObject*   msErrorGet(MsState* L);
+void        msErrorClear(MsState* L);
+void        msRaise(MsState* L, MsObject* excObj);
+void        msRaiseTypeError(MsState* L, const char* fmt, ...);
+void        msRaiseValueError(MsState* L, const char* fmt, ...);
+void        msRaiseRuntimeError(MsState* L, const char* fmt, ...);
+void        msRaiseOSError(MsState* L, int sysErrno, const char* fmt, ...);
 ```
 
 约定：所有返回 `MsObject*` 的 API 失败时返回 `NULL` 且设置错误状态；返回 `MsResult` 的 API 用枚举区分。C 扩展函数出错时设置错误并返回 `NULL`，VM 将其转为脚本异常。`msRaiseOSError` 的 `sysErrno` 保留 `int`（直接对应 C 库 `errno` 约定），是「对外接口用定宽类型」规则的显式例外。
@@ -150,32 +150,32 @@ void        msRaiseOSError(MsState *L, int sysErrno, const char *fmt, ...);
 ## 9. 扩展模块（module.h）
 
 ```c
-typedef MsObject *(*MsCFunction)(MsState *L, int64_t argc, MsObject **argv);
+typedef MsObject* (*MsCFunction)(MsState* L, int64_t argc, MsObject** argv);
 
 typedef struct {
-  const char  *name;     // "factorial"
-  MsCFunction  func;
-  const char  *doc;      // docstring, may be NULL
+  const char* name;     // "factorial"
+  MsCFunction func;
+  const char* doc;      // docstring, may be NULL
 } MsMethodDef;
 
 typedef struct {
-  const char        *name;     // module name: "fastmath"
-  const char        *doc;
-  const MsMethodDef *methods;  // array terminated by {NULL, NULL, NULL}
+  const char*        name;     // module name: "fastmath"
+  const char*        doc;
+  const MsMethodDef* methods;  // array terminated by {NULL, NULL, NULL}
 } MsModuleDef;
 
 // Static registration by the embedder:
-MsResult msRegisterModule(MsState *L, const MsModuleDef *def);
+MsResult msRegisterModule(MsState* L, const MsModuleDef* def);
 
 // Dynamic loading convention: a shared library exports a function
 // named mslangInit_<name>:
-const MsModuleDef *mslangInit_fastmath(void);
+const MsModuleDef* mslangInit_fastmath(void);
 ```
 
 C 函数实现示例：
 
 ```c
-static MsObject *fastmathFactorial(MsState *L, int64_t argc, MsObject **argv) {
+static MsObject* fastmathFactorial(MsState* L, int64_t argc, MsObject** argv) {
   if (argc != 1 || msTypeOf(argv[0]) != MS_TYPE_INT) {
     msRaiseTypeError(L, "factorial() requires exactly one int");
     return NULL;
@@ -197,7 +197,7 @@ static const MsModuleDef fastmathModule = {
   "fastmath", "fast math routines", fastmathMethods,
 };
 
-const MsModuleDef *mslangInit_fastmath(void) {
+const MsModuleDef* mslangInit_fastmath(void) {
   return &fastmathModule;
 }
 ```
@@ -210,19 +210,19 @@ C 扩展可定义脚本可见的新类型（如高性能矩阵、数据库连接
 
 ```c
 typedef struct {
-  const char *name;     // "Matrix"
+  const char* name;     // "Matrix"
   size_t instanceSize;  // per-instance extra data size
   MsCFunction init;     // constructor, may be NULL
   // Called before the GC frees the instance; may be NULL.
-  void (*finalize)(MsObject *obj);
-  MsObject *(*toString)(MsState *L, MsObject *obj);
-  const MsMethodDef *methods;
+  void (*finalize)(MsObject* obj);
+  MsObject* (*toString)(MsState* L, MsObject* obj);
+  const MsMethodDef* methods;
 } MsTypeDef;
 
 // Defines a new script-visible type; returns the type object.
-MsObject *msDefineType(MsState *L, const MsTypeDef *def);
+MsObject* msDefineType(MsState* L, const MsTypeDef* def);
 // Returns the extra data area of a C type instance.
-void *msCInstanceData(MsObject *instance);
+void* msCInstanceData(MsObject* instance);
 ```
 
 `finalize` 仅用于释放 C 侧资源（关闭 fd、free 外部内存），不得在其中访问其他脚本对象（回收顺序未定义）。
@@ -235,24 +235,24 @@ void *msCInstanceData(MsObject *instance);
 #include <mslang/mslang.h>
 
 int main(void) {
-  MsState *L = msNewState();
+  MsState* L = msNewState();
   if (L == NULL) {
     return 1;
   }
 
   if (msEvalFile(L, "scripts/main.ms") != MS_OK) {
-    MsObject *err = msErrorGet(L);
+    MsObject* err = msErrorGet(L);
     fprintf(stderr, "mslang error: %s\n", msAsCString(L, err));
     msCloseState(L);
     return 1;
   }
 
   // Calls the script function fib(30).
-  MsObject *fib = msGetGlobal(L, "fib");
+  MsObject* fib = msGetGlobal(L, "fib");
   msRootPush(L, fib);
-  MsObject *arg = msNewInt(L, 30);
+  MsObject* arg = msNewInt(L, 30);
   msRootPush(L, arg);
-  MsObject *result = msCallObject(L, fib, 1, &arg);
+  MsObject* result = msCallObject(L, fib, 1, &arg);
   msRootPop(L);  // arg
   msRootPop(L);  // fib
 

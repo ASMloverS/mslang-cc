@@ -88,7 +88,7 @@ bool ok = msTypeOf(obj) == MS_TYPE_INT
 - 禁止：VLA（变长数组）、`alloca`、递归宏、K&R 函数定义、`gets` 类危险函数。
 - 整数：对外接口用定宽类型（`int64_t`、`size_t`）；循环下标可用 `int`。
 - 禁止自定义整型缩写别名（`u8`、`i32` 等），统一使用 `<stdint.h>`/`<stddef.h>` 的定宽类型。
-- `typedef`：公开 API 中的纯数据配置结构体允许 `typedef`（`MsMethodDef`、`MsModuleDef`、`MsTypeDef`、`MsConfig`）；其余 typedef 仅限不透明类型与枚举。内部结构体一律 `struct MsLexer`（类型名即结构体名，不加 `_t` 后缀）。
+- `typedef`：公开 API 中的纯数据配置结构体与函数指针允许 `typedef`（`MsMethodDef`、`MsModuleDef`、`MsTypeDef`、`MsConfig`、`MsCFunction`）；其余 typedef 仅限不透明类型与枚举。内部结构体一律 `struct MsLexer`（类型名即结构体名，不加 `_t` 后缀）。
 - 布尔用 `<stdbool.h>` 的 `bool`/`true`/`false`；空指针用 `NULL`，不用 `0`。
 - 优先 `static inline` 函数；函数式宏仅限编译期求值等函数无法替代的场景（如 `MS_ARRAY_LEN`）。
 - const 正确性：不修改的指针参数必须声明为 `const`。

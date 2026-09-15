@@ -29,17 +29,17 @@
 ```c
 struct MsProto {
   MsObjectHeader header;
-  uint32_t      *code;        // instruction stream
-  MsObject     **consts;      // constant pool: numbers, strings, child protos
+  uint32_t*      code;        // instruction stream
+  MsObject**     consts;      // constant pool: numbers, strings, child protos
   int            codeLen;
   int            constsLen;
   int            paramCount;  // parameter count
   int            localCount;  // register window size (local variable slots)
   int            stackSize;   // max eval stack depth (set at compile time)
-  MsTryBlock    *tryBlocks;   // exception table
-  MsLineEntry   *lines;       // pc -> line number map
-  MsString      *name;
-  MsString      *sourceFile;
+  MsTryBlock*    tryBlocks;   // exception table
+  MsLineEntry*   lines;       // pc -> line number map
+  MsString*      name;
+  MsString*      sourceFile;
   bool           isAsync;
   bool           hasVarArgs;
   bool           hasKwArgs;
@@ -83,9 +83,9 @@ typedef enum {
 } MsTypeTag;
 
 struct MsObjectHeader {
-  MsType   *type;       // the type object
+  MsType*   type;       // the type object
   uint8_t   markColor;  // GC mark color
-  MsObject *gcNext;     // next node in the all-objects list
+  MsObject* gcNext;     // next node in the all-objects list
 };
 ```
 
@@ -120,12 +120,12 @@ struct MsObjectHeader {
 ```c
 struct MsCoroutine {
   MsObjectHeader header;
-  MsCallFrame *frames;      // call stack
-  MsObject   **stack;       // evaluation stack
+  MsCallFrame* frames;      // call stack
+  MsObject**   stack;       // evaluation stack
   int          state;       // READY / RUNNING / SUSPENDED / DEAD
-  MsObject    *result;      // return value or uncaught exception
-  MsObject    *waiters;     // queue of coroutines awaiting this one
-  MsWaitQueue *blockedOn;   // channel/handle this coroutine is blocked on
+  MsObject*    result;      // return value or uncaught exception
+  MsObject*    waiters;     // queue of coroutines awaiting this one
+  MsWaitQueue* blockedOn;   // channel/handle this coroutine is blocked on
   // ...
 };
 ```

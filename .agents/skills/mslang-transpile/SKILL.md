@@ -1,6 +1,6 @@
 ---
 name: mslang-transpile
-description: Transpile MSL (mslang) source files (.ms) to C using the mslang compiler and the C99 dialect from docs/language/10-c-style.md. Use when the user asks to translate, port, convert, compile, or transpile MSL/mslang code into C.
+description: Transpile MSL (mslang) source files (.ms) to C using the mslang compiler and the C11 dialect from docs/language/10-c-style.md. Use when the user asks to translate, port, convert, compile, or transpile MSL/mslang code into C.
 ---
 
 # MSL → C Transpilation
@@ -8,7 +8,7 @@ description: Transpile MSL (mslang) source files (.ms) to C using the mslang com
 Transpile MSL (mslang) source into C. There is no mechanical compiler; you
 are the compiler. Correctness of the output C code is your responsibility.
 
-The C99 dialect and all binding rules live in `docs/language/10-c-style.md`.
+The C11 dialect and all binding rules live in `docs/language/10-c-style.md`.
 It is long — read only the section relevant to the construct at hand.
 
 ## Workflow
@@ -26,49 +26,61 @@ It is long — read only the section relevant to the construct at hand.
 Read `docs/language/10-c-style.md` per section, matched to what the current
 source actually uses — never all at once:
 
-- §3.2 (naming) — ALWAYS. Read first, applies to every file.
-- §4.1–4.3 (header/layout, includes, file-local types) — per output file.
-- §4.4 (functions: `static`, return types, parameter passing) — per function.
-- §5.2 (string lifetime), §7.2 (error handling), §7.4 (allocation) — when the
-  source touches strings, errors, or heap memory.
-- §7.6 (container selection) — when the source needs a data structure.
-- §8 (cast macros) — when the code needs type conversions. Includes the full
-  integer conversion policy (narrowing via `MslCast*`, never raw C casts).
-- §10 (restrictions) — check the final output against this list.
+- §2 (formatting) and §3 (naming) — ALWAYS. Read first, apply to every file.
+- §1 (file organization, include guards, include order) — per output file.
+- §4 (C feature rules: fixed-width integers, typedef limits, const) — when
+  declaring types and functions.
+- §5 (error handling, resource management) — when a function can fail or
+  owns resources.
+- §6 (memory and GC discipline) — when the source touches heap memory or
+  holds `MsObject*` across API calls.
+- §7 (comments and docs) — when writing public headers.
+- §8 (assertions) — for internal invariants.
+- §9 (platform abstraction) — when the source needs threads, atomics,
+  clocks, sockets, or dynamic loading.
 
 ### 3. Map MSL to C
 
-- Names: apply §3.2 — functions `MslPascalCase`, variables/parameters
-  `camelCase`, macros/constants `MSL_UPPER_SNAKE`, enum values
-  `MslName_Value`.
-- Types: fixed-width types only (`int32_t`, `uint64_t`, ...); `size_t` for
-  sizes and indices; `bool` for truth values (§3.3).
-- Mutable out-results are pointer parameters; large struct inputs are
-  `const`-pointer parameters (§4.4.3).
-- Strings: `char *` mutable / `const char *` read-only, always NUL-terminated;
-  `MslString` only when the length itself is the point (§5.2).
-- Runtime APIs: use the `msl_*` headers from `docs/language/09-c-api.md` —
+- Names: apply §3 — functions `msLowerCamelCase`, types `MsUpperCamelCase`,
+  constants/macros/enum values `MS_UPPER_SNAKE`, file-local statics
+  `lowerCamelCase`.
+- Types: fixed-width types only (`int64_t`, `uint8_t`, ...); `size_t` for
+  sizes and indices; `bool` from `<stdbool.h>`; no custom integer aliases
+  (§4).
+- Pointers: the star attaches to the type — `MsObject* obj`, never
+  `MsObject *obj`; declare one pointer variable per statement (§2).
+- Error handling: report failure via `MsResult` or `NULL` + error state;
+  fail fast with early returns and release resources in reverse order of
+  acquisition (§5). Never let `errno` propagate across layers.
+- Memory: allocate only via `msAlloc`/`msRealloc`/`msFree`; never call
+  `malloc` directly (§6).
+- GC roots: any local `MsObject*` that lives across a possible allocation
+  must be pushed with `msRootPush` and popped in LIFO order
+  (09-c-api.md §3).
+- Runtime APIs: use the `ms*` functions from `docs/language/09-c-api.md` —
   never reimplement what the runtime provides.
-- No suitable runtime API: add exactly one abstraction layer per §3.4, named
-  `Msl<Domain><Action>`. It must be reusable; caller logic stays out.
-- Data structures: pick from `msl_list`, `msl_dictionary`, `msl_bitset`,
-  `msl_queue` per §7.6. Introduce a local container only when nothing fits.
+- Platform-dependent functionality (threads, atomics, sockets, clocks): call
+  the `src/platform/` abstraction; no `#ifdef _WIN32` outside it (§9).
 
 ### 4. Emit and verify
 
-- Output `.c`/`.h` per §4 (UTF-8, LF, 4-space indent, 80-column limit,
-  Allman braces, one declaration per line).
-- Sweep the output against §10 restrictions and the cleanup rules in §7.5.
-- Every allocation needs an error path and a cleanup path (§7.2/§7.4/§7.5).
+- Output `.c`/`.h` per §1–§2: UTF-8, LF, 2-space indent, 120-column limit,
+  K&R braces, include guards (no `#pragma once`), self-contained headers.
+- Sweep the output against the §4 prohibition list: no VLA, no `alloca`, no
+  K&R definitions, no `gets`-class functions, no mutable globals, no
+  typedefs outside the allowed set.
+- Every allocation needs an error path and a cleanup path (§5/§6).
 
 ## Common pitfalls
 
-- Raw C casts instead of the §8 `MslCast*` macros.
-- `MslString` used as the general string type — it is for length-aware
-  processing only; plain C strings are the default.
+- Star-left pointer declarations (`MsObject *obj`) — always `MsObject* obj`.
+- Direct `malloc`/`free` instead of `msAlloc`/`msRealloc`/`msFree`.
+- Holding an `MsObject*` across an allocation without `msRootPush`.
 - Reimplementing functionality the runtime already provides — check
   `docs/language/09-c-api.md` first.
-- Uppercase function or type names — only macros and constants are
-  `UPPER_SNAKE`; types are `MslPascalCase`, functions `MslPascalCase`.
-- Pointer typedefs and `typedef` of primitives — both forbidden (§3.1/§3.3).
-- `goto` for anything other than a cleanup path (§10).
+- Wrong naming case — functions are `msLowerCamelCase`, types
+  `MsUpperCamelCase`, only constants/macros are `MS_UPPER_SNAKE`.
+- `/* */` comments — C code uses `//` only, including doc comments (§7).
+- `typedef` of internal structs — the allowed set is the config structs and
+  `MsCFunction`, opaque types, and enums; internal structs stay
+  `struct MsFoo` (§4).
