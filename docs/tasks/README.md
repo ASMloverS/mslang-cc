@@ -39,7 +39,7 @@
 
 | 状态 | 序号 | 阶段 | 任务 |
 |---|---|---|---|
-| ⬜ | 01 | v0.1 | [工程骨架与构建系统](01-project-skeleton.md) |
+| ✅ | 01 | v0.1 | [工程骨架与构建系统](01-project-skeleton.md) |
 | ⬜ | 02 | v0.1 | [核心基础设施（msAlloc、MsResult、通用宏）](02-core-infrastructure.md) |
 | ⬜ | 03 | v0.1 | [词法分析器（Lexer）](03-lexer.md) |
 | ⬜ | 04 | v0.1 | [语法分析器与 AST](04-parser-ast.md) |
