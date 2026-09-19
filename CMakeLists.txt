@@ -48,3 +48,9 @@ target_include_directories(mslang
         "${PROJECT_SOURCE_DIR}/src")
 mslang_apply_warnings(mslang)
 mslang_apply_asan(mslang)
+
+add_executable(mslang-cli src/cli/main.c)
+target_link_libraries(mslang-cli PRIVATE mslang)
+set_target_properties(mslang-cli PROPERTIES OUTPUT_NAME mslang)
+mslang_apply_warnings(mslang-cli)
+mslang_apply_asan(mslang-cli)
