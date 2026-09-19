@@ -39,6 +39,7 @@ function(mslang_apply_asan target)
 endfunction()
 
 add_library(mslang ${MSLANG_LIBRARY_TYPE} src/ms_version.c)
+set_target_properties(mslang PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(mslang
     PUBLIC
         "${PROJECT_SOURCE_DIR}/include"
