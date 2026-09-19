@@ -1,0 +1,12 @@
+#ifndef MSLANG_INCLUDE_MSLANG_VERSION_H_
+#define MSLANG_INCLUDE_MSLANG_VERSION_H_
+
+#define MS_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define MS_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define MS_VERSION_PATCH @PROJECT_VERSION_PATCH@
+
+// Returns the mslang version string, e.g. "0.1.0". The returned pointer is
+// valid for the lifetime of the program and must not be freed.
+const char* msVersionString(void);
+
+#endif  // MSLANG_INCLUDE_MSLANG_VERSION_H_
