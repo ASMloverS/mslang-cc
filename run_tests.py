@@ -37,7 +37,6 @@ def run_test(mslang: Path, script: Path) -> bool:
     result = subprocess.run(
         [str(mslang), str(script)],
         capture_output=True,
-        text=True,
         check=False,
     )
     return result.returncode == 0
