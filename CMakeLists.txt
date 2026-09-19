@@ -55,6 +55,11 @@ set_target_properties(mslang-cli PROPERTIES OUTPUT_NAME mslang)
 mslang_apply_warnings(mslang-cli)
 mslang_apply_asan(mslang-cli)
 
+add_executable(embed-example examples/embed_demo.c)
+target_link_libraries(embed-example PRIVATE mslang)
+mslang_apply_warnings(embed-example)
+mslang_apply_asan(embed-example)
+
 if(MSLANG_BUILD_TESTS)
   enable_testing()
   function(mslang_add_c_test name)
