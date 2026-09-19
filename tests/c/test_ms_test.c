@@ -14,22 +14,24 @@ MS_TEST(MsTest, AssertTruePassesOnTrue) {
 MS_TEST(MsTest, AssertEqCountsFailureWithoutAborting) {
   int failuresBefore = msTestFailureCount;
   MS_ASSERT_EQ(1, 2);
-  MS_ASSERT_TRUE(msTestFailureCount == failuresBefore + 1);
+  int counted = (msTestFailureCount == failuresBefore + 1);
   msTestFailureCount = failuresBefore;
+  MS_ASSERT_TRUE(counted);
 }
 
 MS_TEST(MsTest, AssertTrueCountsFailureWithoutAborting) {
   int failuresBefore = msTestFailureCount;
   MS_ASSERT_TRUE(1 > 2);
-  MS_ASSERT_TRUE(msTestFailureCount == failuresBefore + 1);
+  int counted = (msTestFailureCount == failuresBefore + 1);
   msTestFailureCount = failuresBefore;
+  MS_ASSERT_TRUE(counted);
 }
 
-static const MsTestCase kCases[] = {
+static const MsTestCase msTestCases[] = {
     {"MsTest.AssertEqPassesOnEquality", testMsTestAssertEqPassesOnEquality},
     {"MsTest.AssertTruePassesOnTrue", testMsTestAssertTruePassesOnTrue},
     {"MsTest.AssertEqCountsFailureWithoutAborting", testMsTestAssertEqCountsFailureWithoutAborting},
     {"MsTest.AssertTrueCountsFailureWithoutAborting", testMsTestAssertTrueCountsFailureWithoutAborting},
 };
 
-MS_TEST_MAIN(kCases)
+MS_TEST_MAIN(msTestCases)
