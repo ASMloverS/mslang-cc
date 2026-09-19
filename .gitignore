@@ -1,6 +1,9 @@
 # Build artifacts (must stay in build/ per AGENTS.md)
 build/
 
+# Isolated workspaces
+.worktrees/
+
 # Compiled output
 *.o
 *.obj
