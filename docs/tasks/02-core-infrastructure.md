@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [01 工程骨架与构建系统](01-project-skeleton.md) |
+| v0.1 | ✅ | [01 工程骨架与构建系统](01-project-skeleton.md) |
 
 ## 任务目标
 
@@ -343,25 +343,25 @@ void msDiagListPrint(const struct MsDiagList* list, FILE* out);
 
 ## 验收标准
 
-- [ ] `include/mslang/error.h`、`src/core/ms_common.{h,c}`、
+- [x] `include/mslang/error.h`、`src/core/ms_common.{h,c}`、
   `src/core/ms_memory.{h,c}`、`src/core/ms_diag.{h,c}` 存在；guard 形如
   `MSLANG_INCLUDE_MSLANG_ERROR_H_` / `MSLANG_SRC_CORE_MS_<文件>_H_`，
   头文件全部自包含。
-- [ ] 代码风格符合 10-c-style：2 空格缩进、120 列、K&R 括号、指针星号贴
+- [x] 代码风格符合 10-c-style：2 空格缩进、120 列、K&R 括号、指针星号贴
   类型、函数 `msLowerCamelCase`、类型 `MsUpperCamelCase`、常量与枚举值
   `MS_UPPER_SNAKE`、`struct MsDiag`/`struct MsDiagList` 不 typedef。
-- [ ] `MsResult` 取值与 09-c-api §4 一致且全项目唯一定义点；后续模块
+- [x] `MsResult` 取值与 09-c-api §4 一致且全项目唯一定义点；后续模块
   不重复定义。
-- [ ] 全项目（含后续模块提交时评审）无直接 `malloc/realloc/free` 调用；
+- [x] 全项目（含后续模块提交时评审）无直接 `malloc/realloc/free` 调用；
   `msAlloc/msRealloc/msFree` 失败返回 `NULL`，调用侧统一转为
   `MS_ERROR_OOM` 或上抛 `NULL`。
-- [ ] 分配统计（allocCount/freeCount/liveBlocks/currentBytes/peakBytes/
+- [x] 分配统计（allocCount/freeCount/liveBlocks/currentBytes/peakBytes/
   totalAllocatedBytes）记账精确；`msMemSetFailAfter` 失败注入可用。
-- [ ] `struct MsDiagList` 与 `msDiagReport` 签名同任务 03 的假定一致，
+- [x] `struct MsDiagList` 与 `msDiagReport` 签名同任务 03 的假定一致，
   容量上限 20（`MS_DIAG_MAX_COUNT`），条目含文件/行/列/错误码/消息。
-- [ ] `tests/c/test_common.c`、`tests/c/test_memory.c`、
+- [x] `tests/c/test_common.c`、`tests/c/test_memory.c`、
   `tests/c/test_diag.c` 覆盖「测试方案」全部清单项并全部通过
   （`ctest --test-dir build` 全绿，开启 `MSLANG_STRICT_WARNINGS` 无警告）。
-- [ ] 构建产物只落在 `build/`；所有文本文件 UTF-8 无 BOM、LF 行尾、
+- [x] 构建产物只落在 `build/`；所有文本文件 UTF-8 无 BOM、LF 行尾、
   无行尾空白。
-- [ ] 无 TBD/TODO 占位；与任务 03/04 的接口假定在实现时已对齐。
+- [x] 无 TBD/TODO 占位；与任务 03/04 的接口假定在实现时已对齐。

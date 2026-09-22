@@ -38,7 +38,11 @@ function(mslang_apply_asan target)
   endif()
 endfunction()
 
-add_library(mslang ${MSLANG_LIBRARY_TYPE} src/ms_version.c)
+add_library(mslang ${MSLANG_LIBRARY_TYPE}
+    src/ms_version.c
+    src/core/ms_common.c
+    src/core/ms_memory.c
+    src/core/ms_diag.c)
 set_target_properties(mslang PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(mslang
     PUBLIC
@@ -65,6 +69,7 @@ if(MSLANG_BUILD_TESTS)
   function(mslang_add_c_test name)
     add_executable(${name} "tests/c/${name}.c")
     target_include_directories(${name} PRIVATE "${PROJECT_SOURCE_DIR}/tests/c")
+    target_include_directories(${name} PRIVATE "${PROJECT_SOURCE_DIR}/src")
     target_link_libraries(${name} PRIVATE mslang)
     mslang_apply_warnings(${name})
     mslang_apply_asan(${name})
@@ -75,4 +80,7 @@ if(MSLANG_BUILD_TESTS)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
   mslang_add_c_test(test_ms_test)
+  mslang_add_c_test(test_common)
+  mslang_add_c_test(test_memory)
+  mslang_add_c_test(test_diag)
 endif()
