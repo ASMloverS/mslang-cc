@@ -9,11 +9,12 @@ MsResult msDiagListInit(struct MsDiagList* list, const char* chunkName) {
   MS_ASSERT(list != NULL);
   MS_ASSERT(chunkName != NULL);
   list->chunkName = chunkName;
+  list->items = NULL;
+  list->count = 0;
   list->items = (struct MsDiag*)msAlloc(MS_DIAG_MAX_COUNT * sizeof(struct MsDiag));
   if (list->items == NULL) {
     return MS_ERROR_OOM;
   }
-  list->count = 0;
   return MS_OK;
 }
 

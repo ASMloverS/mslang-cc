@@ -43,8 +43,8 @@ struct MsMemStats {
 // Copies a snapshot of the counters into out.
 void msMemGetStats(struct MsMemStats* out);
 
-// Zeroes the counters. Does NOT free live blocks; use only for test
-// isolation, never to hide leaks.
+// Zeroes the counters. Does NOT free live blocks and does NOT reset the
+// fail-after injector; use only for test isolation, never to hide leaks.
 void msMemResetStats(void);
 
 // After n more successful allocations, msAlloc/msRealloc start failing.
