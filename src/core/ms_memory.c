@@ -14,6 +14,8 @@ struct MsMemHeader {
 #define MS_MEM_HEADER_SIZE \
   ((sizeof(struct MsMemHeader) + alignof(max_align_t) - 1) / alignof(max_align_t) * alignof(max_align_t))
 
+_Static_assert(MS_MEM_HEADER_SIZE % alignof(max_align_t) == 0, "header must preserve max_align_t alignment");
+
 // Process-level diagnostic counters, accessed only through the functions in
 // this file (sanctioned exception to the no-mutable-globals rule; see task
 // 02 design notes). Single-threaded semantics for v0.1.

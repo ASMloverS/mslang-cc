@@ -203,6 +203,22 @@ MS_TEST(Memory, AllocOverflowFailsCleanly) {
   assertNoLeak();
 }
 
+MS_TEST(Memory, ReallocOverflowKeepsOriginalBlock) {
+  msMemResetStats();
+  char* p = (char*)msAlloc(32);
+  MS_ASSERT_TRUE(p != NULL);
+  p[0] = 'y';
+  MS_ASSERT_TRUE(msRealloc(p, SIZE_MAX) == NULL);
+  MS_ASSERT_EQ('y', p[0]);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, stats.reallocCount);
+  MS_ASSERT_EQ(1, stats.liveBlocks);
+  MS_ASSERT_EQ(32, stats.currentBytes);
+  msFree(p);
+  assertNoLeak();
+}
+
 static const MsTestCase msTestCases[] = {
     {"Memory.AllocWritableAndAccounted", testMemoryAllocWritableAndAccounted},
     {"Memory.AllocAlignsToMaxAlign", testMemoryAllocAlignsToMaxAlign},
@@ -215,6 +231,7 @@ static const MsTestCase msTestCases[] = {
     {"Memory.FailAfterCountsDownSuccesses", testMemoryFailAfterCountsDownSuccesses},
     {"Memory.ReallocFailureKeepsOriginalBlock", testMemoryReallocFailureKeepsOriginalBlock},
     {"Memory.AllocOverflowFailsCleanly", testMemoryAllocOverflowFailsCleanly},
+    {"Memory.ReallocOverflowKeepsOriginalBlock", testMemoryReallocOverflowKeepsOriginalBlock},
 };
 
 MS_TEST_MAIN(msTestCases)

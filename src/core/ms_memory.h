@@ -6,13 +6,13 @@
 
 // MSVC C mode (-std:c11) does not provide max_align_t in <stddef.h>; define
 // an equivalent whose alignment matches the strictest fundamental type.
-#if defined(_MSC_VER) && !defined(__cplusplus)
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__cplusplus)
 typedef union {
-  long long msAlignLl_;
-  long double msAlignLd_;
-  double msAlignD_;
-  void* msAlignP_;
-  void (*msAlignFp_)(void);
+  long long msAlignLl;
+  long double msAlignLd;
+  double msAlignD;
+  void* msAlignP;
+  void (*msAlignFp)(void);
 } max_align_t;
 #endif
 
