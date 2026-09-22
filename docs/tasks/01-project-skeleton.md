@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | 无 |
+| v0.1 | ✅ | 无 |
 
 ## 任务目标
 
@@ -125,10 +125,10 @@ typedef struct {
 
 ## 验收标准
 
-- [ ] `cmake -B build` 与 `cmake --build build` 在 Windows/Linux/macOS 均成功。
-- [ ] `ctest --test-dir build` 全绿。
-- [ ] 开启 `MSLANG_STRICT_WARNINGS` 后无任何警告。
-- [ ] `mslang --version` 输出 `mslang 0.1.0`。
-- [ ] `python run_tests.py` 在无 ms 测试时退出 0。
-- [ ] 构建产物全部位于 `build/` 内，仓库其他位置无产物。
-- [ ] 所有文本文件 UTF-8 无 BOM、LF 行尾、无行尾空白。
+- [x] `cmake -B build` 与 `cmake --build build` 在 Windows/Linux/macOS 均成功（本机 Windows 验证；Linux/macOS 依赖 CI）。
+- [x] `ctest --test-dir build` 全绿。
+- [x] 开启 `MSLANG_STRICT_WARNINGS` 后无任何警告。
+- [x] `mslang --version` 输出 `mslang 0.1.0`。
+- [x] `python run_tests.py` 在无 ms 测试时退出 0。
+- [x] 构建产物全部位于 `build/` 内，仓库其他位置无产物。
+- [x] 所有文本文件 UTF-8 无 BOM、LF 行尾、无行尾空白。
