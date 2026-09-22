@@ -40,7 +40,8 @@ endfunction()
 
 add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/ms_version.c
-    src/core/ms_common.c)
+    src/core/ms_common.c
+    src/core/ms_memory.c)
 set_target_properties(mslang PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(mslang
     PUBLIC
@@ -79,4 +80,5 @@ if(MSLANG_BUILD_TESTS)
   endfunction()
   mslang_add_c_test(test_ms_test)
   mslang_add_c_test(test_common)
+  mslang_add_c_test(test_memory)
 endif()
