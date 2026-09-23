@@ -339,6 +339,184 @@ static void msLexerMakeEof(const struct MsLexer* lexer, struct MsToken* out) {
   out->column = lexer->column;
 }
 
+static bool msLexerIsDigit(char c) {
+  return c >= '0' && c <= '9';
+}
+
+// True when c is a valid digit in base (2, 8, 10 or 16).
+static bool msLexerIsBaseDigit(char c, int base) {
+  if (msLexerIsDigit(c)) {
+    return c - '0' < base;
+  }
+  if (base == 16) {
+    return (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+  }
+  return false;
+}
+
+// Consumes a run of base digits, applying the underscore rule (single
+// underscores between digits only). stopAtExponent makes 'e'/'E' end the
+// run cleanly (decimal integer and fraction parts only). Returns true on a
+// clean run with *digitCount set; on the first violation returns false with
+// *errLine/*errColumn at the offending byte (a digit or letter invalid in
+// this base, a misplaced underscore, or a trailing underscore), leaving the
+// cursor on it -- or just past it for a trailing underscore.
+static bool msLexerScanDigits(struct MsLexer* lexer, int base, bool stopAtExponent,
+    size_t* digitCount, uint32_t* errLine, uint32_t* errColumn) {
+  *digitCount = 0;
+  bool lastUnderscore = false;
+  for (;;) {
+    char c = msLexerCurrent(lexer);
+    if (msLexerIsBaseDigit(c, base)) {
+      msLexerAdvanceChar(lexer);
+      ++*digitCount;
+      lastUnderscore = false;
+      continue;
+    }
+    if (c == '_') {
+      if (*digitCount == 0 || lastUnderscore) {
+        *errLine = lexer->line;
+        *errColumn = lexer->column;
+        return false;
+      }
+      msLexerAdvanceChar(lexer);
+      lastUnderscore = true;
+      continue;
+    }
+    if (stopAtExponent && (c == 'e' || c == 'E')) {
+      break;
+    }
+    if (msLexerIsIdentContinue(c)) {
+      // [0-9A-Za-z] byte that is not a valid digit in this base
+      // (0b102, 0o8, 0xG).
+      *errLine = lexer->line;
+      *errColumn = lexer->column;
+      return false;
+    }
+    break;
+  }
+  if (lastUnderscore) {
+    // Trailing underscore: it is the byte right before the cursor.
+    *errLine = lexer->line;
+    *errColumn = lexer->column - 1;
+    return false;
+  }
+  return true;
+}
+
+// Scans an integer or float literal (01-lexical section 5). The cursor is on
+// a digit, or on '.' with a digit right after it (".5" form). Only the
+// lexical shape is validated: the token keeps the raw slice, values are
+// never converted. Errors report E107 (bad underscore placement, digit
+// outside the base, missing exponent digits) or E108 (dot with no digit
+// after it) and yield an INVALID token covering the erroneous fragment.
+static MsResult msLexerScanNumber(struct MsLexer* lexer, struct MsToken* out) {
+  out->start = lexer->source + lexer->pos;
+  out->line = lexer->line;
+  out->column = lexer->column;
+  out->type = MS_TOKEN_INT;
+
+  bool error = false;
+  uint32_t errCode = 107;
+  uint32_t errLine = 0;
+  uint32_t errColumn = 0;
+  const char* errMessage = "invalid number literal";
+  bool decimal = true;  // only decimal literals can switch to float
+
+  if (msLexerCurrent(lexer) == '.') {
+    // ".5" form; the caller guaranteed a digit after the dot.
+    out->type = MS_TOKEN_FLOAT;
+    msLexerAdvanceChar(lexer);
+    size_t digits;
+    error = !msLexerScanDigits(lexer, 10, true, &digits, &errLine, &errColumn);
+  } else {
+    int base = 10;
+    if (msLexerCurrent(lexer) == '0') {
+      char next = msLexerLookahead(lexer);
+      if (next == 'x' || next == 'X') {
+        base = 16;
+      } else if (next == 'o' || next == 'O') {
+        base = 8;
+      } else if (next == 'b' || next == 'B') {
+        base = 2;
+      }
+    }
+    if (base != 10) {
+      decimal = false;
+      msLexerAdvanceChar(lexer);  // '0'
+      msLexerAdvanceChar(lexer);  // prefix letter
+      if (msLexerCurrent(lexer) == '_') {
+        // Exactly one underscore may follow a base prefix (0x_1F, Go-style).
+        msLexerAdvanceChar(lexer);
+      }
+      size_t digits;
+      error = !msLexerScanDigits(lexer, base, false, &digits, &errLine, &errColumn);
+      if (!error && digits == 0) {
+        // "0x" or "0x_" with no digit: point just past what was consumed.
+        error = true;
+        errLine = lexer->line;
+        errColumn = lexer->column;
+        errMessage = "expected digit after base prefix";
+      }
+    } else {
+      size_t digits;
+      error = !msLexerScanDigits(lexer, 10, true, &digits, &errLine, &errColumn);
+      if (!error && msLexerCurrent(lexer) == '.') {
+        if (msLexerIsDigit(msLexerLookahead(lexer))) {
+          out->type = MS_TOKEN_FLOAT;
+          msLexerAdvanceChar(lexer);
+          size_t fracDigits;
+          error = !msLexerScanDigits(lexer, 10, true, &fracDigits, &errLine, &errColumn);
+        } else {
+          // "5." with no digit after the dot is E108 by design (01-lexical
+          // section 5.2); there is no fallback to member access. Consume
+          // just the dot for the INVALID span; later scans lex the rest.
+          error = true;
+          errCode = 108;
+          errLine = lexer->line;
+          errColumn = lexer->column;
+          errMessage = "expected digit after '.'";
+          msLexerAdvanceChar(lexer);
+        }
+      }
+    }
+  }
+  if (!error && decimal && (msLexerCurrent(lexer) == 'e' || msLexerCurrent(lexer) == 'E')) {
+    out->type = MS_TOKEN_FLOAT;
+    msLexerAdvanceChar(lexer);
+    if (msLexerCurrent(lexer) == '+' || msLexerCurrent(lexer) == '-') {
+      msLexerAdvanceChar(lexer);
+    }
+    size_t digits;
+    error = !msLexerScanDigits(lexer, 10, false, &digits, &errLine, &errColumn);
+    if (!error && digits == 0) {
+      error = true;
+      errLine = lexer->line;
+      errColumn = lexer->column;
+      errMessage = "expected digit in exponent";
+    }
+  }
+
+  if (error) {
+    if (errCode == 107) {
+      // Cover the whole would-be literal: consume the remaining run of
+      // [0-9A-Za-z_] so the INVALID token spans the erroneous fragment.
+      while (!msLexerIsAtEnd(lexer) && msLexerIsIdentContinue(msLexerCurrent(lexer))) {
+        msLexerAdvanceChar(lexer);
+      }
+    }
+    out->type = MS_TOKEN_INVALID;
+    out->length = (size_t)(lexer->source + lexer->pos - out->start);
+    if (msLexerError(lexer, errLine, errColumn, errCode, errMessage) != MS_OK) {
+      msLexerMakeEof(lexer, out);
+      return MS_ERROR_SYNTAX;
+    }
+    return MS_OK;
+  }
+  out->length = (size_t)(lexer->source + lexer->pos - out->start);
+  return MS_OK;
+}
+
 // Scans the next token after skipping trivia (semicolon insertion arrives in
 // a later task; newlines are plain whitespace for now).
 static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
@@ -404,6 +582,25 @@ static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
       }
       out->length = (size_t)(lexer->source + lexer->pos - out->start);
       out->type = msLexerKeywordType(out->start, out->length);
+      return MS_OK;
+    }
+    if (msLexerIsDigit(c)) {
+      return msLexerScanNumber(lexer, out);
+    }
+    if (c == '.') {
+      if (msLexerIsDigit(msLexerLookahead(lexer))) {
+        // Maximal munch on '.' + digit: ".5" is a float even right after an
+        // identifier (locked judgment call; see Lexer.DotFiveVersusMemberAccess).
+        return msLexerScanNumber(lexer, out);
+      }
+      // A '.' not followed by a digit is a DOT token for now; the "..."
+      // maximal munch arrives with the operator dispatch in task 7.
+      out->type = MS_TOKEN_DOT;
+      out->start = lexer->source + lexer->pos;
+      out->length = 1;
+      out->line = lexer->line;
+      out->column = lexer->column;
+      msLexerAdvanceChar(lexer);
       return MS_OK;
     }
     // Fallback until the remaining scanners land: skip the byte silently.

@@ -249,6 +249,87 @@ MS_TEST(Lexer, NonAsciiIdentifierAndInvalidUtf8) {
   msDiagListDestroy(&diagsBad);
 }
 
+MS_TEST(Lexer, NumberLiteralsScan) {
+  static const struct {
+    const char* source;
+    MsTokenType type;
+  } kNumberCases[] = {
+      {"42", MS_TOKEN_INT},        {"0", MS_TOKEN_INT},
+      {"1_000_000", MS_TOKEN_INT}, {"0x1F", MS_TOKEN_INT},
+      {"0x_1F", MS_TOKEN_INT},     {"0X2a", MS_TOKEN_INT},
+      {"0o755", MS_TOKEN_INT},     {"0b1010", MS_TOKEN_INT},
+      {"3.14", MS_TOKEN_FLOAT},    {"1e-9", MS_TOKEN_FLOAT},
+      {"2.5e+4", MS_TOKEN_FLOAT},  {".5", MS_TOKEN_FLOAT},
+      {"1e9", MS_TOKEN_FLOAT},     {"0.5e2", MS_TOKEN_FLOAT},
+  };
+  for (size_t i = 0; i < MS_ARRAY_LEN(kNumberCases); ++i) {
+    struct MsDiagList diags;
+    struct MsToken tokens[4];
+    size_t count = msTestLexAll(kNumberCases[i].source, tokens, 4, &diags);
+    MS_ASSERT_EQ(kNumberCases[i].type, tokens[0].type);
+    MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], kNumberCases[i].source));
+    MS_ASSERT_EQ(1, tokens[0].line);
+    MS_ASSERT_EQ(1, tokens[0].column);
+    MS_ASSERT_EQ(0, msDiagListCount(&diags));
+    for (size_t j = 0; j < count; ++j) {
+      MS_ASSERT_TRUE(tokens[j].type != MS_TOKEN_INVALID);
+    }
+    msDiagListDestroy(&diags);
+  }
+}
+
+MS_TEST(Lexer, NumberLiteralsReportErrors) {
+  static const struct {
+    const char* source;
+    uint32_t code;
+  } kNumberErrorCases[] = {
+      {"1_", 107},     {"1__2", 107},   {"0x", 107},
+      {"0b102", 107},  {"0o8", 107},    {"0xG", 107},
+      {"1e", 107},     {"1e+", 107},
+      {"1.", 108},     {"5..", 108},    {"5...", 108},
+  };
+  for (size_t i = 0; i < MS_ARRAY_LEN(kNumberErrorCases); ++i) {
+    struct MsDiagList diags;
+    struct MsToken tokens[8];
+    size_t count = msTestLexAll(kNumberErrorCases[i].source, tokens, 8, &diags);
+    MS_ASSERT_TRUE(msDiagListCount(&diags) >= 1);
+    MS_ASSERT_EQ(kNumberErrorCases[i].code, msDiagListAt(&diags, 0)->code);
+    bool sawInvalid = false;
+    for (size_t j = 0; j < count; ++j) {
+      if (tokens[j].type == MS_TOKEN_INVALID) {
+        sawInvalid = true;
+      }
+    }
+    MS_ASSERT_TRUE(sawInvalid);
+    msDiagListDestroy(&diags);
+  }
+}
+
+MS_TEST(Lexer, DotFiveVersusMemberAccess) {
+  // Locked judgment call: maximal munch on '.' + digit makes ".5" a float
+  // even directly after an identifier, so "x.5" is IDENTIFIER + FLOAT.
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("x.5", tokens, 8, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  MS_ASSERT_TRUE(count >= 3);
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokens[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], "x"));
+  MS_ASSERT_EQ(MS_TOKEN_FLOAT, tokens[1].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], ".5"));
+  msDiagListDestroy(&diags);
+
+  struct MsDiagList diagsMember;
+  struct MsToken tokensMember[8];
+  msTestLexAll("x.y", tokensMember, 8, &diagsMember);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsMember));
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokensMember[0].type);
+  MS_ASSERT_EQ(MS_TOKEN_DOT, tokensMember[1].type);
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokensMember[2].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokensMember[2], "y"));
+  msDiagListDestroy(&diagsMember);
+}
+
 static const MsTestCase msTests[] = {
     {"Lexer.TokenTypeNameCoversEveryValue", testLexerTokenTypeNameCoversEveryValue},
     {"Lexer.TokenTypeNameSpots", testLexerTokenTypeNameSpots},
@@ -263,5 +344,8 @@ static const MsTestCase msTests[] = {
     {"Lexer.AllKeywordsScan", testLexerAllKeywordsScan},
     {"Lexer.BuiltinsAndCaseVariantsAreIdentifiers", testLexerBuiltinsAndCaseVariantsAreIdentifiers},
     {"Lexer.NonAsciiIdentifierAndInvalidUtf8", testLexerNonAsciiIdentifierAndInvalidUtf8},
+    {"Lexer.NumberLiteralsScan", testLexerNumberLiteralsScan},
+    {"Lexer.NumberLiteralsReportErrors", testLexerNumberLiteralsReportErrors},
+    {"Lexer.DotFiveVersusMemberAccess", testLexerDotFiveVersusMemberAccess},
 };
 MS_TEST_MAIN(msTests)
