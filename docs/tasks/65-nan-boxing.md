@@ -168,7 +168,7 @@ void msGcMarkValue(MsState* L, MsValue v);
 
 新增测试文件与覆盖点：
 
-- `tests/ms/nanbox/int_boundaries.ms`：±2^47-1 / ±2^47 边界值的算术、比较、位运算；边界处溢出转大整数后继续运算的正确性（`2^47 - 1 + 1` 的类型与值、大整数回减到边界内）；`//`、`%`、移位在边界两侧的一致性。
+- `tests/ms/nanbox/int_boundaries.ms`：±2^47-1 / ±2^47 边界值的算术、比较、位运算；边界处溢出转大整数后继续运算的正确性（`2^47 - 1 + 1` 的类型与值、大整数回减到边界内）；`div`、`%`、移位在边界两侧的一致性。
 - `tests/ms/nanbox/float_nan.ms`：`0.0 / 0.0` 等路径产生的 NaN 是 float 类型、`nan != nan`、NaN 作 dict 键的行为与装箱版一致（哈希稳定、按身份/相等规则命中）、`-0.0` 与 `0.0` 的比较及字典键等价性、±Inf 与超大 double（接近标签窗口位模式的合法 double 值，如 `1.7976931348623157e308`）不被误判。
 - `tests/ms/nanbox/value_identity.ms`：`is` 对 nil/bool/小整数/驻留字符串/普通堆对象的语义与装箱版逐项一致；`true is true`、`nil is nil`、跨作用域小整数恒等。
 - `tests/ms/nanbox/gc_stress.ms`：构造立即数与堆对象混合的深容器图，循环分配触发多次 GC 后校验容器内容完整；显式根栈压入立即数（经内建路径间接触发）无害。

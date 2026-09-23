@@ -158,7 +158,7 @@ struct MsObject* msIntNeg(MsState* L, struct MsObject* a);   // -a; abs(int) reu
 
 - **分派**：每个入口先按 `msIntIsWord` 组合分派——双 word 走带溢出检出的 int64 路径（与任务 08 快路径同规则，溢出才继续）；其余组合把 word 操作数升格为临时幅度视图（`{sign, len<=2, limbs[2]}` 栈上结构，不分配），进入幅度级算法。
 - **幅度级原语**（`static`，操作 `const uint32_t* + len`）：`magCompare`/`magAdd`/`magSub`（课本算法，`uint64_t` 进位）、`magMul`（O(n²) 课本乘法；Karatsuba/Toom 列入性能路线图）、`magShiftLeft`/`magShiftRight`（按 limb + 位两级）、`magDivMod`（见下）。结果先按「最大可能 limb 数」分配 `cap`，计算后写 `len` 并 `msBigintNormalize`。
-- **除法**：Knuth《TAOCP》卷二 Algorithm D，基数 2^32、`uint64_t` 中间量；归一化（左移使除数最高位置位）需要可写副本时，被除数/除数的副本是函数内 `msAlloc` 的裸 limb 缓冲，函数内释放（所有权明确，非 GC 对象）。单 limb 除数走 `magDivModSmall` 快路径（格式化解析也复用）。截断商/余后再按符号调整为 Python 的 floor 语义：商向 -inf 取整、余数取除数符号（`(r != 0) && ((a < 0) != (b < 0))` 时 `q -= 1, r += b`）。除数为零抛 `ZeroDivisionError`（含 `0 // 0`、`0 % 0`）。
+- **除法**：Knuth《TAOCP》卷二 Algorithm D，基数 2^32、`uint64_t` 中间量；归一化（左移使除数最高位置位）需要可写副本时，被除数/除数的副本是函数内 `msAlloc` 的裸 limb 缓冲，函数内释放（所有权明确，非 GC 对象）。单 limb 除数走 `magDivModSmall` 快路径（格式化解析也复用）。截断商/余后再按符号调整为 Python 的 floor 语义：商向 -inf 取整、余数取除数符号（`(r != 0) && ((a < 0) != (b < 0))` 时 `q -= 1, r += b`）。除数为零抛 `ZeroDivisionError`（含 `0 div 0`、`0 % 0`）。
 - **幂**：平方-累乘；底数 `0`/`±1` 特判；指数先求值——big 指数仅当底数 ∈ {-1, 0, 1} 时可判（否则 `OverflowError`）；中间结果每步 `msBigintNormalize`，耗尽内存走 OOM。
 
 ### 位运算与移位
@@ -219,7 +219,7 @@ MsResult msBigintFormat(const struct MsObject* obj, int base, struct MsStrBuf* o
 
 | 情形 | 行为 |
 |---|---|
-| `//`、`%`、divmod 除数为零 | 抛 `ZeroDivisionError` |
+| `div`、`%`、divmod 除数为零 | 抛 `ZeroDivisionError` |
 | 移位计数为负 | 抛 `ValueError` |
 | 移位计数为 big / 幂的 big 指数无法判定 | 抛 `OverflowError` |
 | `int(inf)` / `int(-inf)` | 抛 `OverflowError` |
@@ -245,7 +245,7 @@ MsResult msBigintFormat(const struct MsObject* obj, int base, struct MsStrBuf* o
 2. 幅度级原语：`magCompare`/`magAdd`/`magSub`/`magMul`/`magShift*` 与 `msBigintNormalize`（big→word 降级）。验证：经脚本断言 `2**63 - 1`、`2**63`、`-2**63 - 1` 边界两侧的值与表示透明性（值相等、可继续运算）。
 3. 统一接口查询/转换：`msIntCompare`/`msIntCompareDouble`/`msIntHash`/`msIntToDouble`/`msIntToInt64Checked`，接入 `msObjectValueEquals`/`msObjectHash`/`msObjectIsTruthy`。验证：跨表示相等、与 float 的精确比较、dict 数值键一致性脚本用例。
 4. 加减乘与取负：`msIntAdd/Sub/Mul/Neg` 含分派与降级。验证：已知值（`2**100`、`50!` 经连乘构造比对常量）、符号矩阵、结果回落 word（如 `(2**70) - (2**70 - 5) == 5`）。
-5. 除法：`magDivModSmall`、Knuth Algorithm D、floor 语义调整、`msIntFloorDiv/Mod/DivMod`。验证：符号矩阵（`(-7) // 2 == -4` 等在大整数上的对应值）、恒等式 `a == (a // b) * b + a % b` 与 `0 <= a % b < b`（b > 0）的随机化脚本断言、除零异常。
+5. 除法：`magDivModSmall`、Knuth Algorithm D、floor 语义调整、`msIntFloorDiv/Mod/DivMod`。验证：符号矩阵（`(-7) div 2 == -4` 等在大整数上的对应值）、恒等式 `a == (a div b) * b + a % b` 与 `0 <= a % b < b`（b > 0）的随机化脚本断言、除零异常。
 6. 位运算与移位：补码扩展算法、五个接口、移位计数规则。验证：`~x == -x - 1`、负数的 `& | ^` 与 `<<`/`>>` 已知值、`>>` 大计数得 `0`/`-1`、负计数 `ValueError`。
 7. 幂：`msIntPow`（特判、负指数转 float、big 指数 OverflowError）。验证：`2**100`、 `(-2)**101`、`0**0 == 1`、`2 ** -3 == 0.125`。
 8. 解析与格式化：`msBigintParseDigits`（分块累加 + 2 幂进制打包）、`msNewIntFromString`、`msBigintFormat`（含 word 快路径）；接入编译器字面量与 `str/hex/oct/bin/int()`。验证：百位级十进制字面量、各进制往返 `int(str) / format → parse`、任务 35 假定接口的可用性。
@@ -258,19 +258,19 @@ MsResult msBigintFormat(const struct MsObject* obj, int base, struct MsStrBuf* o
 
 测试文件清单与覆盖点：
 
-- `word_boundary.ms`：int64 边界邻域（`9223372036854775807 + 1`、`-9223372036854775808 - 1`、`INT64_MIN * -1`、`INT64_MIN // -1`）；提升后与字面值相等（`9223372036854775807 + 1 == 9223372036854775808`——右侧字面量本身即 big）；降级（大数运算结果回落后与 word 字面相等且可作 `for` 计数等普通用途）；驻留缓存边界（-256/4095）不受 big 引入影响。
-- `arithmetic.ms`：`2**100`、`2**64`、50 连乘阶乘、`(2**70 + 3) * (2**65 - 7)` 等对常量字符串；`+ - *` 符号矩阵；`//`/`%` 的 Python floor 语义在大整数上的符号矩阵（`(-7) // 2 == -4`、`7 % -3 == -2` 的 big 对应值）；恒等式 `a == (a // b) * b + a % b` 与 `0 <= a % b < b`（正除数）对一批确定性构造的大操作数成立；`divmod`（若 tuple 尚不可用则跳过，tuple 属任务 32，本用例在该集成前以 `//`+`%` 双算替代）；**`/`** 仍得 float（`(2**70) / 2 == 2.0**69`）。
+- `word_boundary.ms`：int64 边界邻域（`9223372036854775807 + 1`、`-9223372036854775808 - 1`、`INT64_MIN * -1`、`INT64_MIN div -1`）；提升后与字面值相等（`9223372036854775807 + 1 == 9223372036854775808`——右侧字面量本身即 big）；降级（大数运算结果回落后与 word 字面相等且可作 `for` 计数等普通用途）；驻留缓存边界（-256/4095）不受 big 引入影响。
+- `arithmetic.ms`：`2**100`、`2**64`、50 连乘阶乘、`(2**70 + 3) * (2**65 - 7)` 等对常量字符串；`+ - *` 符号矩阵；`div`/`%` 的 Python floor 语义在大整数上的符号矩阵（`(-7) div 2 == -4`、`7 % -3 == -2` 的 big 对应值）；恒等式 `a == (a div b) * b + a % b` 与 `0 <= a % b < b`（正除数）对一批确定性构造的大操作数成立；`divmod`（若 tuple 尚不可用则跳过，tuple 属任务 32，本用例在该集成前以 `div`+`%` 双算替代）；**`/`** 仍得 float（`(2**70) / 2 == 2.0**69`）。
 - `bitwise_shift.ms`：`~x == -x - 1` 对 word/big/负数成立；`& | ^` 在负数与 big 上的已知值（如 `(2**100 + 0xFF) & 0xFF == 0xFF`、`-1 & (2**100) == 2**100`）；`1 << 100 == 2**100`；big 左移/右移互逆（`(a << 70) >> 70 == a`）；负数右移 floor 语义（`-7 >> 1 == -4`、`-(2**100) >> 99 == -2`）；`>>` 超过 bit 长度得 `0`/`-1`；负计数抛 `ValueError`。
 - `compare_hash.ms`：跨表示六运算比较（word vs big、big vs big，含符号）；与 float 的精确比较（`2**53 + 1 > float(2**53)`、`2**70 == float(2**70)`、`nan` 不参与相等）；dict 键一致性——`{2**70: "big"}` 可用 `float(2**70)` 与同值 big 字面量命中、`hash(2**70) == hash(float(2**70))`；word 与 float 的既有哈希一致性不回退（`hash(42) == hash(42.0)`）。
 - `parse_format.ms`：各进制字面量（`0x`/`0o`/`0b`）超出 int64 的解析；百位级十进制字面量；`str(big)` 对常量字符串精确比对；`hex/oct/bin` 大整数输出（如 `hex(2**100)` 为 `"0x1"` 后随 25 个 `0`）；`int(str(big))` 与 `int("0x...", 16)` 风格不可用时以 `strconv` 之外的既有入口（`int(s)` 十进制）做往返；负值格式化带 `-`。
 - `error_semantics.ms`：big 操作数除零/模零抛 `ZeroDivisionError`；负移位抛 `ValueError`；`int(inf)`/`int(-inf)` 抛 `OverflowError`、`int(nan)` 抛 `ValueError`（`math.inf`/`math.nan` 可用，任务 21）；`2 ** (2**63)` 抛 `OverflowError`；`int("12x")` 抛 `ValueError`（经任务 10 内建路径）。
-- `float_mix.ms`：`int op float` 提升为 float（`(2**70) + 0.5`、`(2**70) * 1.0`）；big int 转 double 的舍入与上溢（`(2**2000) * 1.0 == math.inf`）；`int(1e300)` 精确截断回 big（与 `10**300 // (10**0)` 构造值比较其数量级与末位特征——精确黄金值以常量字符串经 `str()` 比对）。
+- `float_mix.ms`：`int op float` 提升为 float（`(2**70) + 0.5`、`(2**70) * 1.0`）；big int 转 double 的舍入与上溢（`(2**2000) * 1.0 == math.inf`）；`int(1e300)` 精确截断回 big（与 `10**300 div (10**0)` 构造值比较其数量级与末位特征——精确黄金值以常量字符串经 `str()` 比对）。
 
 ## 验收标准
 
 - [ ] `src/object/ms_bigint.{h,c}` 存在，guard 为 `MSLANG_SRC_OBJECT_MS_BIGINT_H_`，头文件自包含；对 `src/object/ms_object.h` 的修改仅限 `MsIntRepr` 与 `struct MsInt` 追加字段；全部代码通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、`struct MsBigInt` 不 typedef、枚举值 `MS_` 大写蛇形、堆分配只经 `msAlloc/msRealloc/msFree`）。
 - [ ] 表示不变量成立：word/big 共用 `MS_TYPE_INT` 标签、`repr` 同偏移判别、任何可容纳 int64 的值恒为 word（每个运算出口规范化）、`0` 恒为 word、big 最高 limb 非零；小整数驻留缓存行为不回退。
-- [ ] 四则/位运算/移位/幂覆盖任意精度且语义正确：`//`/`%` 为 floor 语义、位运算为无限补码语义、`>>` 算术移位、负指数幂得 float；双 word 不溢出路径无大整数分配（任务 02 分配统计可证）。
+- [ ] 四则/位运算/移位/幂覆盖任意精度且语义正确：`div`/`%` 为 floor 语义、位运算为无限补码语义、`>>` 算术移位、负指数幂得 float；双 word 不溢出路径无大整数分配（任务 02 分配统计可证）。
 - [ ] 机器字 ↔ 大整数自动升降级对脚本透明：溢出无错误、回落无残留表示差异（值相等、哈希一致、可比较）；int64 全部边界值（`INT64_MIN`/`INT64_MAX` 邻域）行为正确。
 - [ ] 解析与格式化按本文边界落地：编译器字面量任意精度、`msNewIntFromString` 符合 09-c-api §5 契约、`msBigintFormat` 覆盖 2–36 进制；任务 35 假定的 `msIntIsBig`/`msIntAsInt64`/`msBigintFormat`/`msNewIntFromString` 四接口以本文定稿形态存在。
 - [ ] 相等/比较/哈希满足一致性不变量：跨表示、跨 int/float（含超出 int64 的精确比较与哈希一致，`hash(2**70) == hash(float(2**70))`），dict 数值键行为正确。

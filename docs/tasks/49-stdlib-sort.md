@@ -123,7 +123,7 @@ func _merge(values, keys, buf, keyBuf, lo, mid, hi)
 func _checkList(xs, funcName)
 ```
 
-- `binarySearch`：标准 lo/hi 循环——`lo := 0`、`hi := len(xs)`；`while lo < hi` 时 `mid := (lo + hi) // 2`，`xs[mid] < v` 则 `lo = mid + 1`，否则 `hi = mid`；返回 `lo`。只用 `<`，与排序的比较约定一致。
+- `binarySearch`：标准 lo/hi 循环——`lo := 0`、`hi := len(xs)`；`while lo < hi` 时 `mid := (lo + hi) div 2`，`xs[mid] < v` 则 `lo = mid + 1`，否则 `hi = mid`；返回 `lo`。只用 `<`，与排序的比较约定一致。
 - `reverse`：双指针就地交换——`i := 0`、`j := len(xs) - 1`，`while i < j` 交换 `xs[i]` 与 `xs[j]` 后相向收缩。O(n) 时间、O(1) 额外空间。
 - `isSorted`：`for i in range(1, len(xs))` 单遍扫描，发现 `xs[i] < xs[i - 1]` 即返回 `false`，扫完返回 `true`。
 - `_checkList` 供六个公开函数复用，消息格式统一（见「语义与边界约定」）。

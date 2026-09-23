@@ -101,11 +101,11 @@ func _daysInMonth(y, m)
 // proleptic Gregorian date y-m-d (negative for earlier dates).
 func _daysFromCivil(y, m, d) {
     yy := y - (1 if m <= 2 else 0)
-    era := yy // 400
+    era := yy div 400
     yoe := yy - era * 400
     mp := m + (-3 if m > 2 else 9)
-    doy := (153 * mp + 2) // 5 + d - 1
-    doe := yoe * 365 + yoe // 4 - yoe // 100 + doy
+    doy := (153 * mp + 2) div 5 + d - 1
+    doe := yoe * 365 + yoe div 4 - yoe div 100 + doy
     return era * 146097 + doe - 719468
 }
 
@@ -113,13 +113,13 @@ func _daysFromCivil(y, m, d) {
 // (y, m, d) tuple for the day count z relative to 1970-01-01.
 func _civilFromDays(z) {
     zz := z + 719468
-    era := zz // 146097
+    era := zz div 146097
     doe := zz - era * 146097
-    yoe := (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    yoe := (doe - doe div 1460 + doe div 36524 - doe div 146096) div 365
     y := yoe + era * 400
-    doy := doe - (365 * yoe + yoe // 4 - yoe // 100)
-    mp := (5 * doy + 2) // 153
-    d := doy - (153 * mp + 2) // 5 + 1
+    doy := doe - (365 * yoe + yoe div 4 - yoe div 100)
+    mp := (5 * doy + 2) div 153
+    d := doy - (153 * mp + 2) div 5 + 1
     m := mp + (3 if mp < 10 else -9)
     return (y + (1 if m <= 2 else 0), m, d)
 }
@@ -141,7 +141,7 @@ func _civilFromDays(z) {
   func _dateTimeFromEpochMicros(micros)
   ```
 
-  `_epochMicros` = `(_daysFromCivil(y, m, d) * _SECONDS_PER_DAY + hh * 3600 + mi * 60 + ss) * _MICROS_PER_SECOND + us`；`_dateTimeFromEpochMicros` 以 `days := micros // _MICROS_PER_DAY`、`rem := micros % _MICROS_PER_DAY`（floor 语义保证 `rem` 非负）拆出日与日内微秒，`_civilFromDays(days)` 回解日期并检查年份范围，再拆时/分/秒/微秒后构造 `DateTime`。
+  `_epochMicros` = `(_daysFromCivil(y, m, d) * _SECONDS_PER_DAY + hh * 3600 + mi * 60 + ss) * _MICROS_PER_SECOND + us`；`_dateTimeFromEpochMicros` 以 `days := micros div _MICROS_PER_DAY`、`rem := micros % _MICROS_PER_DAY`（floor 语义保证 `rem` 非负）拆出日与日内微秒，`_civilFromDays(days)` 回解日期并检查年份范围，再拆时/分/秒/微秒后构造 `DateTime`。
 - 星期：`_weekdayFromDays(z)` 返回 `(z + 3) % 7`（1970-01-01 是星期四，Monday-first 取值 0–6，对齐 Python `weekday()`）。
 - 参数校验助手：`_checkInt(value, name)`（非 int——含 bool，bool 是独立类型故 `isinstance(v, int)` 天然排除——时抛 `TypeError`，消息含参数名）与 `_checkRange(value, lo, hi, name)`（越界抛 `ValueError`），供三个类的构造函数复用。
 
@@ -178,7 +178,7 @@ func timedelta(days = 0, seconds = 0, microseconds = 0, milliseconds = 0, minute
 
 语义约定：
 
-- 归一化：构造时 `total` 经 floor 语义拆分——`days := total // _MICROS_PER_DAY`、`seconds := (total % _MICROS_PER_DAY) // _MICROS_PER_SECOND`、`microseconds := total % _MICROS_PER_SECOND`，并存 `self._totalMicros = total`。`timedelta(microseconds=-1)` 得 `days=-1, seconds=86399, microseconds=999999`（Python 同）。
+- 归一化：构造时 `total` 经 floor 语义拆分——`days := total div _MICROS_PER_DAY`、`seconds := (total % _MICROS_PER_DAY) div _MICROS_PER_SECOND`、`microseconds := total % _MICROS_PER_SECOND`，并存 `self._totalMicros = total`。`timedelta(microseconds=-1)` 得 `days=-1, seconds=86399, microseconds=999999`（Python 同）。
 - 无范围上限：任意精度 int 承载，`TimeDelta` 自身不抛 `OverflowError`；越界检查发生在与 `DateTime` 混合运算的结果端。
 - 算术：`td ± td` → `TimeDelta`；`td + dt` → `DateTime`（委托同一模块内的 `_dateTimeFromEpochMicros(dt._epochMicros() + self._totalMicros)`，与 `dt + td` 对称——02-types §8 无反射方法，此方向须在 `TimeDelta.__add__` 内显式处理）；`td * n`、`td / n`（n 为 int/float，结果舍入到微秒，`int(round(...))`）；`td / td` → float 比值；`-td`。其余操作数类型抛 `TypeError`。
 - 比较/哈希：按 `_totalMicros` 整数比较；`__eq__` 对非 `TimeDelta` 返回 `false`、排序比较对非 `TimeDelta` 抛 `TypeError`；`__hash__` 返回 `_totalMicros`（int，满足 §6 的等值同哈希契约）。
