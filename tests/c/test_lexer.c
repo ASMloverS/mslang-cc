@@ -44,10 +44,8 @@ MS_TEST(Lexer, TokenTypeNameCoversEveryValue) {
 }
 
 MS_TEST(Lexer, TokenTypeNameSpots) {
-  // The shared lexing harness above is exercised by later tasks; reference it
-  // here so -Wunused-function stays silent in the meantime.
-  (void)msTestLexAll;
-  (void)msTestLexemeEq;
+  // Harness helpers not yet exercised by real tests; keep the references so
+  // -Wunused-function stays silent until later tasks use them.
   (void)msTestLexemeEqN;
   (void)MS_TEST_MAX_TOKENS;
 
@@ -57,8 +55,73 @@ MS_TEST(Lexer, TokenTypeNameSpots) {
   MS_ASSERT_TRUE(strcmp(msTokenTypeName(MS_TOKEN_ELLIPSIS), "MS_TOKEN_ELLIPSIS") == 0);
 }
 
+MS_TEST(Lexer, EmptySourceProducesEof) {
+  struct MsDiagList diags;
+  struct MsToken tokens[4];
+  size_t count = msTestLexAll("", tokens, 4, &diags);
+  MS_ASSERT_EQ(1, count);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[0].type);
+  MS_ASSERT_EQ(1, tokens[0].line);
+  MS_ASSERT_EQ(1, tokens[0].column);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, BomIsSkippedAndReported) {
+  struct MsDiagList diags;
+  struct MsToken tokens[4];
+  size_t count = msTestLexAll("\xEF\xBB\xBFx", tokens, 4, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(101, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(1, msDiagListAt(&diags, 0)->line);
+  MS_ASSERT_EQ(1, msDiagListAt(&diags, 0)->column);
+  // x is the first real token; its column counts the BOM bytes (Go-style byte columns).
+  bool sawIdentifier = false;
+  for (size_t i = 0; i < count; ++i) {
+    if (tokens[i].type == MS_TOKEN_IDENTIFIER) {
+      sawIdentifier = true;
+      MS_ASSERT_TRUE(msTestLexemeEq(&tokens[i], "x"));
+      MS_ASSERT_EQ(4, tokens[i].column);
+    }
+  }
+  MS_ASSERT_TRUE(sawIdentifier);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, CrlfAndLfProduceSameTokens) {
+  const char* lf = "a\nb";
+  const char* crlf = "a\r\nb";
+  struct MsDiagList diagsLf;
+  struct MsDiagList diagsCrlf;
+  struct MsToken tokensLf[16];
+  struct MsToken tokensCrlf[16];
+  size_t countLf = msTestLexAll(lf, tokensLf, 16, &diagsLf);
+  size_t countCrlf = msTestLexAll(crlf, tokensCrlf, 16, &diagsCrlf);
+  MS_ASSERT_EQ(countLf, countCrlf);
+  for (size_t i = 0; i < countLf; ++i) {
+    MS_ASSERT_EQ(tokensLf[i].type, tokensCrlf[i].type);
+    MS_ASSERT_EQ(tokensLf[i].line, tokensCrlf[i].line);
+  }
+  MS_ASSERT_EQ(2, tokensCrlf[2].line);  // b lands on line 2
+  msDiagListDestroy(&diagsLf);
+  msDiagListDestroy(&diagsCrlf);
+}
+
+MS_TEST(Lexer, BareCarriageReturnIsE112) {
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  msTestLexAll("a\rb", tokens, 8, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(112, msDiagListAt(&diags, 0)->code);
+  msDiagListDestroy(&diags);
+}
+
 static const MsTestCase msTests[] = {
     {"Lexer.TokenTypeNameCoversEveryValue", testLexerTokenTypeNameCoversEveryValue},
     {"Lexer.TokenTypeNameSpots", testLexerTokenTypeNameSpots},
+    {"Lexer.EmptySourceProducesEof", testLexerEmptySourceProducesEof},
+    {"Lexer.BomIsSkippedAndReported", testLexerBomIsSkippedAndReported},
+    {"Lexer.CrlfAndLfProduceSameTokens", testLexerCrlfAndLfProduceSameTokens},
+    {"Lexer.BareCarriageReturnIsE112", testLexerBareCarriageReturnIsE112},
 };
 MS_TEST_MAIN(msTests)

@@ -93,6 +93,9 @@ struct MsLexer {
   MsResult peekedResult;
   bool hasPeeked;
   struct MsDiagList* diags;   // diagnostic collector (task 02), caller-owned
+  // Additive implementation detail beyond the spec: sticky flag set once a
+  // report fills the diagnostic cap; scanning then yields EOF forever.
+  bool hitDiagCap;
 };
 
 // Initializes lexer over [source, sourceLen). source and chunkName must
