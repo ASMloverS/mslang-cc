@@ -25,7 +25,7 @@ block       = "{" { statement } "}"
 
 declStmt    = identList ":=" exprList
 assignStmt  = targetList ( "=" | augOp ) exprList
-augOp       = "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**="
+augOp       = "+=" | "-=" | "*=" | "/=" | "%=" | "**="
             | "&=" | "|=" | "^=" | "<<=" | ">>="
 
 ifStmt      = "if" expr block { "else" "if" expr block } [ "else" block ]
@@ -145,7 +145,7 @@ class Dog < Animal {
 | 2 | 下标 `a[i]`、切片 `a[i:j:k]`、属性 `a.b`、调用 `f(x)`、`await` | 左 |
 | 3 | `**` | **右** |
 | 4 | 一元 `+x -x ~x not x` | 右 |
-| 5 | `* / // %` | 左 |
+| 5 | `* / % div` | 左 |
 | 6 | `+ -` | 左 |
 | 7 | `<< >>` | 左 |
 | 8 | `&` | 左 |

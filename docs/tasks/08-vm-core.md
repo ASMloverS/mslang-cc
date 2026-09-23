@@ -22,7 +22,7 @@
   - §4（本任务的核心依据）：每个协程拥有独立的调用栈（帧数组）与求值栈，堆上分配、可伸缩；帧为 `proto`、返回地址、求值栈基址、upvalue 数组；算术指令内联快路径——双操作数均为机器字 int / float 时直接计算，否则走类型分派（魔术方法查找）。
   - §5：所有协程的调用栈/求值栈是 GC 根集合的一部分——结构设计上把两栈集中于协程对象，为 [17 GC 标记-清除](17-gc-mark-sweep.md) 的扫描留口。
   - §6.1：`struct MsCoroutine` 的最终形态（含状态、结果、等待队列等调度字段）；本任务只落地其中执行必需的子集，调度字段随 [43 协程与 async/await](43-coroutines.md) 扩展。
-- [02-types.md](../language/02-types.md) §2（真值规则）、§3.3（混合运算：`int op float` → `float`、`int / int` → `float`、`int // int` → `int` 向下取整、无 float→int 隐式转换）、§6（`==` 按值、`is` 按身份）。
+- [02-types.md](../language/02-types.md) §2（真值规则）、§3.3（混合运算：`int op float` → `float`、`int / int` → `float`、`int div int` → `int` 向下取整、无 float→int 隐式转换）、§6（`==` 按值、`is` 按身份）。
 - [09-c-api.md](../language/09-c-api.md) §4（`MsResult`、state.h 执行入口约定）、§8（错误处理约定：出错置错误槽）、§9（`MsCFunction` 签名 `MsObject* (*)(MsState* L, int64_t argc, MsObject** argv)`）。
 - [10-c-style.md](../language/10-c-style.md)：§1 文件组织与 include guard、§2 格式化、§3 命名、§4 typedef 规则（内部结构体不 typedef）、§5 错误处理与资源管理、§6 内存纪律（堆分配只经 `msAlloc/msRealloc/msFree`）、§8 断言（内部不变量用 `MS_ASSERT`）。
 - [11-project-layout.md](../language/11-project-layout.md)：`src/vm/` 目录位置；`tests/c/` 用自研 `ms_test.h`（任务 01 提供）做模块单元测试。
@@ -256,7 +256,7 @@ Lend:                        // 链尾：Bx 指向这里
 - 帧窗口：多参数 + 多局部 Proto，断言实参入槽、未赋值局部槽读为 nil、`MOVE`/`LOAD_LOCAL`/`STORE_LOCAL` 逐槽语义。
 - 常量/全局：`LOAD_CONST` 各常量池下标；`LOAD_NIL/TRUE/FALSE`；`STORE_GLOBAL` 后 `LOAD_GLOBAL` 往返；`LOAD_GLOBAL` 未命中报「undefined name」。
 - 跳转与真值：`JUMP` 前向/回边；条件跳转对真值表逐项（nil/false/0/0.0/""/非空值）；回边循环累加 Proto。
-- 算术：`ADD/SUB/MUL/DIV/FLOORDIV/MOD/POW/NEG` 的机器字 int 正例与边界（`INT64_MAX/INT64_MIN` 邻域）；`-7 // 2 == -4`、`-7 % 2 == 1`、`7 % -3 == -2` 等符号语义；`int / int` 得 float（`10 / 4 == 2.5`）；int/float 混合提升；溢出用例转慢路径的行为与任务 06 文档对齐后断言；除零、模零、负移位、≥64 移位、float 位运算各错误路径。
+- 算术：`ADD/SUB/MUL/DIV/FLOORDIV/MOD/POW/NEG` 的机器字 int 正例与边界（`INT64_MAX/INT64_MIN` 邻域）；`-7 div 2 == -4`、`-7 % 2 == 1`、`7 % -3 == -2` 等符号语义；`int / int` 得 float（`10 / 4 == 2.5`）；int/float 混合提升；溢出用例转慢路径的行为与任务 06 文档对齐后断言；除零、模零、负移位、≥64 移位、float 位运算各错误路径。
 - 比较：数值六运算真/假；混合比较；`EQ` 指针捷径与值相等（同值不同指针对象）；`IS` 对 nil/true/false 单例；`CMP_CHAIN` 三段链全真、第二段失败、首段失败（验证短路不求值后续操作数——以一个会报错的表达式作后续操作数观察其未执行）。
 - 调用：脚本函数多层调用与返回值落位；C 函数（测试内注册一个 `MsCFunction`）直调成功与其返回 `NULL` 的错误传播；`argc` 不匹配报错；不可调用对象报错。
 - 错误诊断：人为触发运行时错误，断言错误槽消息含源文件名与正确行号（经 `lines` 表多行号段验证）。

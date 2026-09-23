@@ -26,7 +26,7 @@
   - §9 time 原语：`time.now()` 返回 float Unix 秒（含小数）——`now()` 的唯一时钟来源；`time.sleep`/`time.monotonic`/`time.format`/`time.parse` 本模块不使用（理由见「设计取舍说明」）。
 - `docs/language/02-types.md`
   - §3.1：int 任意精度——历元微秒计数、Hinnant 算法中间值与时间跨度运算无需考虑溢出回绕，是本模块「全程整数、无浮点误差」设计的基础。
-  - §3.3：`int / int` → float、`//` 为向下取整除法；不存在 float → int 隐式转换（`fromTimestamp` 对 float 时间戳显式舍入）；本文假定 `%` 与 `//` 一致为向下取整（floor）语义（Python 同），负天数换算依赖此性质。
+  - §3.3：`int / int` → float、`div` 为向下取整除法；不存在 float → int 隐式转换（`fromTimestamp` 对 float 时间戳显式舍入）；本文假定 `%` 与 `div` 一致为向下取整（floor）语义（Python 同），负天数换算依赖此性质。
   - §6：相等与哈希契约——定义 `__eq__` 必须同时定义 `__hash__`，三个公开类均遵守。
   - §8：魔术方法协议表（`__init__`/`__str__`/`__repr__`/比较六个/`__hash__`/`__add__`/`__sub__`/`__mul__`/`__truediv__`/`__neg__`）；反射方法（`__radd__` 等）首版不支持——`1 + td` 之类反向运算不承诺。
 - `docs/language/03-syntax.md` §4：默认参数与关键字实参（`timedelta(days=1)` 的语法基础）；§5：class 语法（`__init__` 中经 `self.x = ...` 建属性）；§6：条件表达式 `a if cond else b`、链式比较。
@@ -127,7 +127,7 @@ func _civilFromDays(z) {
 
 要点：
 
-- 两个函数依赖 `//` 的向下取整语义（负 `zz` 时 `era` 向下而非截断），与 02-types §3.3 一致；`%` 的 floor 语义同理（`micros % _MICROS_PER_DAY` 恒非负）。
+- 两个函数依赖 `div` 的向下取整语义（负 `zz` 时 `era` 向下而非截断），与 02-types §3.3 一致；`%` 的 floor 语义同理（`micros % _MICROS_PER_DAY` 恒非负）。
 - 历元微秒换算与回解（内部函数，负责范围检查）：
 
   ```ms

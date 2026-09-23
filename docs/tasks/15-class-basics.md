@@ -42,7 +42,7 @@
 
 对规范歧义与空白的显式处理（实现与评审时以此为据）：
 
-1. **`static` 不是关键字。** 01-lexical §4 的 36 个关键字清单（任务 03 已定稿为 `MS_TOKEN_KW_*` 枚举）不含 `static`，而 03-syntax §5 使用 `static func`。处理：parser 在 class 体内把紧跟 `func` 之前的标识符 `static` 作上下文关键字识别（class 体外的 `static` 仍是普通标识符）；此解析规则属任务 04 范围，本文仅声明依赖。
+1. **`static` 不是关键字。** 01-lexical §4 的 37 个关键字清单（任务 03 已定稿为 `MS_TOKEN_KW_*` 枚举）不含 `static`，而 03-syntax §5 使用 `static func`。处理：parser 在 class 体内把紧跟 `func` 之前的标识符 `static` 作上下文关键字识别（class 体外的 `static` 仍是普通标识符）；此解析规则属任务 04 范围，本文仅声明依赖。
 2. **`__init__` 的返回值。** 规范未规定。决定：v0.1 忽略 `__init__` 的返回值，构造表达式恒产出新实例（与 Python「返回非 None 报错」不同）；是否收紧由任务 25 评估，届时保持向后兼容优先。
 3. **无 `__init__` 的类带参构造。** 规范未规定。决定：报运行时错误（"`<Name>() takes no arguments`"），与 Python 的 `object.__init__` 行为对齐。
 4. **类对象的属性写入。** 规范只承诺实例属性动态创建。决定：v0.1 对类对象执行 `SET_ATTR`/`DEL_ATTR` 报运行时错误（"cannot set attribute on class object"），类级可变属性待需求明确后再开放。
