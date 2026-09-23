@@ -965,19 +965,14 @@ static size_t msLexerDecodeEscape(const char* raw, size_t rawLen, size_t* pos, c
 
 MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* outLen) {
   // Pass 1: compute the decoded length (\u/\U expand to multi-byte UTF-8).
+  // Braces have no special meaning in a plain string or bytes body and pass
+  // through as ordinary bytes; the {{/}} literal-brace escapes of f-string
+  // text segments are a separate decode path landing with the mode stack.
   size_t decodedLen = 0;
   size_t pos = 0;
   while (pos < rawLen) {
     if (raw[pos] == '\\') {
       decodedLen += msLexerDecodeEscape(raw, rawLen, &pos, NULL);
-      continue;
-    }
-    if (raw[pos] == '{' || raw[pos] == '}') {
-      // "{{" and "}}" are the literal-brace escapes of f-string text
-      // segments; validated bodies only ever contain them in pairs.
-      MS_ASSERT(pos + 1 < rawLen && raw[pos + 1] == raw[pos]);
-      pos += 2;
-      ++decodedLen;
       continue;
     }
     ++pos;
@@ -996,11 +991,6 @@ MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* out
   while (pos < rawLen) {
     if (raw[pos] == '\\') {
       outPos += msLexerDecodeEscape(raw, rawLen, &pos, buffer + outPos);
-      continue;
-    }
-    if (raw[pos] == '{' || raw[pos] == '}') {
-      buffer[outPos++] = raw[pos];
-      pos += 2;
       continue;
     }
     buffer[outPos++] = raw[pos++];

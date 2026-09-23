@@ -406,12 +406,13 @@ static const struct {
     {"a\\nb", "a\nb", 3},
     {"\\t\\r\\\\", "\t\r\\", 3},
     {"\\\"", "\"", 1},
+    {"\\'", "'", 1},
     {"\\0", "\0", 1},
     {"\\x41", "A", 1},
     {"\\u4e2d", "\xE4\xB8\xAD", 3},          // U+4E2D
     {"\\U0001F600", "\xF0\x9F\x98\x80", 4},  // U+1F600
-    {"{{", "{", 1},                          // f-string literal brace
-    {"}}", "}", 1},
+    {"a{b", "a{b", 3},                       // braces are ordinary bytes
+    {"{{", "{{", 2},                         // no {{/}} decoding in plain strings
 };
 
 MS_TEST(Lexer, UnescapeDecodesEscapes) {
@@ -444,6 +445,7 @@ MS_TEST(Lexer, StringErrors) {
       {"\"\\uD800\"", 106},       // surrogate code point
       {"\"\\U00110000\"", 106},   // above U+10FFFF
       {"\"\\q\"", 106},           // unknown escape letter
+      {"\"\\", 106},              // backslash right before end of input
   };
   for (size_t i = 0; i < MS_ARRAY_LEN(kStringErrorCases); ++i) {
     struct MsDiagList diags;
@@ -464,6 +466,20 @@ MS_TEST(Lexer, StringErrors) {
   }
 }
 
+MS_TEST(Lexer, StringErrorPositionPinned) {
+  // E106 points at the backslash of the offending escape. Source "\"ab\\q\"":
+  // '"'=column 1, a=2, b=3, backslash=4.
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  msTestLexAll("\"ab\\q\"", tokens, 8, &diags);
+  MS_ASSERT_TRUE(msDiagListCount(&diags) >= 1);
+  MS_ASSERT_EQ(106, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(1, msDiagListAt(&diags, 0)->line);
+  MS_ASSERT_EQ(4, msDiagListAt(&diags, 0)->column);
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[0].type);
+  msDiagListDestroy(&diags);
+}
+
 MS_TEST(Lexer, UnescapeLeakFree) {
   struct MsMemStats before;
   msMemGetStats(&before);
@@ -482,6 +498,43 @@ MS_TEST(Lexer, UnescapeLeakFree) {
   msMemGetStats(&after);
   MS_ASSERT_EQ(before.liveBlocks, after.liveBlocks);
   MS_ASSERT_EQ(before.currentBytes, after.currentBytes);
+}
+
+MS_TEST(Lexer, UnescapeOom) {
+  // msMemSetFailAfter(0) makes the very next allocation fail (ms_memory.c
+  // consumeFailAfter), so the output buffer msAlloc must report OOM.
+  msMemResetStats();
+  msMemSetFailAfter(0);
+  char* out = NULL;
+  size_t outLen = 0;
+  MsResult result = msLexerUnescape("a", 1, &out, &outLen);
+  MS_ASSERT_EQ(MS_ERROR_OOM, result);
+  MS_ASSERT_TRUE(out == NULL);
+  MS_ASSERT_EQ(0, outLen);
+  msMemSetFailAfter(-1);
+}
+
+MS_TEST(Lexer, StringRoundTrip) {
+  // Scan a string token, then decode its body (lexeme minus the quotes).
+  struct MsDiagList diags;
+  struct MsToken tokens[4];
+  msTestLexAll("\"a\\nb\"", tokens, 4, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  MS_ASSERT_EQ(MS_TOKEN_STRING, tokens[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], "\"a\\nb\""));
+  char* out = NULL;
+  size_t outLen = 0;
+  MsResult result = msLexerUnescape(tokens[0].start + 1, tokens[0].length - 2, &out, &outLen);
+  MS_ASSERT_EQ(MS_OK, result);
+  if (result == MS_OK) {
+    MS_ASSERT_EQ(3, outLen);
+    MS_ASSERT_TRUE(out != NULL);
+    if (out != NULL) {
+      MS_ASSERT_TRUE(memcmp(out, "a\nb", 3) == 0);
+    }
+  }
+  msFree(out);
+  msDiagListDestroy(&diags);
 }
 
 static const MsTestCase msTests[] = {
@@ -505,6 +558,9 @@ static const MsTestCase msTests[] = {
     {"Lexer.StringLiteralsScan", testLexerStringLiteralsScan},
     {"Lexer.UnescapeDecodesEscapes", testLexerUnescapeDecodesEscapes},
     {"Lexer.StringErrors", testLexerStringErrors},
+    {"Lexer.StringErrorPositionPinned", testLexerStringErrorPositionPinned},
     {"Lexer.UnescapeLeakFree", testLexerUnescapeLeakFree},
+    {"Lexer.UnescapeOom", testLexerUnescapeOom},
+    {"Lexer.StringRoundTrip", testLexerStringRoundTrip},
 };
 MS_TEST_MAIN(msTests)

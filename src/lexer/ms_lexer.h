@@ -120,7 +120,10 @@ MsTokenType msLexerPeek(struct MsLexer* lexer);
 
 // Decodes the escape sequences of an already-validated string or bytes
 // literal body (raw slice without surrounding quotes/prefix) into a newly
-// msAlloc'd buffer. Caller owns *out and frees it with msFree.
+// msAlloc'd buffer. Caller owns *out and frees it with msFree. Braces are
+// NOT special here: '{' and '}' pass through as ordinary bytes -- the
+// {{/}} literal-brace escapes of f-string text segments are a separate
+// decode path landing with the f-string mode stack.
 // raw must come from a token this lexer produced; invalid input is a
 // programming error (MS_ASSERT in debug builds).
 MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* outLen);
