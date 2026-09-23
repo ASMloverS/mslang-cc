@@ -115,7 +115,10 @@ MS_TEST(Lexer, CrlfAndLfProduceSameTokens) {
     MS_ASSERT_EQ(tokensLf[i].type, tokensCrlf[i].type);
     MS_ASSERT_EQ(tokensLf[i].line, tokensCrlf[i].line);
   }
-  MS_ASSERT_EQ(2, tokensCrlf[1].line);  // b lands on line 2
+  // a, inserted semicolon (newline position, line 1), then b on line 2.
+  MS_ASSERT_EQ(MS_TOKEN_SEMICOLON, tokensCrlf[1].type);
+  MS_ASSERT_EQ(1, tokensCrlf[1].line);
+  MS_ASSERT_EQ(2, tokensCrlf[2].line);
   msDiagListDestroy(&diagsLf);
   msDiagListDestroy(&diagsCrlf);
 }
@@ -380,7 +383,7 @@ MS_TEST(Lexer, StringLiteralsScan) {
   MS_ASSERT_TRUE(msTestLexemeEqN(&tokensRaw[0], "`raw\nline`", 10));
   MS_ASSERT_EQ(1, tokensRaw[0].line);
   MS_ASSERT_TRUE(countRaw >= 2);
-  MS_ASSERT_EQ(2, tokensRaw[1].line);  // the token after it lands on line 2
+  MS_ASSERT_EQ(2, tokensRaw[1].line);  // the compensating semicolon lands on line 2
   msDiagListDestroy(&diagsRaw);
 
   // Bytes literal: b prefix + quoted body, lexeme includes prefix and quotes.
@@ -629,7 +632,8 @@ MS_TEST(Lexer, OperatorsMaximalMunch) {
     msTestExpectTypes("/= /", expect, MS_ARRAY_LEN(expect));
   }
   {
-    const MsTokenType expect[] = {MS_TOKEN_PLUS_PLUS, MS_TOKEN_MINUS_MINUS};
+    // "++"/"--" end a statement, so EOF compensates with a semicolon.
+    const MsTokenType expect[] = {MS_TOKEN_PLUS_PLUS, MS_TOKEN_MINUS_MINUS, MS_TOKEN_SEMICOLON};
     msTestExpectTypes("++ --", expect, MS_ARRAY_LEN(expect));
   }
 }
@@ -654,14 +658,16 @@ MS_TEST(Lexer, SlashSlashIsAlwaysComment) {
   msDiagListDestroy(&diagsEq);
 
   // "a // b" is the identifier a followed by a comment, NOT floor division.
+  // The statement ends at end of input, so EOF compensates with a semicolon.
   struct MsDiagList diagsTail;
   struct MsToken tokensTail[4];
   size_t countTail = msTestLexAll("a // b", tokensTail, 4, &diagsTail);
   MS_ASSERT_EQ(0, msDiagListCount(&diagsTail));
-  MS_ASSERT_EQ(2, countTail);
+  MS_ASSERT_EQ(3, countTail);
   MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokensTail[0].type);
   MS_ASSERT_TRUE(msTestLexemeEq(&tokensTail[0], "a"));
-  MS_ASSERT_EQ(MS_TOKEN_EOF, tokensTail[1].type);
+  MS_ASSERT_EQ(MS_TOKEN_SEMICOLON, tokensTail[1].type);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokensTail[2].type);
   msDiagListDestroy(&diagsTail);
 }
 
@@ -686,13 +692,214 @@ MS_TEST(Lexer, DivKeywordScans) {
   struct MsToken tokens[8];
   size_t count = msTestLexAll("a div b", tokens, 8, &diags);
   MS_ASSERT_EQ(0, msDiagListCount(&diags));
-  MS_ASSERT_EQ(4, count);
+  // Trailing identifier ends a statement; EOF compensates with a semicolon.
+  MS_ASSERT_EQ(5, count);
   MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokens[0].type);
   MS_ASSERT_EQ(MS_TOKEN_KW_DIV, tokens[1].type);
   MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], "div"));
   MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokens[2].type);
-  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[3].type);
+  MS_ASSERT_EQ(MS_TOKEN_SEMICOLON, tokens[3].type);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[4].type);
   msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, UnexpectedByteIsE102) {
+  // The generic E102 branch must name the offending byte, and scanning must
+  // continue after the error.
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("? x", tokens, 8, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(102, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], "?"));
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokens[1].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], "x"));
+  MS_ASSERT_TRUE(count >= 2);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, SemicolonInsertedAfterStatementEnders) {
+  const char* source = "x := 1\ny := 2\n";
+  struct MsDiagList diags;
+  struct MsToken tokens[16];
+  size_t count = msTestLexAll(source, tokens, 16, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  const MsTokenType expect[] = {
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_COLON_EQUAL, MS_TOKEN_INT, MS_TOKEN_SEMICOLON,
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_COLON_EQUAL, MS_TOKEN_INT, MS_TOKEN_SEMICOLON,
+      MS_TOKEN_EOF,
+  };
+  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
+  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  // Auto-inserted semicolons have empty lexemes at the newline position.
+  MS_ASSERT_EQ(0, tokens[3].length);
+  MS_ASSERT_EQ(1, tokens[3].line);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, SemicolonInsertedAtEof) {
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("x := 1", tokens, 8, &diags);  // no trailing newline
+  MS_ASSERT_EQ(MS_TOKEN_SEMICOLON, tokens[count - 2].type);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, NoSemicolonAfterContinuationTokens) {
+  const char* source = "x := 1 +\n2\ny := (\n3)\n";
+  struct MsDiagList diags;
+  struct MsToken tokens[24];
+  size_t count = msTestLexAll(source, tokens, 24, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  const MsTokenType expect[] = {
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_COLON_EQUAL, MS_TOKEN_INT, MS_TOKEN_PLUS,
+      MS_TOKEN_INT, MS_TOKEN_SEMICOLON,
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_COLON_EQUAL, MS_TOKEN_LEFT_PAREN,
+      MS_TOKEN_INT, MS_TOKEN_RIGHT_PAREN, MS_TOKEN_SEMICOLON,
+      MS_TOKEN_EOF,
+  };
+  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
+  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, ExplicitAndRepeatedSemicolonsPassThrough) {
+  struct MsDiagList diags;
+  struct MsToken tokens[12];
+  size_t count = msTestLexAll("a;; b", tokens, 12, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));  // lexer does not reject ;;
+  const MsTokenType expect[] = {
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_SEMICOLON, MS_TOKEN_SEMICOLON,
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_SEMICOLON, MS_TOKEN_EOF,
+  };
+  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
+  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], ";"));   // explicit: real lexeme
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, NewlineInsideBlockCommentTriggersInsertion) {
+  struct MsDiagList diags;
+  struct MsToken tokens[12];
+  size_t count = msTestLexAll("a /* x\ny */ b", tokens, 12, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  const MsTokenType expect[] = {
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_SEMICOLON, MS_TOKEN_IDENTIFIER,
+      MS_TOKEN_SEMICOLON, MS_TOKEN_EOF,
+  };
+  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
+  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, NewlineAfterLineCommentTriggersInsertion) {
+  struct MsDiagList diags;
+  struct MsToken tokens[12];
+  size_t count = msTestLexAll("a // note\nb", tokens, 12, &diags);
+  const MsTokenType expect[] = {
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_SEMICOLON, MS_TOKEN_IDENTIFIER,
+      MS_TOKEN_SEMICOLON, MS_TOKEN_EOF,
+  };
+  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
+  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, BlankLinesProduceNoExtraSemicolons) {
+  const MsTokenType expect[] = {
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_SEMICOLON,
+      MS_TOKEN_IDENTIFIER, MS_TOKEN_SEMICOLON,
+  };
+  msTestExpectTypes("x\n\ny", expect, MS_ARRAY_LEN(expect));
+}
+
+MS_TEST(Lexer, SemicolonTriggerSetCoversAllEnders) {
+  // Every statement-ender token of 01-lexical section 7, each as
+  // "<trigger>\nx": the token right before the trailing "x" must be an
+  // auto-inserted semicolon. (FSTRING_END is in the ender set too but no
+  // source produces it until the f-string frame task.)
+  static const char* const kEnderCases[] = {
+      "foo\nx",      // identifier
+      "42\nx",       // int
+      "3.14\nx",     // float
+      "\"s\"\nx",    // string
+      "`r`\nx",      // raw string
+      "b\"b\"\nx",   // bytes
+      "true\nx",     // keyword literals
+      "false\nx",
+      "nil\nx",
+      "return\nx",   // statement keywords
+      "break\nx",
+      "continue\nx",
+      "pass\nx",
+      "raise\nx",
+      "(1)\nx",      // right paren
+      "[1]\nx",      // right bracket
+      "{1}\nx",      // right brace (plain token until the f-string task)
+      "i++\nx",      // ++
+      "i--\nx",      // --
+  };
+  for (size_t i = 0; i < MS_ARRAY_LEN(kEnderCases); ++i) {
+    struct MsDiagList diags;
+    struct MsToken tokens[16];
+    size_t count = msTestLexAll(kEnderCases[i], tokens, 16, &diags);
+    MS_ASSERT_EQ(0, msDiagListCount(&diags));
+    bool found = false;
+    for (size_t j = 0; j < count; ++j) {
+      if (tokens[j].type == MS_TOKEN_IDENTIFIER && msTestLexemeEq(&tokens[j], "x")) {
+        found = true;
+        MS_ASSERT_TRUE(j > 0);
+        if (j > 0) {
+          MS_ASSERT_EQ(MS_TOKEN_SEMICOLON, tokens[j - 1].type);
+          MS_ASSERT_EQ(0, tokens[j - 1].length);
+        }
+      }
+    }
+    MS_ASSERT_TRUE(found);
+    msDiagListDestroy(&diags);
+  }
+}
+
+MS_TEST(Lexer, SemicolonNotAfterContinuers) {
+  // Continuers of 01-lexical section 7: operators, ",", "(", "[", "{", ".",
+  // ":", ":=", and the word operators (div included, same class as and/or)
+  // never trigger insertion -- the token after the trigger is the next line's
+  // identifier, not a semicolon.
+  static const char* const kContinuerCases[] = {
+      "a +\nx", "a ,\nx", "a (\nx", "a [\nx", "a {\nx", "a .\nx",
+      "a :\nx", "a :=\nx", "a =\nx", "a ==\nx",
+      "a div\nx", "a and\nx", "a or\nx", "a not\nx", "a is\nx", "a in\nx",
+  };
+  for (size_t i = 0; i < MS_ARRAY_LEN(kContinuerCases); ++i) {
+    struct MsDiagList diags;
+    struct MsToken tokens[16];
+    size_t count = msTestLexAll(kContinuerCases[i], tokens, 16, &diags);
+    MS_ASSERT_EQ(0, msDiagListCount(&diags));
+    bool found = false;
+    for (size_t j = 0; j < count; ++j) {
+      if (tokens[j].type == MS_TOKEN_IDENTIFIER && msTestLexemeEq(&tokens[j], "x")) {
+        found = true;
+        MS_ASSERT_TRUE(j > 0);
+        if (j > 0) {
+          MS_ASSERT_TRUE(tokens[j - 1].type != MS_TOKEN_SEMICOLON);
+        }
+      }
+    }
+    MS_ASSERT_TRUE(found);
+    msDiagListDestroy(&diags);
+  }
 }
 
 static const MsTestCase msTests[] = {
@@ -725,5 +932,15 @@ static const MsTestCase msTests[] = {
     {"Lexer.SlashSlashIsAlwaysComment", testLexerSlashSlashIsAlwaysComment},
     {"Lexer.BareBangIsE102", testLexerBareBangIsE102},
     {"Lexer.DivKeywordScans", testLexerDivKeywordScans},
+    {"Lexer.UnexpectedByteIsE102", testLexerUnexpectedByteIsE102},
+    {"Lexer.SemicolonInsertedAfterStatementEnders", testLexerSemicolonInsertedAfterStatementEnders},
+    {"Lexer.SemicolonInsertedAtEof", testLexerSemicolonInsertedAtEof},
+    {"Lexer.NoSemicolonAfterContinuationTokens", testLexerNoSemicolonAfterContinuationTokens},
+    {"Lexer.ExplicitAndRepeatedSemicolonsPassThrough", testLexerExplicitAndRepeatedSemicolonsPassThrough},
+    {"Lexer.NewlineInsideBlockCommentTriggersInsertion", testLexerNewlineInsideBlockCommentTriggersInsertion},
+    {"Lexer.NewlineAfterLineCommentTriggersInsertion", testLexerNewlineAfterLineCommentTriggersInsertion},
+    {"Lexer.BlankLinesProduceNoExtraSemicolons", testLexerBlankLinesProduceNoExtraSemicolons},
+    {"Lexer.SemicolonTriggerSetCoversAllEnders", testLexerSemicolonTriggerSetCoversAllEnders},
+    {"Lexer.SemicolonNotAfterContinuers", testLexerSemicolonNotAfterContinuers},
 };
 MS_TEST_MAIN(msTests)

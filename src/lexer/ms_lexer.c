@@ -1,5 +1,6 @@
 #include "lexer/ms_lexer.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "core/ms_common.h"
@@ -279,11 +280,32 @@ static void msLexerSkipLineComment(struct MsLexer* lexer) {
   }
 }
 
+// The first newline consumed while skipping trivia: its position is where an
+// auto-inserted semicolon goes (01-lexical section 7).
+struct MsLexerNewline {
+  bool seen;
+  size_t pos;
+  uint32_t line;
+  uint32_t column;
+};
+
+// Records the cursor position as the first newline of a trivia run; later
+// newlines in the same run keep the first one's position.
+static void msLexerNoteNewline(const struct MsLexer* lexer, struct MsLexerNewline* newline) {
+  if (!newline->seen) {
+    newline->seen = true;
+    newline->pos = lexer->pos;
+    newline->line = lexer->line;
+    newline->column = lexer->column;
+  }
+}
+
 // Consumes a block comment through the first "*/" (comments do not nest).
 // Newlines inside go through msLexerConsumeNewline so line/column stay
-// correct. Reaching the end of input first reports E105 at the comment's
-// start position.
-static MsResult msLexerSkipBlockComment(struct MsLexer* lexer) {
+// correct, and are noted for semicolon insertion like any other newline.
+// Reaching the end of input first reports E105 at the comment's start
+// position.
+static MsResult msLexerSkipBlockComment(struct MsLexer* lexer, struct MsLexerNewline* newline) {
   MS_ASSERT(msLexerCurrent(lexer) == '/' && msLexerLookahead(lexer) == '*');
   uint32_t startLine = lexer->line;
   uint32_t startColumn = lexer->column;
@@ -295,6 +317,7 @@ static MsResult msLexerSkipBlockComment(struct MsLexer* lexer) {
     }
     char c = msLexerCurrent(lexer);
     if (c == '\r' || c == '\n') {
+      msLexerNoteNewline(lexer, newline);
       if (msLexerConsumeNewline(lexer) != MS_OK) {
         return MS_ERROR_SYNTAX;
       }
@@ -310,8 +333,10 @@ static MsResult msLexerSkipBlockComment(struct MsLexer* lexer) {
 }
 
 // Skips spaces, tabs, newlines and comments; stops on the first byte that
-// can start a token (or at end of input) without consuming it.
-static MsResult msLexerSkipTrivia(struct MsLexer* lexer) {
+// can start a token (or at end of input) without consuming it. Every newline
+// consumed (including inside block comments) is noted in *newline so the
+// caller can apply semicolon insertion.
+static MsResult msLexerSkipTrivia(struct MsLexer* lexer, struct MsLexerNewline* newline) {
   for (;;) {
     char c = msLexerCurrent(lexer);
     if (c == ' ' || c == '\t') {
@@ -319,6 +344,7 @@ static MsResult msLexerSkipTrivia(struct MsLexer* lexer) {
       continue;
     }
     if (c == '\r' || c == '\n') {
+      msLexerNoteNewline(lexer, newline);
       if (msLexerConsumeNewline(lexer) != MS_OK) {
         return MS_ERROR_SYNTAX;
       }
@@ -330,7 +356,7 @@ static MsResult msLexerSkipTrivia(struct MsLexer* lexer) {
         continue;
       }
       if (msLexerLookahead(lexer) == '*') {
-        if (msLexerSkipBlockComment(lexer) != MS_OK) {
+        if (msLexerSkipBlockComment(lexer, newline) != MS_OK) {
           return MS_ERROR_SYNTAX;
         }
         continue;
@@ -342,13 +368,15 @@ static MsResult msLexerSkipTrivia(struct MsLexer* lexer) {
   }
 }
 
-// Fills out with an EOF token at the lexer's current position.
-static void msLexerMakeEof(const struct MsLexer* lexer, struct MsToken* out) {
+// Fills out with an EOF token at the lexer's current position. EOF never
+// ends a statement, so it clears the semicolon-insertion state.
+static void msLexerMakeEof(struct MsLexer* lexer, struct MsToken* out) {
   out->type = MS_TOKEN_EOF;
   out->start = lexer->source + lexer->pos;
   out->length = 0;
   out->line = lexer->line;
   out->column = lexer->column;
+  lexer->canEndStatement = false;
 }
 
 // Fills out with a token of the given type spanning [start, lexer->pos);
@@ -360,6 +388,59 @@ static void msLexerMakeToken(const struct MsLexer* lexer, struct MsToken* out,
   out->length = (size_t)(lexer->source + lexer->pos - start);
   out->line = line;
   out->column = column;
+}
+
+// The statement-ender set of 01-lexical section 7: after one of these tokens
+// a newline (or end of input) inserts a semicolon. Everything else -- all
+// operators, the word operators div/and/or/not/is/in, ",", "(", "[", "{",
+// ".", ":", and INVALID -- is a continuer and suppresses insertion.
+static bool msLexerTokenEndsStatement(MsTokenType type) {
+  switch (type) {
+    case MS_TOKEN_IDENTIFIER:
+    case MS_TOKEN_INT:
+    case MS_TOKEN_FLOAT:
+    case MS_TOKEN_STRING:
+    case MS_TOKEN_RAW_STRING:
+    case MS_TOKEN_BYTES:
+    case MS_TOKEN_FSTRING_END:
+    case MS_TOKEN_KW_TRUE:
+    case MS_TOKEN_KW_FALSE:
+    case MS_TOKEN_KW_NIL:
+    case MS_TOKEN_KW_RETURN:
+    case MS_TOKEN_KW_BREAK:
+    case MS_TOKEN_KW_CONTINUE:
+    case MS_TOKEN_KW_PASS:
+    case MS_TOKEN_KW_RAISE:
+    case MS_TOKEN_RIGHT_PAREN:
+    case MS_TOKEN_RIGHT_BRACKET:
+    case MS_TOKEN_RIGHT_BRACE:
+    case MS_TOKEN_PLUS_PLUS:
+    case MS_TOKEN_MINUS_MINUS:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Commits a freshly scanned token: updates the semicolon-insertion state
+// from its final type. Every token-producing path must route through this
+// (INVALID included -- it clears the state), and only the auto-inserted
+// semicolon and EOF bypass it (they maintain the state themselves).
+static void msLexerCommitToken(struct MsLexer* lexer, const struct MsToken* token) {
+  lexer->canEndStatement = msLexerTokenEndsStatement(token->type);
+}
+
+// Fills out with an auto-inserted semicolon: an empty lexeme at the position
+// of the newline (or end of input) that triggered it, and clears the
+// insertion state so blank lines insert nothing further.
+static void msLexerMakeSemicolon(struct MsLexer* lexer, struct MsToken* out,
+    size_t pos, uint32_t line, uint32_t column) {
+  out->type = MS_TOKEN_SEMICOLON;
+  out->start = lexer->source + pos;
+  out->length = 0;
+  out->line = line;
+  out->column = column;
+  lexer->canEndStatement = false;
 }
 
 static bool msLexerIsDigit(char c) {
@@ -550,9 +631,11 @@ static MsResult msLexerScanNumber(struct MsLexer* lexer, struct MsToken* out) {
       msLexerMakeEof(lexer, out);
       return MS_ERROR_SYNTAX;
     }
+    msLexerCommitToken(lexer, out);
     return MS_OK;
   }
   out->length = (size_t)(lexer->source + lexer->pos - out->start);
+  msLexerCommitToken(lexer, out);
   return MS_OK;
 }
 
@@ -674,6 +757,7 @@ static MsResult msLexerScanString(struct MsLexer* lexer, struct MsToken* out, bo
   out->length = (size_t)(lexer->source + lexer->pos - out->start);
   if (!error) {
     out->type = isBytes ? MS_TOKEN_BYTES : MS_TOKEN_STRING;
+    msLexerCommitToken(lexer, out);
     return MS_OK;
   }
   out->type = MS_TOKEN_INVALID;
@@ -681,6 +765,7 @@ static MsResult msLexerScanString(struct MsLexer* lexer, struct MsToken* out, bo
     msLexerMakeEof(lexer, out);
     return MS_ERROR_SYNTAX;
   }
+  msLexerCommitToken(lexer, out);
   return MS_OK;
 }
 
@@ -704,6 +789,7 @@ static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out)
         msLexerMakeEof(lexer, out);
         return MS_ERROR_SYNTAX;
       }
+      msLexerCommitToken(lexer, out);
       return MS_OK;
     }
     char c = msLexerCurrent(lexer);
@@ -711,6 +797,7 @@ static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out)
       msLexerAdvanceChar(lexer);  // closing backquote
       out->type = MS_TOKEN_RAW_STRING;
       out->length = (size_t)(lexer->source + lexer->pos - out->start);
+      msLexerCommitToken(lexer, out);
       return MS_OK;
     }
     if (c == '\r' || c == '\n') {
@@ -722,6 +809,20 @@ static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out)
     }
     msLexerAdvanceChar(lexer);
   }
+}
+
+// Reports E102 for an offending byte, naming it: '%c' for printable ASCII,
+// '\xHH' for control or non-ASCII bytes.
+static MsResult msLexerErrorUnexpectedChar(struct MsLexer* lexer, uint32_t line,
+    uint32_t column, char c) {
+  char message[32];
+  unsigned char byte = (unsigned char)c;
+  if (byte >= 0x20 && byte < 0x7F) {
+    snprintf(message, sizeof(message), "unexpected character '%c'", c);
+  } else {
+    snprintf(message, sizeof(message), "unexpected character '\\x%02X'", (unsigned)byte);
+  }
+  return msLexerError(lexer, line, column, 102, message);
 }
 
 // Scans an operator or delimiter (01-lexical section 6) with maximal munch:
@@ -768,7 +869,7 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
         type = MS_TOKEN_BANG_EQUAL;
         break;
       }
-      if (msLexerError(lexer, line, column, 102, "unexpected character '!'") != MS_OK) {
+      if (msLexerErrorUnexpectedChar(lexer, line, column, c) != MS_OK) {
         msLexerMakeEof(lexer, out);
         return MS_ERROR_SYNTAX;
       }
@@ -841,7 +942,7 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
       type = MS_TOKEN_SEMICOLON;
       break;
     default:
-      if (msLexerError(lexer, line, column, 102, "unexpected character") != MS_OK) {
+      if (msLexerErrorUnexpectedChar(lexer, line, column, c) != MS_OK) {
         msLexerMakeEof(lexer, out);
         return MS_ERROR_SYNTAX;
       }
@@ -849,98 +950,112 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
       break;
   }
   msLexerMakeToken(lexer, out, type, start, line, column);
+  msLexerCommitToken(lexer, out);
   return MS_OK;
 }
 
-// Scans the next token after skipping trivia (semicolon insertion arrives in
-// a later task; newlines are plain whitespace for now).
+// Scans the next token. Trivia skipping comes first; when it crossed a
+// newline while the previous token could end a statement, an auto-inserted
+// semicolon (empty lexeme at the newline position) is returned instead of
+// scanning further (01-lexical section 7). At end of input a pending
+// statement end yields one compensating semicolon, and only the following
+// call produces EOF.
 static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
-  for (;;) {
-    if (msLexerSkipTrivia(lexer) != MS_OK) {
-      msLexerMakeEof(lexer, out);
-      return MS_ERROR_SYNTAX;
-    }
-    if (msLexerIsAtEnd(lexer)) {
-      msLexerMakeEof(lexer, out);
+  struct MsLexerNewline newline = {false, 0, 0, 0};
+  if (msLexerSkipTrivia(lexer, &newline) != MS_OK) {
+    msLexerMakeEof(lexer, out);
+    return MS_ERROR_SYNTAX;
+  }
+  if (newline.seen && lexer->canEndStatement) {
+    msLexerMakeSemicolon(lexer, out, newline.pos, newline.line, newline.column);
+    return MS_OK;
+  }
+  if (msLexerIsAtEnd(lexer)) {
+    if (lexer->canEndStatement) {
+      msLexerMakeSemicolon(lexer, out, lexer->pos, lexer->line, lexer->column);
       return MS_OK;
     }
-    char c = msLexerCurrent(lexer);
-    size_t utf8Length = 0;
-    if ((unsigned char)c >= 0x80) {
-      utf8Length = msLexerUtf8Length(lexer);
-      if (utf8Length == 0) {
-        // Malformed sequence: consume just the lead byte, flag it INVALID,
-        // and keep scanning. v0.1 treats any well-formed sequence as an
-        // identifier byte, so only malformed bytes ever land here.
-        out->type = MS_TOKEN_INVALID;
-        out->start = lexer->source + lexer->pos;
-        out->length = 1;
-        out->line = lexer->line;
-        out->column = lexer->column;
-        MsResult result = msLexerError(lexer, lexer->line, lexer->column, 102,
-            "invalid UTF-8 sequence");
-        msLexerAdvanceChar(lexer);
-        if (result != MS_OK) {
-          msLexerMakeEof(lexer, out);
-          return MS_ERROR_SYNTAX;
-        }
-        return MS_OK;
-      }
-    }
-    if (c == '"') {
-      return msLexerScanString(lexer, out, false);
-    }
-    if (c == '`') {
-      return msLexerScanRawString(lexer, out);
-    }
-    if (c == 'b' && msLexerLookahead(lexer) == '"') {
-      // 'b' immediately followed by '"' starts a bytes literal; any other
-      // 'b' falls through to the identifier branch below.
-      return msLexerScanString(lexer, out, true);
-    }
-    if (msLexerIsIdentStart(c) || utf8Length > 0) {
+    msLexerMakeEof(lexer, out);
+    return MS_OK;
+  }
+  char c = msLexerCurrent(lexer);
+  size_t utf8Length = 0;
+  if ((unsigned char)c >= 0x80) {
+    utf8Length = msLexerUtf8Length(lexer);
+    if (utf8Length == 0) {
+      // Malformed sequence: consume just the lead byte, flag it INVALID,
+      // and keep scanning. v0.1 treats any well-formed sequence as an
+      // identifier byte, so only malformed bytes ever land here.
+      out->type = MS_TOKEN_INVALID;
       out->start = lexer->source + lexer->pos;
+      out->length = 1;
       out->line = lexer->line;
       out->column = lexer->column;
-      // Identifiers are ASCII letters/digits/'_' mixed with any well-formed
-      // multi-byte UTF-8 sequence (v0.1 simplification: no Unicode letter
-      // category check). A malformed sequence ends the identifier; the next
-      // scan call reports it as E102 above.
-      for (;;) {
-        if (msLexerIsAtEnd(lexer)) {
-          break;
-        }
-        char next = msLexerCurrent(lexer);
-        if (msLexerIsIdentContinue(next)) {
-          msLexerAdvanceChar(lexer);
-          continue;
-        }
-        size_t seqLength = 0;
-        if ((unsigned char)next >= 0x80) {
-          seqLength = msLexerUtf8Length(lexer);
-        }
-        if (seqLength == 0) {
-          break;
-        }
-        for (size_t i = 0; i < seqLength; ++i) {
-          msLexerAdvanceChar(lexer);
-        }
+      MsResult result = msLexerError(lexer, lexer->line, lexer->column, 102,
+          "invalid UTF-8 sequence");
+      msLexerAdvanceChar(lexer);
+      if (result != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
       }
-      out->length = (size_t)(lexer->source + lexer->pos - out->start);
-      out->type = msLexerKeywordType(out->start, out->length);
+      msLexerCommitToken(lexer, out);
       return MS_OK;
     }
-    if (msLexerIsDigit(c)) {
-      return msLexerScanNumber(lexer, out);
-    }
-    if (c == '.' && msLexerIsDigit(msLexerLookahead(lexer))) {
-      // Maximal munch on '.' + digit: ".5" is a float even right after an
-      // identifier (locked judgment call; see Lexer.DotFiveVersusMemberAccess).
-      // "..." cannot reach this branch: its second byte is not a digit.
-      return msLexerScanNumber(lexer, out);
-    }
-    return msLexerScanOperator(lexer, out);
   }
+  if (c == '"') {
+    return msLexerScanString(lexer, out, false);
+  }
+  if (c == '`') {
+    return msLexerScanRawString(lexer, out);
+  }
+  if (c == 'b' && msLexerLookahead(lexer) == '"') {
+    // 'b' immediately followed by '"' starts a bytes literal; any other
+    // 'b' falls through to the identifier branch below.
+    return msLexerScanString(lexer, out, true);
+  }
+  if (msLexerIsIdentStart(c) || utf8Length > 0) {
+    out->start = lexer->source + lexer->pos;
+    out->line = lexer->line;
+    out->column = lexer->column;
+    // Identifiers are ASCII letters/digits/'_' mixed with any well-formed
+    // multi-byte UTF-8 sequence (v0.1 simplification: no Unicode letter
+    // category check). A malformed sequence ends the identifier; the next
+    // scan call reports it as E102 above.
+    for (;;) {
+      if (msLexerIsAtEnd(lexer)) {
+        break;
+      }
+      char next = msLexerCurrent(lexer);
+      if (msLexerIsIdentContinue(next)) {
+        msLexerAdvanceChar(lexer);
+        continue;
+      }
+      size_t seqLength = 0;
+      if ((unsigned char)next >= 0x80) {
+        seqLength = msLexerUtf8Length(lexer);
+      }
+      if (seqLength == 0) {
+        break;
+      }
+      for (size_t i = 0; i < seqLength; ++i) {
+        msLexerAdvanceChar(lexer);
+      }
+    }
+    out->length = (size_t)(lexer->source + lexer->pos - out->start);
+    out->type = msLexerKeywordType(out->start, out->length);
+    msLexerCommitToken(lexer, out);
+    return MS_OK;
+  }
+  if (msLexerIsDigit(c)) {
+    return msLexerScanNumber(lexer, out);
+  }
+  if (c == '.' && msLexerIsDigit(msLexerLookahead(lexer))) {
+    // Maximal munch on '.' + digit: ".5" is a float even right after an
+    // identifier (locked judgment call; see Lexer.DotFiveVersusMemberAccess).
+    // "..." cannot reach this branch: its second byte is not a digit.
+    return msLexerScanNumber(lexer, out);
+  }
+  return msLexerScanOperator(lexer, out);
 }
 
 void msLexerInit(struct MsLexer* lexer, const char* source, size_t sourceLen,
