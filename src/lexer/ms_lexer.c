@@ -116,12 +116,21 @@ static bool msLexerIsAtEnd(const struct MsLexer* lexer) {
   return lexer->pos >= lexer->sourceLen;
 }
 
-// Current byte, or '\0' at end of input.
+// Current byte, or '\0' at end of input. Embedded NUL bytes are not EOF;
+// callers must check msLexerIsAtEnd separately.
 static char msLexerCurrent(const struct MsLexer* lexer) {
   if (msLexerIsAtEnd(lexer)) {
     return '\0';
   }
   return lexer->source[lexer->pos];
+}
+
+// Byte one position past the cursor, or '\0' when that is past the end.
+static char msLexerLookahead(const struct MsLexer* lexer) {
+  if (lexer->pos + 1 >= lexer->sourceLen) {
+    return '\0';
+  }
+  return lexer->source[lexer->pos + 1];
 }
 
 // Consumes one non-newline byte and returns it. Newlines must go through
@@ -162,6 +171,78 @@ static bool msLexerIsIdentContinue(char c) {
   return msLexerIsIdentStart(c) || (c >= '0' && c <= '9');
 }
 
+// Consumes a "//" comment through (not including) its terminating newline;
+// the newline itself is handled by the caller's newline path.
+static void msLexerSkipLineComment(struct MsLexer* lexer) {
+  MS_ASSERT(msLexerCurrent(lexer) == '/' && msLexerLookahead(lexer) == '/');
+  while (!msLexerIsAtEnd(lexer) && msLexerCurrent(lexer) != '\r'
+      && msLexerCurrent(lexer) != '\n') {
+    msLexerAdvanceChar(lexer);
+  }
+}
+
+// Consumes a block comment through the first "*/" (comments do not nest).
+// Newlines inside go through msLexerConsumeNewline so line/column stay
+// correct. Reaching the end of input first reports E105 at the comment's
+// start position.
+static MsResult msLexerSkipBlockComment(struct MsLexer* lexer) {
+  MS_ASSERT(msLexerCurrent(lexer) == '/' && msLexerLookahead(lexer) == '*');
+  uint32_t startLine = lexer->line;
+  uint32_t startColumn = lexer->column;
+  msLexerAdvanceChar(lexer);
+  msLexerAdvanceChar(lexer);
+  for (;;) {
+    if (msLexerIsAtEnd(lexer)) {
+      return msLexerError(lexer, startLine, startColumn, 105, "unclosed block comment");
+    }
+    char c = msLexerCurrent(lexer);
+    if (c == '\r' || c == '\n') {
+      if (msLexerConsumeNewline(lexer) != MS_OK) {
+        return MS_ERROR_SYNTAX;
+      }
+      continue;
+    }
+    if (c == '*' && msLexerLookahead(lexer) == '/') {
+      msLexerAdvanceChar(lexer);
+      msLexerAdvanceChar(lexer);
+      return MS_OK;
+    }
+    msLexerAdvanceChar(lexer);
+  }
+}
+
+// Skips spaces, tabs, newlines and comments; stops on the first byte that
+// can start a token (or at end of input) without consuming it.
+static MsResult msLexerSkipTrivia(struct MsLexer* lexer) {
+  for (;;) {
+    char c = msLexerCurrent(lexer);
+    if (c == ' ' || c == '\t') {
+      msLexerAdvanceChar(lexer);
+      continue;
+    }
+    if (c == '\r' || c == '\n') {
+      if (msLexerConsumeNewline(lexer) != MS_OK) {
+        return MS_ERROR_SYNTAX;
+      }
+      continue;
+    }
+    if (c == '/') {
+      if (msLexerLookahead(lexer) == '/') {
+        msLexerSkipLineComment(lexer);
+        continue;
+      }
+      if (msLexerLookahead(lexer) == '*') {
+        if (msLexerSkipBlockComment(lexer) != MS_OK) {
+          return MS_ERROR_SYNTAX;
+        }
+        continue;
+      }
+      // A lone '/' starts an operator (scanned in a later task); leave it.
+    }
+    return MS_OK;
+  }
+}
+
 // Fills out with an EOF token at the lexer's current position.
 static void msLexerMakeEof(const struct MsLexer* lexer, struct MsToken* out) {
   out->type = MS_TOKEN_EOF;
@@ -171,26 +252,19 @@ static void msLexerMakeEof(const struct MsLexer* lexer, struct MsToken* out) {
   out->column = lexer->column;
 }
 
-// Scans the next token, skipping spaces/tabs and newlines (semicolon
-// insertion arrives in a later task; newlines are plain whitespace for now).
+// Scans the next token after skipping trivia (semicolon insertion arrives in
+// a later task; newlines are plain whitespace for now).
 static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
   for (;;) {
-    char c = msLexerCurrent(lexer);
-    if (c == ' ' || c == '\t') {
-      msLexerAdvanceChar(lexer);
-      continue;
-    }
-    if (c == '\r' || c == '\n') {
-      if (msLexerConsumeNewline(lexer) != MS_OK) {
-        msLexerMakeEof(lexer, out);
-        return MS_ERROR_SYNTAX;
-      }
-      continue;
+    if (msLexerSkipTrivia(lexer) != MS_OK) {
+      msLexerMakeEof(lexer, out);
+      return MS_ERROR_SYNTAX;
     }
     if (msLexerIsAtEnd(lexer)) {
       msLexerMakeEof(lexer, out);
       return MS_OK;
     }
+    char c = msLexerCurrent(lexer);
     if (msLexerIsIdentStart(c)) {
       out->type = MS_TOKEN_IDENTIFIER;
       out->start = lexer->source + lexer->pos;

@@ -102,7 +102,7 @@ MS_TEST(Lexer, CrlfAndLfProduceSameTokens) {
     MS_ASSERT_EQ(tokensLf[i].type, tokensCrlf[i].type);
     MS_ASSERT_EQ(tokensLf[i].line, tokensCrlf[i].line);
   }
-  MS_ASSERT_EQ(2, tokensCrlf[2].line);  // b lands on line 2
+  MS_ASSERT_EQ(2, tokensCrlf[1].line);  // b lands on line 2
   msDiagListDestroy(&diagsLf);
   msDiagListDestroy(&diagsCrlf);
 }
@@ -116,6 +116,55 @@ MS_TEST(Lexer, BareCarriageReturnIsE112) {
   msDiagListDestroy(&diags);
 }
 
+MS_TEST(Lexer, CommentOnlySourceProducesEof) {
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("// hello\n/* block\ncomment */\n", tokens, 8, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, TokensAroundComments) {
+  struct MsDiagList diags;
+  struct MsToken tokens[16];
+  size_t count = msTestLexAll("a /* x */ b // tail\nc", tokens, 16, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  int identifiers = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (tokens[i].type == MS_TOKEN_IDENTIFIER) {
+      ++identifiers;
+    }
+  }
+  MS_ASSERT_EQ(3, identifiers);  // a, b, c
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, UnclosedBlockCommentIsE105) {
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  msTestLexAll("/* never closed", tokens, 8, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(105, msDiagListAt(&diags, 0)->code);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, BlockCommentsDoNotNest) {
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  // "/* a /* b */ ident" ends at the first "*/"; the trailing "ident" is code.
+  size_t count = msTestLexAll("/* a /* b */ ident", tokens, 8, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  bool sawIdent = false;
+  for (size_t i = 0; i < count; ++i) {
+    if (tokens[i].type == MS_TOKEN_IDENTIFIER && msTestLexemeEq(&tokens[i], "ident")) {
+      sawIdent = true;
+    }
+  }
+  MS_ASSERT_TRUE(sawIdent);
+  msDiagListDestroy(&diags);
+}
+
 static const MsTestCase msTests[] = {
     {"Lexer.TokenTypeNameCoversEveryValue", testLexerTokenTypeNameCoversEveryValue},
     {"Lexer.TokenTypeNameSpots", testLexerTokenTypeNameSpots},
@@ -123,5 +172,9 @@ static const MsTestCase msTests[] = {
     {"Lexer.BomIsSkippedAndReported", testLexerBomIsSkippedAndReported},
     {"Lexer.CrlfAndLfProduceSameTokens", testLexerCrlfAndLfProduceSameTokens},
     {"Lexer.BareCarriageReturnIsE112", testLexerBareCarriageReturnIsE112},
+    {"Lexer.CommentOnlySourceProducesEof", testLexerCommentOnlySourceProducesEof},
+    {"Lexer.TokensAroundComments", testLexerTokensAroundComments},
+    {"Lexer.UnclosedBlockCommentIsE105", testLexerUnclosedBlockCommentIsE105},
+    {"Lexer.BlockCommentsDoNotNest", testLexerBlockCommentsDoNotNest},
 };
 MS_TEST_MAIN(msTests)
