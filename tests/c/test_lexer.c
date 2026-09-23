@@ -236,6 +236,9 @@ MS_TEST(Lexer, NonAsciiIdentifierAndInvalidUtf8) {
   size_t count = msTestLexAll("\xC3(", tokensBad, 8, &diagsBad);  // truncated UTF-8
   MS_ASSERT_TRUE(msDiagListCount(&diagsBad) >= 1);
   MS_ASSERT_EQ(102, msDiagListAt(&diagsBad, 0)->code);
+  // The INVALID token covers exactly the malformed lead byte.
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, tokensBad[0].type);
+  MS_ASSERT_EQ(1, tokensBad[0].length);
   bool sawInvalid = false;
   for (size_t i = 0; i < count; ++i) {
     if (tokensBad[i].type == MS_TOKEN_INVALID) {

@@ -200,6 +200,9 @@ static const struct {
     {"finally", MS_TOKEN_KW_FINALLY}, {"continue", MS_TOKEN_KW_CONTINUE},
 };
 
+_Static_assert(MS_ARRAY_LEN(msLexerKeywords) == 36,
+    "msLexerKeywords must cover exactly the 36 keywords of 01-lexical section 4");
+
 // Maps an identifier lexeme to its keyword token type, or
 // MS_TOKEN_IDENTIFIER when it is not a keyword (builtins like "chan"/"len"
 // deliberately miss the table; 01-lexical section 4).
@@ -226,11 +229,12 @@ static MsTokenType msLexerKeywordType(const char* start, size_t length) {
   return MS_TOKEN_IDENTIFIER;
 }
 
-// Returns the byte length of the well-formed UTF-8 sequence starting at the
-// cursor, or 0 when the sequence is malformed: a bad lead byte (outside
-// 0xC2-0xF4, rejecting overlongs and out-of-range code points), too few
-// bytes left in the buffer, or a non-continuation byte (outside 0x80-0xBF).
+// Returns the byte length of the shape-valid UTF-8 sequence at the cursor,
+// or 0 on a shape error: lead byte outside 0xC2-0xF4, truncation at end of
+// buffer, or continuation byte outside 0x80-0xBF. Shape only -- overlong
+// forms, surrogates, and code points above U+10FFFF pass by design (v0.1).
 static size_t msLexerUtf8Length(const struct MsLexer* lexer) {
+  MS_ASSERT(!msLexerIsAtEnd(lexer));
   unsigned char lead = (unsigned char)lexer->source[lexer->pos];
   size_t length;
   if (lead >= 0xC2 && lead <= 0xDF) {
