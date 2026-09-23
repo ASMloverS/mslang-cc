@@ -37,6 +37,22 @@ static bool msTestLexemeEqN(const struct MsToken* token, const char* text, size_
   return token->length == len && memcmp(token->start, text, len) == 0;
 }
 
+// Lexes source and asserts zero diagnostics and exactly the expected token
+// type sequence followed by MS_TOKEN_EOF.
+static void msTestExpectTypes(const char* source, const MsTokenType* expect, size_t expectCount) {
+  struct MsDiagList diags;
+  struct MsToken tokens[MS_TEST_MAX_TOKENS];
+  size_t count = msTestLexAll(source, tokens, MS_TEST_MAX_TOKENS, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  MS_ASSERT_EQ(expectCount + 1, count);
+  size_t check = count - 1 < expectCount ? count - 1 : expectCount;
+  for (size_t i = 0; i < check; ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
+  msDiagListDestroy(&diags);
+}
+
 MS_TEST(Lexer, TokenTypeNameCoversEveryValue) {
   for (int type = MS_TOKEN_EOF; type <= MS_TOKEN_ELLIPSIS; ++type) {
     const char* name = msTokenTypeName((MsTokenType)type);
@@ -46,10 +62,6 @@ MS_TEST(Lexer, TokenTypeNameCoversEveryValue) {
 }
 
 MS_TEST(Lexer, TokenTypeNameSpots) {
-  // Harness helper not yet exercised by a real test; keep the reference so
-  // -Wunused-function stays silent until a later task uses it.
-  (void)MS_TEST_MAX_TOKENS;
-
   MS_ASSERT_TRUE(strcmp(msTokenTypeName(MS_TOKEN_EOF), "MS_TOKEN_EOF") == 0);
   MS_ASSERT_TRUE(strcmp(msTokenTypeName(MS_TOKEN_KW_IF), "MS_TOKEN_KW_IF") == 0);
   MS_ASSERT_TRUE(strcmp(msTokenTypeName(MS_TOKEN_SHIFT_LEFT_EQUAL), "MS_TOKEN_SHIFT_LEFT_EQUAL") == 0);
@@ -183,6 +195,7 @@ MS_TEST(Lexer, AllKeywordsScan) {
       {"break", MS_TOKEN_KW_BREAK},   {"case", MS_TOKEN_KW_CASE},
       {"class", MS_TOKEN_KW_CLASS},   {"continue", MS_TOKEN_KW_CONTINUE},
       {"default", MS_TOKEN_KW_DEFAULT}, {"del", MS_TOKEN_KW_DEL},
+      {"div", MS_TOKEN_KW_DIV},
       {"else", MS_TOKEN_KW_ELSE},     {"except", MS_TOKEN_KW_EXCEPT},
       {"false", MS_TOKEN_KW_FALSE},   {"finally", MS_TOKEN_KW_FINALLY},
       {"for", MS_TOKEN_KW_FOR},       {"from", MS_TOKEN_KW_FROM},
@@ -537,6 +550,151 @@ MS_TEST(Lexer, StringRoundTrip) {
   msDiagListDestroy(&diags);
 }
 
+MS_TEST(Lexer, OperatorsScan) {
+  static const struct {
+    const char* source;
+    MsTokenType type;
+  } kOperatorCases[] = {
+      {"+", MS_TOKEN_PLUS},       {"-", MS_TOKEN_MINUS},
+      {"*", MS_TOKEN_STAR},       {"/", MS_TOKEN_SLASH},
+      {"%", MS_TOKEN_PERCENT},    {"**", MS_TOKEN_DOUBLE_STAR},
+      {"==", MS_TOKEN_EQUAL_EQUAL}, {"!=", MS_TOKEN_BANG_EQUAL},
+      {"<", MS_TOKEN_LESS},       {"<=", MS_TOKEN_LESS_EQUAL},
+      {">", MS_TOKEN_GREATER},    {">=", MS_TOKEN_GREATER_EQUAL},
+      {"&", MS_TOKEN_AMP},        {"|", MS_TOKEN_PIPE},
+      {"^", MS_TOKEN_CARET},      {"~", MS_TOKEN_TILDE},
+      {"<<", MS_TOKEN_SHIFT_LEFT}, {">>", MS_TOKEN_SHIFT_RIGHT},
+      {":=", MS_TOKEN_COLON_EQUAL}, {"=", MS_TOKEN_EQUAL},
+      {"+=", MS_TOKEN_PLUS_EQUAL}, {"-=", MS_TOKEN_MINUS_EQUAL},
+      {"*=", MS_TOKEN_STAR_EQUAL}, {"/=", MS_TOKEN_SLASH_EQUAL},
+      {"%=", MS_TOKEN_PERCENT_EQUAL}, {"**=", MS_TOKEN_DOUBLE_STAR_EQUAL},
+      {"&=", MS_TOKEN_AMP_EQUAL},  {"|=", MS_TOKEN_PIPE_EQUAL},
+      {"^=", MS_TOKEN_CARET_EQUAL}, {"<<=", MS_TOKEN_SHIFT_LEFT_EQUAL},
+      {">>=", MS_TOKEN_SHIFT_RIGHT_EQUAL}, {"++", MS_TOKEN_PLUS_PLUS},
+      {"--", MS_TOKEN_MINUS_MINUS}, {"(", MS_TOKEN_LEFT_PAREN},
+      {")", MS_TOKEN_RIGHT_PAREN}, {"[", MS_TOKEN_LEFT_BRACKET},
+      {"]", MS_TOKEN_RIGHT_BRACKET}, {"{", MS_TOKEN_LEFT_BRACE},
+      {"}", MS_TOKEN_RIGHT_BRACE}, {",", MS_TOKEN_COMMA},
+      {":", MS_TOKEN_COLON},      {".", MS_TOKEN_DOT},
+      {"...", MS_TOKEN_ELLIPSIS}, {";", MS_TOKEN_SEMICOLON},
+  };
+  for (size_t i = 0; i < MS_ARRAY_LEN(kOperatorCases); ++i) {
+    struct MsDiagList diags;
+    struct MsToken tokens[4];
+    msTestLexAll(kOperatorCases[i].source, tokens, 4, &diags);
+    MS_ASSERT_EQ(kOperatorCases[i].type, tokens[0].type);
+    MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], kOperatorCases[i].source));
+    // Bare-brace diagnostics (E111) only arrive with the f-string frame logic
+    // in a later task; skip the diag assertion for those two cases.
+    if (kOperatorCases[i].type != MS_TOKEN_LEFT_BRACE
+        && kOperatorCases[i].type != MS_TOKEN_RIGHT_BRACE) {
+      MS_ASSERT_EQ(0, msDiagListCount(&diags));
+    }
+    msDiagListDestroy(&diags);
+  }
+}
+
+MS_TEST(Lexer, OperatorsMaximalMunch) {
+  {
+    const MsTokenType expect[] = {MS_TOKEN_SHIFT_LEFT_EQUAL};
+    msTestExpectTypes("<<=", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    const MsTokenType expect[] = {MS_TOKEN_SHIFT_LEFT, MS_TOKEN_LESS_EQUAL, MS_TOKEN_LESS};
+    msTestExpectTypes("<< <= <", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    // '.' priority: "..." > float ('.' + digit) > DOT.
+    struct MsDiagList diags;
+    struct MsToken tokens[8];
+    size_t count = msTestLexAll("... .5 .", tokens, 8, &diags);
+    MS_ASSERT_EQ(0, msDiagListCount(&diags));
+    MS_ASSERT_EQ(4, count);
+    MS_ASSERT_EQ(MS_TOKEN_ELLIPSIS, tokens[0].type);
+    MS_ASSERT_EQ(MS_TOKEN_FLOAT, tokens[1].type);
+    MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], ".5"));
+    MS_ASSERT_EQ(MS_TOKEN_DOT, tokens[2].type);
+    MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[3].type);
+    msDiagListDestroy(&diags);
+  }
+  {
+    const MsTokenType expect[] = {
+        MS_TOKEN_DOUBLE_STAR_EQUAL, MS_TOKEN_DOUBLE_STAR,
+        MS_TOKEN_STAR_EQUAL, MS_TOKEN_STAR,
+    };
+    msTestExpectTypes("**= ** *= *", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    const MsTokenType expect[] = {MS_TOKEN_SLASH_EQUAL, MS_TOKEN_SLASH};
+    msTestExpectTypes("/= /", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    const MsTokenType expect[] = {MS_TOKEN_PLUS_PLUS, MS_TOKEN_MINUS_MINUS};
+    msTestExpectTypes("++ --", expect, MS_ARRAY_LEN(expect));
+  }
+}
+
+MS_TEST(Lexer, SlashSlashIsAlwaysComment) {
+  // Ruling: "//" UNCONDITIONALLY starts a line comment -- there is no "//"
+  // or "//=" operator token; floor division is the keyword "div".
+  struct MsDiagList diags;
+  struct MsToken tokens[4];
+  size_t count = msTestLexAll("// just a comment", tokens, 4, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  MS_ASSERT_EQ(1, count);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[0].type);
+  msDiagListDestroy(&diags);
+
+  struct MsDiagList diagsEq;
+  struct MsToken tokensEq[4];
+  size_t countEq = msTestLexAll("//= also a comment", tokensEq, 4, &diagsEq);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsEq));
+  MS_ASSERT_EQ(1, countEq);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokensEq[0].type);
+  msDiagListDestroy(&diagsEq);
+
+  // "a // b" is the identifier a followed by a comment, NOT floor division.
+  struct MsDiagList diagsTail;
+  struct MsToken tokensTail[4];
+  size_t countTail = msTestLexAll("a // b", tokensTail, 4, &diagsTail);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsTail));
+  MS_ASSERT_EQ(2, countTail);
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokensTail[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokensTail[0], "a"));
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokensTail[1].type);
+  msDiagListDestroy(&diagsTail);
+}
+
+MS_TEST(Lexer, BareBangIsE102) {
+  // The language has no logical-not symbol (logical not is the keyword
+  // "not"), so a bare '!' is an illegal character; "!=" is the only '!' token.
+  struct MsDiagList diags;
+  struct MsToken tokens[4];
+  size_t count = msTestLexAll("!", tokens, 4, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(102, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(1, msDiagListAt(&diags, 0)->line);
+  MS_ASSERT_EQ(1, msDiagListAt(&diags, 0)->column);
+  MS_ASSERT_TRUE(count >= 1);
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], "!"));
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, DivKeywordScans) {
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("a div b", tokens, 8, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  MS_ASSERT_EQ(4, count);
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokens[0].type);
+  MS_ASSERT_EQ(MS_TOKEN_KW_DIV, tokens[1].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], "div"));
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokens[2].type);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[3].type);
+  msDiagListDestroy(&diags);
+}
+
 static const MsTestCase msTests[] = {
     {"Lexer.TokenTypeNameCoversEveryValue", testLexerTokenTypeNameCoversEveryValue},
     {"Lexer.TokenTypeNameSpots", testLexerTokenTypeNameSpots},
@@ -562,5 +720,10 @@ static const MsTestCase msTests[] = {
     {"Lexer.UnescapeLeakFree", testLexerUnescapeLeakFree},
     {"Lexer.UnescapeOom", testLexerUnescapeOom},
     {"Lexer.StringRoundTrip", testLexerStringRoundTrip},
+    {"Lexer.OperatorsScan", testLexerOperatorsScan},
+    {"Lexer.OperatorsMaximalMunch", testLexerOperatorsMaximalMunch},
+    {"Lexer.SlashSlashIsAlwaysComment", testLexerSlashSlashIsAlwaysComment},
+    {"Lexer.BareBangIsE102", testLexerBareBangIsE102},
+    {"Lexer.DivKeywordScans", testLexerDivKeywordScans},
 };
 MS_TEST_MAIN(msTests)

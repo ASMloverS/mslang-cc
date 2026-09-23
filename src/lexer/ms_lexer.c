@@ -28,6 +28,7 @@ static const char* const msLexerTokenTypeNames[] = {
     "MS_TOKEN_KW_CONTINUE",
     "MS_TOKEN_KW_DEFAULT",
     "MS_TOKEN_KW_DEL",
+    "MS_TOKEN_KW_DIV",
     "MS_TOKEN_KW_ELSE",
     "MS_TOKEN_KW_EXCEPT",
     "MS_TOKEN_KW_FALSE",
@@ -58,7 +59,6 @@ static const char* const msLexerTokenTypeNames[] = {
     "MS_TOKEN_MINUS",
     "MS_TOKEN_STAR",
     "MS_TOKEN_SLASH",
-    "MS_TOKEN_DOUBLE_SLASH",
     "MS_TOKEN_PERCENT",
     "MS_TOKEN_DOUBLE_STAR",
     "MS_TOKEN_EQUAL_EQUAL",
@@ -79,7 +79,6 @@ static const char* const msLexerTokenTypeNames[] = {
     "MS_TOKEN_MINUS_EQUAL",
     "MS_TOKEN_STAR_EQUAL",
     "MS_TOKEN_SLASH_EQUAL",
-    "MS_TOKEN_DOUBLE_SLASH_EQUAL",
     "MS_TOKEN_PERCENT_EQUAL",
     "MS_TOKEN_DOUBLE_STAR_EQUAL",
     "MS_TOKEN_AMP_EQUAL",
@@ -146,6 +145,16 @@ static char msLexerAdvanceChar(struct MsLexer* lexer) {
   return c;
 }
 
+// Consumes the current byte and returns true when it equals expected;
+// otherwise leaves the cursor alone and returns false.
+static bool msLexerMatch(struct MsLexer* lexer, char expected) {
+  if (msLexerIsAtEnd(lexer) || msLexerCurrent(lexer) != expected) {
+    return false;
+  }
+  msLexerAdvanceChar(lexer);
+  return true;
+}
+
 // Consumes one newline: "\n", "\r\n" (folded into one), or a bare "\r",
 // which is reported as E112 and treated as a newline for recovery.
 static MsResult msLexerConsumeNewline(struct MsLexer* lexer) {
@@ -174,7 +183,7 @@ static bool msLexerIsIdentContinue(char c) {
   return msLexerIsIdentStart(c) || (c >= '0' && c <= '9');
 }
 
-// The 36 keywords of 01-lexical section 4. Sorted by name length, then
+// The 37 keywords of 01-lexical section 4. Sorted by name length, then
 // lexicographically within each length -- the binary search in
 // msLexerKeywordType compares on that same key.
 static const struct {
@@ -184,9 +193,10 @@ static const struct {
     {"as", MS_TOKEN_KW_AS},       {"if", MS_TOKEN_KW_IF},
     {"in", MS_TOKEN_KW_IN},       {"is", MS_TOKEN_KW_IS},
     {"or", MS_TOKEN_KW_OR},       {"and", MS_TOKEN_KW_AND},
-    {"del", MS_TOKEN_KW_DEL},     {"for", MS_TOKEN_KW_FOR},
-    {"nil", MS_TOKEN_KW_NIL},     {"not", MS_TOKEN_KW_NOT},
-    {"try", MS_TOKEN_KW_TRY},     {"case", MS_TOKEN_KW_CASE},
+    {"del", MS_TOKEN_KW_DEL},     {"div", MS_TOKEN_KW_DIV},
+    {"for", MS_TOKEN_KW_FOR},     {"nil", MS_TOKEN_KW_NIL},
+    {"not", MS_TOKEN_KW_NOT},     {"try", MS_TOKEN_KW_TRY},
+    {"case", MS_TOKEN_KW_CASE},
     {"else", MS_TOKEN_KW_ELSE},   {"from", MS_TOKEN_KW_FROM},
     {"func", MS_TOKEN_KW_FUNC},   {"pass", MS_TOKEN_KW_PASS},
     {"self", MS_TOKEN_KW_SELF},   {"true", MS_TOKEN_KW_TRUE},
@@ -201,8 +211,8 @@ static const struct {
     {"finally", MS_TOKEN_KW_FINALLY}, {"continue", MS_TOKEN_KW_CONTINUE},
 };
 
-_Static_assert(MS_ARRAY_LEN(msLexerKeywords) == 36,
-    "msLexerKeywords must cover exactly the 36 keywords of 01-lexical section 4");
+_Static_assert(MS_ARRAY_LEN(msLexerKeywords) == 37,
+    "msLexerKeywords must cover exactly the 37 keywords of 01-lexical section 4");
 
 // Maps an identifier lexeme to its keyword token type, or
 // MS_TOKEN_IDENTIFIER when it is not a keyword (builtins like "chan"/"len"
@@ -325,7 +335,8 @@ static MsResult msLexerSkipTrivia(struct MsLexer* lexer) {
         }
         continue;
       }
-      // A lone '/' starts an operator (scanned in a later task); leave it.
+      // A lone '/' starts an operator (SLASH / SLASH_EQUAL); leave it for
+      // the operator dispatcher.
     }
     return MS_OK;
   }
@@ -338,6 +349,17 @@ static void msLexerMakeEof(const struct MsLexer* lexer, struct MsToken* out) {
   out->length = 0;
   out->line = lexer->line;
   out->column = lexer->column;
+}
+
+// Fills out with a token of the given type spanning [start, lexer->pos);
+// line/column are the ones captured before the token's first byte.
+static void msLexerMakeToken(const struct MsLexer* lexer, struct MsToken* out,
+    MsTokenType type, const char* start, uint32_t line, uint32_t column) {
+  out->type = type;
+  out->start = start;
+  out->length = (size_t)(lexer->source + lexer->pos - start);
+  out->line = line;
+  out->column = column;
 }
 
 static bool msLexerIsDigit(char c) {
@@ -702,6 +724,134 @@ static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out)
   }
 }
 
+// Scans an operator or delimiter (01-lexical section 6) with maximal munch:
+// three-byte forms ("<<=", ">>=", "**=", "...") before two-byte forms before
+// single bytes. "//" and "/*" never reach here -- trivia consumed them as
+// comments -- so '/' only ever yields SLASH_EQUAL or SLASH. A bare '!'
+// reports E102 (logical not is the keyword "not"); any other unmatched byte
+// ('?', '$', '@', '#', backslash, control bytes) reports E102 as well. Both
+// come out as INVALID tokens covering the offending byte so scanning can
+// continue for error recovery.
+static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) {
+  const char* start = lexer->source + lexer->pos;
+  uint32_t line = lexer->line;
+  uint32_t column = lexer->column;
+  char c = msLexerAdvanceChar(lexer);
+  MsTokenType type;
+  switch (c) {
+    case '+':
+      type = msLexerMatch(lexer, '+') ? MS_TOKEN_PLUS_PLUS
+          : msLexerMatch(lexer, '=') ? MS_TOKEN_PLUS_EQUAL : MS_TOKEN_PLUS;
+      break;
+    case '-':
+      type = msLexerMatch(lexer, '-') ? MS_TOKEN_MINUS_MINUS
+          : msLexerMatch(lexer, '=') ? MS_TOKEN_MINUS_EQUAL : MS_TOKEN_MINUS;
+      break;
+    case '*':
+      if (msLexerMatch(lexer, '*')) {
+        type = msLexerMatch(lexer, '=') ? MS_TOKEN_DOUBLE_STAR_EQUAL : MS_TOKEN_DOUBLE_STAR;
+      } else {
+        type = msLexerMatch(lexer, '=') ? MS_TOKEN_STAR_EQUAL : MS_TOKEN_STAR;
+      }
+      break;
+    case '/':
+      type = msLexerMatch(lexer, '=') ? MS_TOKEN_SLASH_EQUAL : MS_TOKEN_SLASH;
+      break;
+    case '%':
+      type = msLexerMatch(lexer, '=') ? MS_TOKEN_PERCENT_EQUAL : MS_TOKEN_PERCENT;
+      break;
+    case '=':
+      type = msLexerMatch(lexer, '=') ? MS_TOKEN_EQUAL_EQUAL : MS_TOKEN_EQUAL;
+      break;
+    case '!':
+      if (msLexerMatch(lexer, '=')) {
+        type = MS_TOKEN_BANG_EQUAL;
+        break;
+      }
+      if (msLexerError(lexer, line, column, 102, "unexpected character '!'") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      type = MS_TOKEN_INVALID;
+      break;
+    case '<':
+      if (msLexerMatch(lexer, '<')) {
+        type = msLexerMatch(lexer, '=') ? MS_TOKEN_SHIFT_LEFT_EQUAL : MS_TOKEN_SHIFT_LEFT;
+      } else {
+        type = msLexerMatch(lexer, '=') ? MS_TOKEN_LESS_EQUAL : MS_TOKEN_LESS;
+      }
+      break;
+    case '>':
+      if (msLexerMatch(lexer, '>')) {
+        type = msLexerMatch(lexer, '=') ? MS_TOKEN_SHIFT_RIGHT_EQUAL : MS_TOKEN_SHIFT_RIGHT;
+      } else {
+        type = msLexerMatch(lexer, '=') ? MS_TOKEN_GREATER_EQUAL : MS_TOKEN_GREATER;
+      }
+      break;
+    case '&':
+      type = msLexerMatch(lexer, '=') ? MS_TOKEN_AMP_EQUAL : MS_TOKEN_AMP;
+      break;
+    case '|':
+      type = msLexerMatch(lexer, '=') ? MS_TOKEN_PIPE_EQUAL : MS_TOKEN_PIPE;
+      break;
+    case '^':
+      type = msLexerMatch(lexer, '=') ? MS_TOKEN_CARET_EQUAL : MS_TOKEN_CARET;
+      break;
+    case '~':
+      type = MS_TOKEN_TILDE;
+      break;
+    case ':':
+      type = msLexerMatch(lexer, '=') ? MS_TOKEN_COLON_EQUAL : MS_TOKEN_COLON;
+      break;
+    case '.':
+      // The caller routes '.' + digit to msLexerScanNumber; here the
+      // three-byte "..." wins over a lone DOT.
+      if (msLexerCurrent(lexer) == '.' && msLexerLookahead(lexer) == '.') {
+        msLexerAdvanceChar(lexer);
+        msLexerAdvanceChar(lexer);
+        type = MS_TOKEN_ELLIPSIS;
+      } else {
+        type = MS_TOKEN_DOT;
+      }
+      break;
+    case '(':
+      type = MS_TOKEN_LEFT_PAREN;
+      break;
+    case ')':
+      type = MS_TOKEN_RIGHT_PAREN;
+      break;
+    case '[':
+      type = MS_TOKEN_LEFT_BRACKET;
+      break;
+    case ']':
+      type = MS_TOKEN_RIGHT_BRACKET;
+      break;
+    case '{':
+      // Plain braces for now; the f-string frame logic (including the E111
+      // bare-brace diagnostic) arrives in a later task.
+      type = MS_TOKEN_LEFT_BRACE;
+      break;
+    case '}':
+      type = MS_TOKEN_RIGHT_BRACE;
+      break;
+    case ',':
+      type = MS_TOKEN_COMMA;
+      break;
+    case ';':
+      type = MS_TOKEN_SEMICOLON;
+      break;
+    default:
+      if (msLexerError(lexer, line, column, 102, "unexpected character") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      type = MS_TOKEN_INVALID;
+      break;
+  }
+  msLexerMakeToken(lexer, out, type, start, line, column);
+  return MS_OK;
+}
+
 // Scans the next token after skipping trivia (semicolon insertion arrives in
 // a later task; newlines are plain whitespace for now).
 static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
@@ -783,24 +933,13 @@ static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
     if (msLexerIsDigit(c)) {
       return msLexerScanNumber(lexer, out);
     }
-    if (c == '.') {
-      if (msLexerIsDigit(msLexerLookahead(lexer))) {
-        // Maximal munch on '.' + digit: ".5" is a float even right after an
-        // identifier (locked judgment call; see Lexer.DotFiveVersusMemberAccess).
-        return msLexerScanNumber(lexer, out);
-      }
-      // A '.' not followed by a digit is a DOT token for now; the "..."
-      // maximal munch arrives with the operator dispatch in task 7.
-      out->type = MS_TOKEN_DOT;
-      out->start = lexer->source + lexer->pos;
-      out->length = 1;
-      out->line = lexer->line;
-      out->column = lexer->column;
-      msLexerAdvanceChar(lexer);
-      return MS_OK;
+    if (c == '.' && msLexerIsDigit(msLexerLookahead(lexer))) {
+      // Maximal munch on '.' + digit: ".5" is a float even right after an
+      // identifier (locked judgment call; see Lexer.DotFiveVersusMemberAccess).
+      // "..." cannot reach this branch: its second byte is not a digit.
+      return msLexerScanNumber(lexer, out);
     }
-    // Fallback until the remaining scanners land: skip the byte silently.
-    msLexerAdvanceChar(lexer);
+    return msLexerScanOperator(lexer, out);
   }
 }
 
