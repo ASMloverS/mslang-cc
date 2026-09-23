@@ -11,6 +11,7 @@ mslang-cc/
 ├── include/
 │   └── mslang/                  # 公开 C API 头文件（见 09-c-api.md）
 ├── src/
+│   ├── core/                    # 核心基础设施（内存封装、错误码、通用宏、诊断收集器）
 │   ├── lexer/                   # 词法分析
 │   │   ├── ms_lexer.c
 │   │   └── ms_lexer.h
