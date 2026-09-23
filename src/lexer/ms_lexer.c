@@ -1,5 +1,7 @@
 #include "lexer/ms_lexer.h"
 
+#include <string.h>
+
 #include "core/ms_common.h"
 
 static const char* const msLexerTokenTypeNames[] = {
@@ -171,6 +173,87 @@ static bool msLexerIsIdentContinue(char c) {
   return msLexerIsIdentStart(c) || (c >= '0' && c <= '9');
 }
 
+// The 36 keywords of 01-lexical section 4. Sorted by name length, then
+// lexicographically within each length -- the binary search in
+// msLexerKeywordType compares on that same key.
+static const struct {
+  const char* name;
+  MsTokenType type;
+} msLexerKeywords[] = {
+    {"as", MS_TOKEN_KW_AS},       {"if", MS_TOKEN_KW_IF},
+    {"in", MS_TOKEN_KW_IN},       {"is", MS_TOKEN_KW_IS},
+    {"or", MS_TOKEN_KW_OR},       {"and", MS_TOKEN_KW_AND},
+    {"del", MS_TOKEN_KW_DEL},     {"for", MS_TOKEN_KW_FOR},
+    {"nil", MS_TOKEN_KW_NIL},     {"not", MS_TOKEN_KW_NOT},
+    {"try", MS_TOKEN_KW_TRY},     {"case", MS_TOKEN_KW_CASE},
+    {"else", MS_TOKEN_KW_ELSE},   {"from", MS_TOKEN_KW_FROM},
+    {"func", MS_TOKEN_KW_FUNC},   {"pass", MS_TOKEN_KW_PASS},
+    {"self", MS_TOKEN_KW_SELF},   {"true", MS_TOKEN_KW_TRUE},
+    {"with", MS_TOKEN_KW_WITH},   {"async", MS_TOKEN_KW_ASYNC},
+    {"await", MS_TOKEN_KW_AWAIT}, {"break", MS_TOKEN_KW_BREAK},
+    {"class", MS_TOKEN_KW_CLASS}, {"false", MS_TOKEN_KW_FALSE},
+    {"raise", MS_TOKEN_KW_RAISE}, {"super", MS_TOKEN_KW_SUPER},
+    {"while", MS_TOKEN_KW_WHILE}, {"except", MS_TOKEN_KW_EXCEPT},
+    {"global", MS_TOKEN_KW_GLOBAL}, {"import", MS_TOKEN_KW_IMPORT},
+    {"lambda", MS_TOKEN_KW_LAMBDA}, {"return", MS_TOKEN_KW_RETURN},
+    {"select", MS_TOKEN_KW_SELECT}, {"default", MS_TOKEN_KW_DEFAULT},
+    {"finally", MS_TOKEN_KW_FINALLY}, {"continue", MS_TOKEN_KW_CONTINUE},
+};
+
+// Maps an identifier lexeme to its keyword token type, or
+// MS_TOKEN_IDENTIFIER when it is not a keyword (builtins like "chan"/"len"
+// deliberately miss the table; 01-lexical section 4).
+static MsTokenType msLexerKeywordType(const char* start, size_t length) {
+  size_t lo = 0;
+  size_t hi = MS_ARRAY_LEN(msLexerKeywords);
+  while (lo < hi) {
+    size_t mid = lo + (hi - lo) / 2;
+    size_t nameLen = strlen(msLexerKeywords[mid].name);
+    int cmp = 0;
+    if (length != nameLen) {
+      cmp = length < nameLen ? -1 : 1;
+    } else {
+      cmp = memcmp(start, msLexerKeywords[mid].name, length);
+    }
+    if (cmp < 0) {
+      hi = mid;
+    } else if (cmp > 0) {
+      lo = mid + 1;
+    } else {
+      return msLexerKeywords[mid].type;
+    }
+  }
+  return MS_TOKEN_IDENTIFIER;
+}
+
+// Returns the byte length of the well-formed UTF-8 sequence starting at the
+// cursor, or 0 when the sequence is malformed: a bad lead byte (outside
+// 0xC2-0xF4, rejecting overlongs and out-of-range code points), too few
+// bytes left in the buffer, or a non-continuation byte (outside 0x80-0xBF).
+static size_t msLexerUtf8Length(const struct MsLexer* lexer) {
+  unsigned char lead = (unsigned char)lexer->source[lexer->pos];
+  size_t length;
+  if (lead >= 0xC2 && lead <= 0xDF) {
+    length = 2;
+  } else if (lead >= 0xE0 && lead <= 0xEF) {
+    length = 3;
+  } else if (lead >= 0xF0 && lead <= 0xF4) {
+    length = 4;
+  } else {
+    return 0;
+  }
+  if (lexer->pos + length > lexer->sourceLen) {
+    return 0;
+  }
+  for (size_t i = 1; i < length; ++i) {
+    unsigned char c = (unsigned char)lexer->source[lexer->pos + i];
+    if (c < 0x80 || c > 0xBF) {
+      return 0;
+    }
+  }
+  return length;
+}
+
 // Consumes a "//" comment through (not including) its terminating newline;
 // the newline itself is handled by the caller's newline path.
 static void msLexerSkipLineComment(struct MsLexer* lexer) {
@@ -265,15 +348,58 @@ static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
       return MS_OK;
     }
     char c = msLexerCurrent(lexer);
-    if (msLexerIsIdentStart(c)) {
-      out->type = MS_TOKEN_IDENTIFIER;
+    size_t utf8Length = 0;
+    if ((unsigned char)c >= 0x80) {
+      utf8Length = msLexerUtf8Length(lexer);
+      if (utf8Length == 0) {
+        // Malformed sequence: consume just the lead byte, flag it INVALID,
+        // and keep scanning. v0.1 treats any well-formed sequence as an
+        // identifier byte, so only malformed bytes ever land here.
+        out->type = MS_TOKEN_INVALID;
+        out->start = lexer->source + lexer->pos;
+        out->length = 1;
+        out->line = lexer->line;
+        out->column = lexer->column;
+        MsResult result = msLexerError(lexer, lexer->line, lexer->column, 102,
+            "invalid UTF-8 sequence");
+        msLexerAdvanceChar(lexer);
+        if (result != MS_OK) {
+          msLexerMakeEof(lexer, out);
+          return MS_ERROR_SYNTAX;
+        }
+        return MS_OK;
+      }
+    }
+    if (msLexerIsIdentStart(c) || utf8Length > 0) {
       out->start = lexer->source + lexer->pos;
       out->line = lexer->line;
       out->column = lexer->column;
-      do {
-        msLexerAdvanceChar(lexer);
-      } while (msLexerIsIdentContinue(msLexerCurrent(lexer)));
+      // Identifiers are ASCII letters/digits/'_' mixed with any well-formed
+      // multi-byte UTF-8 sequence (v0.1 simplification: no Unicode letter
+      // category check). A malformed sequence ends the identifier; the next
+      // scan call reports it as E102 above.
+      for (;;) {
+        if (msLexerIsAtEnd(lexer)) {
+          break;
+        }
+        char next = msLexerCurrent(lexer);
+        if (msLexerIsIdentContinue(next)) {
+          msLexerAdvanceChar(lexer);
+          continue;
+        }
+        size_t seqLength = 0;
+        if ((unsigned char)next >= 0x80) {
+          seqLength = msLexerUtf8Length(lexer);
+        }
+        if (seqLength == 0) {
+          break;
+        }
+        for (size_t i = 0; i < seqLength; ++i) {
+          msLexerAdvanceChar(lexer);
+        }
+      }
       out->length = (size_t)(lexer->source + lexer->pos - out->start);
+      out->type = msLexerKeywordType(out->start, out->length);
       return MS_OK;
     }
     // Fallback until the remaining scanners land: skip the byte silently.
