@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "core/ms_common.h"
+#include "core/ms_memory.h"
 
 static const char* const msLexerTokenTypeNames[] = {
     "MS_TOKEN_EOF",
@@ -343,6 +344,22 @@ static bool msLexerIsDigit(char c) {
   return c >= '0' && c <= '9';
 }
 
+static bool msLexerIsHexDigit(char c) {
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+// Value of a hex digit; the caller must have checked msLexerIsHexDigit.
+static uint32_t msLexerHexValue(char c) {
+  MS_ASSERT(msLexerIsHexDigit(c));
+  if (c >= '0' && c <= '9') {
+    return (uint32_t)(c - '0');
+  }
+  if (c >= 'a' && c <= 'f') {
+    return (uint32_t)(c - 'a') + 10;
+  }
+  return (uint32_t)(c - 'A') + 10;
+}
+
 // True when c is a valid digit in base (2, 8, 10 or 16).
 static bool msLexerIsBaseDigit(char c, int base) {
   if (msLexerIsDigit(c)) {
@@ -517,6 +534,174 @@ static MsResult msLexerScanNumber(struct MsLexer* lexer, struct MsToken* out) {
   return MS_OK;
 }
 
+// Validates the escape sequence at the cursor (a backslash) and consumes it
+// completely on success (01-lexical section 5.3: \n \t \r \\ \" \' \0,
+// \xHH, \uHHHH, \UHHHHHHHH). Returns false without consuming anything on a
+// bad escape letter, too few or non-hex digits, or a \u/\U code point above
+// U+10FFFF or in the surrogate range U+D800-U+DFFF.
+static bool msLexerScanEscape(struct MsLexer* lexer) {
+  MS_ASSERT(!msLexerIsAtEnd(lexer) && msLexerCurrent(lexer) == '\\');
+  if (lexer->pos + 1 >= lexer->sourceLen) {
+    return false;  // lone backslash at end of input
+  }
+  char kind = lexer->source[lexer->pos + 1];
+  switch (kind) {
+    case 'n':
+    case 't':
+    case 'r':
+    case '\\':
+    case '"':
+    case '\'':
+    case '0':
+      msLexerAdvanceChar(lexer);  // backslash
+      msLexerAdvanceChar(lexer);  // escape letter
+      return true;
+    case 'x':
+    case 'u':
+    case 'U': {
+      int digits = kind == 'x' ? 2 : (kind == 'u' ? 4 : 8);
+      uint32_t value = 0;
+      for (int i = 0; i < digits; ++i) {
+        if (lexer->pos + 2 + (size_t)i >= lexer->sourceLen
+            || !msLexerIsHexDigit(lexer->source[lexer->pos + 2 + (size_t)i])) {
+          return false;
+        }
+        // At most 8 hex digits, so value always fits in uint32_t.
+        value = value * 16 + msLexerHexValue(lexer->source[lexer->pos + 2 + (size_t)i]);
+      }
+      if (kind != 'x' && (value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF))) {
+        return false;
+      }
+      for (int i = 0; i < 2 + digits; ++i) {
+        msLexerAdvanceChar(lexer);
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+// Scans a "..." string or, with isBytes, a b"..." bytes literal whose 'b'
+// prefix sits at the cursor. The lexeme includes the prefix and both quotes.
+// Escapes are validated byte-wise; decoding is deferred to msLexerUnescape.
+// The first malformed escape reports E106 at its backslash; the rest of the
+// string is then scanned without further escape checks (one diagnostic per
+// string, no spam) and the token comes out INVALID. An unescaped newline
+// (left unconsumed) or end of input before the closing quote reports E103
+// at the string start instead, again producing an INVALID token.
+static MsResult msLexerScanString(struct MsLexer* lexer, struct MsToken* out, bool isBytes) {
+  out->start = lexer->source + lexer->pos;
+  out->line = lexer->line;
+  out->column = lexer->column;
+  uint32_t startLine = lexer->line;
+  uint32_t startColumn = lexer->column;
+  if (isBytes) {
+    msLexerAdvanceChar(lexer);  // 'b'
+  }
+  msLexerAdvanceChar(lexer);  // opening quote
+  bool error = false;
+  uint32_t errCode = 0;
+  uint32_t errLine = 0;
+  uint32_t errColumn = 0;
+  const char* errMessage = NULL;
+  bool checkEscapes = true;
+  for (;;) {
+    if (msLexerIsAtEnd(lexer)) {
+      if (!error) {
+        error = true;
+        errCode = 103;
+        errLine = startLine;
+        errColumn = startColumn;
+        errMessage = "unterminated string";
+      }
+      break;
+    }
+    char c = msLexerCurrent(lexer);
+    if (c == '\r' || c == '\n') {
+      // Strings do not span lines; the newline stays for the trivia path.
+      if (!error) {
+        error = true;
+        errCode = 103;
+        errLine = startLine;
+        errColumn = startColumn;
+        errMessage = "unterminated string";
+      }
+      break;
+    }
+    if (c == '"') {
+      msLexerAdvanceChar(lexer);  // closing quote
+      break;
+    }
+    if (c == '\\' && checkEscapes) {
+      if (!msLexerScanEscape(lexer)) {
+        if (!error) {
+          error = true;
+          errCode = 106;
+          errLine = lexer->line;
+          errColumn = lexer->column;  // still on the backslash
+          errMessage = "invalid escape sequence";
+        }
+        checkEscapes = false;
+        msLexerAdvanceChar(lexer);  // consume the backslash, keep scanning
+      }
+      continue;
+    }
+    msLexerAdvanceChar(lexer);
+  }
+  out->length = (size_t)(lexer->source + lexer->pos - out->start);
+  if (!error) {
+    out->type = isBytes ? MS_TOKEN_BYTES : MS_TOKEN_STRING;
+    return MS_OK;
+  }
+  out->type = MS_TOKEN_INVALID;
+  if (msLexerError(lexer, errLine, errColumn, errCode, errMessage) != MS_OK) {
+    msLexerMakeEof(lexer, out);
+    return MS_ERROR_SYNTAX;
+  }
+  return MS_OK;
+}
+
+// Scans a backquote raw string (01-lexical section 5.3): no escape
+// processing, may span lines. Newlines go through msLexerConsumeNewline so
+// line tracking and CRLF folding stay intact. End of input before the
+// closing backquote reports E104 at the string start and yields an INVALID
+// token. The lexeme includes both backquotes.
+static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out) {
+  out->start = lexer->source + lexer->pos;
+  out->line = lexer->line;
+  out->column = lexer->column;
+  uint32_t startLine = lexer->line;
+  uint32_t startColumn = lexer->column;
+  msLexerAdvanceChar(lexer);  // opening backquote
+  for (;;) {
+    if (msLexerIsAtEnd(lexer)) {
+      out->type = MS_TOKEN_INVALID;
+      out->length = (size_t)(lexer->source + lexer->pos - out->start);
+      if (msLexerError(lexer, startLine, startColumn, 104, "unterminated raw string") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      return MS_OK;
+    }
+    char c = msLexerCurrent(lexer);
+    if (c == '`') {
+      msLexerAdvanceChar(lexer);  // closing backquote
+      out->type = MS_TOKEN_RAW_STRING;
+      out->length = (size_t)(lexer->source + lexer->pos - out->start);
+      return MS_OK;
+    }
+    if (c == '\r' || c == '\n') {
+      if (msLexerConsumeNewline(lexer) != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      continue;
+    }
+    msLexerAdvanceChar(lexer);
+  }
+}
+
 // Scans the next token after skipping trivia (semicolon insertion arrives in
 // a later task; newlines are plain whitespace for now).
 static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
@@ -551,6 +736,17 @@ static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
         }
         return MS_OK;
       }
+    }
+    if (c == '"') {
+      return msLexerScanString(lexer, out, false);
+    }
+    if (c == '`') {
+      return msLexerScanRawString(lexer, out);
+    }
+    if (c == 'b' && msLexerLookahead(lexer) == '"') {
+      // 'b' immediately followed by '"' starts a bytes literal; any other
+      // 'b' falls through to the identifier branch below.
+      return msLexerScanString(lexer, out, true);
     }
     if (msLexerIsIdentStart(c) || utf8Length > 0) {
       out->start = lexer->source + lexer->pos;
@@ -672,12 +868,147 @@ MsTokenType msLexerPeek(struct MsLexer* lexer) {
   return lexer->peeked.type;
 }
 
+// Encodes value (<= U+10FFFF, not a surrogate) as UTF-8 into out, which must
+// have room for 4 bytes; NULL out performs a sizing-only pass. Returns the
+// encoded byte count.
+static size_t msLexerEncodeUtf8(uint32_t value, char* out) {
+  MS_ASSERT(value <= 0x10FFFF && !(value >= 0xD800 && value <= 0xDFFF));
+  if (value < 0x80) {
+    if (out != NULL) {
+      out[0] = (char)value;
+    }
+    return 1;
+  }
+  if (value < 0x800) {
+    if (out != NULL) {
+      out[0] = (char)(0xC0 | (value >> 6));
+      out[1] = (char)(0x80 | (value & 0x3F));
+    }
+    return 2;
+  }
+  if (value < 0x10000) {
+    if (out != NULL) {
+      out[0] = (char)(0xE0 | (value >> 12));
+      out[1] = (char)(0x80 | ((value >> 6) & 0x3F));
+      out[2] = (char)(0x80 | (value & 0x3F));
+    }
+    return 3;
+  }
+  if (out != NULL) {
+    out[0] = (char)(0xF0 | (value >> 18));
+    out[1] = (char)(0x80 | ((value >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((value >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (value & 0x3F));
+  }
+  return 4;
+}
+
+// Decodes the escape sequence at raw[*pos] (a backslash) of an
+// already-validated literal body, advancing *pos past it and writing the
+// decoded bytes (UTF-8 for \u/\U) into out; NULL out performs a sizing-only
+// pass. Returns the decoded byte count. The input contract makes anything
+// malformed a caller bug (MS_ASSERT).
+static size_t msLexerDecodeEscape(const char* raw, size_t rawLen, size_t* pos, char* out) {
+  MS_ASSERT(*pos + 1 < rawLen && raw[*pos] == '\\');
+  char kind = raw[*pos + 1];
+  switch (kind) {
+    case 'n':
+    case 't':
+    case 'r':
+    case '\\':
+    case '"':
+    case '\'':
+    case '0': {
+      char value = kind;  // \\, \" and \' decode to themselves
+      if (kind == 'n') {
+        value = '\n';
+      } else if (kind == 't') {
+        value = '\t';
+      } else if (kind == 'r') {
+        value = '\r';
+      } else if (kind == '0') {
+        value = '\0';
+      }
+      if (out != NULL) {
+        out[0] = value;
+      }
+      *pos += 2;
+      return 1;
+    }
+    case 'x':
+    case 'u':
+    case 'U': {
+      int digits = kind == 'x' ? 2 : (kind == 'u' ? 4 : 8);
+      MS_ASSERT(*pos + 2 + (size_t)digits <= rawLen);
+      uint32_t value = 0;
+      for (int i = 0; i < digits; ++i) {
+        char h = raw[*pos + 2 + (size_t)i];
+        MS_ASSERT(msLexerIsHexDigit(h));
+        value = value * 16 + msLexerHexValue(h);
+      }
+      *pos += 2 + (size_t)digits;
+      if (kind == 'x') {
+        // \xHH is one raw byte, even in a string (not UTF-8 encoded).
+        if (out != NULL) {
+          out[0] = (char)value;
+        }
+        return 1;
+      }
+      return msLexerEncodeUtf8(value, out);
+    }
+    default:
+      MS_ASSERT(!"unknown escape in a pre-validated literal body");
+      *pos += 2;
+      return 0;
+  }
+}
+
 MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* outLen) {
-  MS_UNUSED(raw);
-  MS_UNUSED(rawLen);
-  *out = NULL;
-  *outLen = 0;
-  return MS_ERROR_SYNTAX;
+  // Pass 1: compute the decoded length (\u/\U expand to multi-byte UTF-8).
+  size_t decodedLen = 0;
+  size_t pos = 0;
+  while (pos < rawLen) {
+    if (raw[pos] == '\\') {
+      decodedLen += msLexerDecodeEscape(raw, rawLen, &pos, NULL);
+      continue;
+    }
+    if (raw[pos] == '{' || raw[pos] == '}') {
+      // "{{" and "}}" are the literal-brace escapes of f-string text
+      // segments; validated bodies only ever contain them in pairs.
+      MS_ASSERT(pos + 1 < rawLen && raw[pos + 1] == raw[pos]);
+      pos += 2;
+      ++decodedLen;
+      continue;
+    }
+    ++pos;
+    ++decodedLen;
+  }
+  // msAlloc(0) returns NULL, so even an empty body allocates one byte.
+  char* buffer = (char*)msAlloc(decodedLen > 0 ? decodedLen : 1);
+  if (buffer == NULL) {
+    *out = NULL;
+    *outLen = 0;
+    return MS_ERROR_OOM;
+  }
+  // Pass 2: write the decoded bytes.
+  size_t outPos = 0;
+  pos = 0;
+  while (pos < rawLen) {
+    if (raw[pos] == '\\') {
+      outPos += msLexerDecodeEscape(raw, rawLen, &pos, buffer + outPos);
+      continue;
+    }
+    if (raw[pos] == '{' || raw[pos] == '}') {
+      buffer[outPos++] = raw[pos];
+      pos += 2;
+      continue;
+    }
+    buffer[outPos++] = raw[pos++];
+  }
+  MS_ASSERT(outPos == decodedLen);
+  *out = buffer;
+  *outLen = decodedLen;
+  return MS_OK;
 }
 
 const char* msTokenTypeName(MsTokenType type) {

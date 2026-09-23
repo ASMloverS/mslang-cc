@@ -2,6 +2,7 @@
 
 #include "core/ms_common.h"
 #include "core/ms_diag.h"
+#include "core/ms_memory.h"
 #include "lexer/ms_lexer.h"
 #include "ms_test.h"
 
@@ -45,9 +46,8 @@ MS_TEST(Lexer, TokenTypeNameCoversEveryValue) {
 }
 
 MS_TEST(Lexer, TokenTypeNameSpots) {
-  // Harness helpers not yet exercised by real tests; keep the references so
-  // -Wunused-function stays silent until later tasks use them.
-  (void)msTestLexemeEqN;
+  // Harness helper not yet exercised by a real test; keep the reference so
+  // -Wunused-function stays silent until a later task uses it.
   (void)MS_TEST_MAX_TOKENS;
 
   MS_ASSERT_TRUE(strcmp(msTokenTypeName(MS_TOKEN_EOF), "MS_TOKEN_EOF") == 0);
@@ -257,10 +257,12 @@ MS_TEST(Lexer, NumberLiteralsScan) {
       {"42", MS_TOKEN_INT},        {"0", MS_TOKEN_INT},
       {"1_000_000", MS_TOKEN_INT}, {"0x1F", MS_TOKEN_INT},
       {"0x_1F", MS_TOKEN_INT},     {"0X2a", MS_TOKEN_INT},
-      {"0o755", MS_TOKEN_INT},     {"0b1010", MS_TOKEN_INT},
+      {"0o755", MS_TOKEN_INT},     {"0O755", MS_TOKEN_INT},
+      {"0b1010", MS_TOKEN_INT},    {"0B1010", MS_TOKEN_INT},
       {"3.14", MS_TOKEN_FLOAT},    {"1e-9", MS_TOKEN_FLOAT},
       {"2.5e+4", MS_TOKEN_FLOAT},  {".5", MS_TOKEN_FLOAT},
       {"1e9", MS_TOKEN_FLOAT},     {"0.5e2", MS_TOKEN_FLOAT},
+      {".5e2", MS_TOKEN_FLOAT},
   };
   for (size_t i = 0; i < MS_ARRAY_LEN(kNumberCases); ++i) {
     struct MsDiagList diags;
@@ -305,6 +307,22 @@ MS_TEST(Lexer, NumberLiteralsReportErrors) {
   }
 }
 
+MS_TEST(Lexer, NumberErrorPositionPinned) {
+  // The diagnostic for a bad base digit points at the offending digit, and
+  // the INVALID token covers the whole would-be literal. "0b102": the '2'
+  // sits at column 5 (0=1, b=2, 1=3, 0=4, 2=5).
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  msTestLexAll("0b102", tokens, 8, &diags);
+  MS_ASSERT_TRUE(msDiagListCount(&diags) >= 1);
+  MS_ASSERT_EQ(107, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(1, msDiagListAt(&diags, 0)->line);
+  MS_ASSERT_EQ(5, msDiagListAt(&diags, 0)->column);
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], "0b102"));
+  msDiagListDestroy(&diags);
+}
+
 MS_TEST(Lexer, DotFiveVersusMemberAccess) {
   // Locked judgment call: maximal munch on '.' + digit makes ".5" a float
   // even directly after an identifier, so "x.5" is IDENTIFIER + FLOAT.
@@ -330,6 +348,142 @@ MS_TEST(Lexer, DotFiveVersusMemberAccess) {
   msDiagListDestroy(&diagsMember);
 }
 
+MS_TEST(Lexer, StringLiteralsScan) {
+  // Plain string: the lexeme includes both quotes.
+  struct MsDiagList diagsString;
+  struct MsToken tokensString[4];
+  msTestLexAll("\"abc\"", tokensString, 4, &diagsString);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsString));
+  MS_ASSERT_EQ(MS_TOKEN_STRING, tokensString[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokensString[0], "\"abc\""));
+  msDiagListDestroy(&diagsString);
+
+  // Raw string with a real newline inside the backticks.
+  struct MsDiagList diagsRaw;
+  struct MsToken tokensRaw[8];
+  size_t countRaw = msTestLexAll("`raw\nline`", tokensRaw, 8, &diagsRaw);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsRaw));
+  MS_ASSERT_EQ(MS_TOKEN_RAW_STRING, tokensRaw[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEqN(&tokensRaw[0], "`raw\nline`", 10));
+  MS_ASSERT_EQ(1, tokensRaw[0].line);
+  MS_ASSERT_TRUE(countRaw >= 2);
+  MS_ASSERT_EQ(2, tokensRaw[1].line);  // the token after it lands on line 2
+  msDiagListDestroy(&diagsRaw);
+
+  // Bytes literal: b prefix + quoted body, lexeme includes prefix and quotes.
+  struct MsDiagList diagsBytes;
+  struct MsToken tokensBytes[4];
+  msTestLexAll("b\"\\x00\\x01\"", tokensBytes, 4, &diagsBytes);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsBytes));
+  MS_ASSERT_EQ(MS_TOKEN_BYTES, tokensBytes[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokensBytes[0], "b\"\\x00\\x01\""));
+  msDiagListDestroy(&diagsBytes);
+
+  // A "b" not immediately followed by '"' is a plain identifier.
+  struct MsDiagList diagsB;
+  struct MsToken tokensB[8];
+  msTestLexAll("b", tokensB, 8, &diagsB);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsB));
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokensB[0].type);
+  msDiagListDestroy(&diagsB);
+
+  struct MsDiagList diagsBx;
+  struct MsToken tokensBx[8];
+  msTestLexAll("bx", tokensBx, 8, &diagsBx);
+  MS_ASSERT_EQ(0, msDiagListCount(&diagsBx));
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, tokensBx[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokensBx[0], "bx"));
+  msDiagListDestroy(&diagsBx);
+}
+
+// Decoding expectations shared by Lexer.UnescapeDecodesEscapes and
+// Lexer.UnescapeLeakFree. raw is a literal body without surrounding quotes.
+static const struct {
+  const char* raw;
+  const char* expect;
+  size_t expectLen;
+} msTestEscapeCases[] = {
+    {"a\\nb", "a\nb", 3},
+    {"\\t\\r\\\\", "\t\r\\", 3},
+    {"\\\"", "\"", 1},
+    {"\\0", "\0", 1},
+    {"\\x41", "A", 1},
+    {"\\u4e2d", "\xE4\xB8\xAD", 3},          // U+4E2D
+    {"\\U0001F600", "\xF0\x9F\x98\x80", 4},  // U+1F600
+    {"{{", "{", 1},                          // f-string literal brace
+    {"}}", "}", 1},
+};
+
+MS_TEST(Lexer, UnescapeDecodesEscapes) {
+  for (size_t i = 0; i < MS_ARRAY_LEN(msTestEscapeCases); ++i) {
+    char* out = NULL;
+    size_t outLen = 0;
+    MsResult result = msLexerUnescape(msTestEscapeCases[i].raw,
+        strlen(msTestEscapeCases[i].raw), &out, &outLen);
+    MS_ASSERT_EQ(MS_OK, result);
+    if (result == MS_OK) {
+      MS_ASSERT_EQ(msTestEscapeCases[i].expectLen, outLen);
+      MS_ASSERT_TRUE(out != NULL);
+      if (out != NULL) {
+        MS_ASSERT_TRUE(memcmp(out, msTestEscapeCases[i].expect, outLen) == 0);
+      }
+    }
+    msFree(out);
+  }
+}
+
+MS_TEST(Lexer, StringErrors) {
+  static const struct {
+    const char* source;
+    uint32_t code;
+  } kStringErrorCases[] = {
+      {"\"abc", 103},             // end of input before closing quote
+      {"\"ab\ncd\"", 103},        // unescaped real newline ends the string
+      {"`unterminated", 104},
+      {"\"\\x0\"", 106},          // too few hex digits
+      {"\"\\uD800\"", 106},       // surrogate code point
+      {"\"\\U00110000\"", 106},   // above U+10FFFF
+      {"\"\\q\"", 106},           // unknown escape letter
+  };
+  for (size_t i = 0; i < MS_ARRAY_LEN(kStringErrorCases); ++i) {
+    struct MsDiagList diags;
+    struct MsToken tokens[8];
+    size_t count = msTestLexAll(kStringErrorCases[i].source, tokens, 8, &diags);
+    MS_ASSERT_TRUE(msDiagListCount(&diags) >= 1);
+    if (msDiagListCount(&diags) >= 1) {
+      MS_ASSERT_EQ(kStringErrorCases[i].code, msDiagListAt(&diags, 0)->code);
+    }
+    bool sawInvalid = false;
+    for (size_t j = 0; j < count; ++j) {
+      if (tokens[j].type == MS_TOKEN_INVALID) {
+        sawInvalid = true;
+      }
+    }
+    MS_ASSERT_TRUE(sawInvalid);
+    msDiagListDestroy(&diags);
+  }
+}
+
+MS_TEST(Lexer, UnescapeLeakFree) {
+  struct MsMemStats before;
+  msMemGetStats(&before);
+  struct MsDiagList diags;
+  MS_ASSERT_EQ(MS_OK, msDiagListInit(&diags, "test.ms"));
+  for (size_t i = 0; i < MS_ARRAY_LEN(msTestEscapeCases); ++i) {
+    char* out = NULL;
+    size_t outLen = 0;
+    MsResult result = msLexerUnescape(msTestEscapeCases[i].raw,
+        strlen(msTestEscapeCases[i].raw), &out, &outLen);
+    MS_ASSERT_EQ(MS_OK, result);
+    msFree(out);
+  }
+  msDiagListDestroy(&diags);
+  struct MsMemStats after;
+  msMemGetStats(&after);
+  MS_ASSERT_EQ(before.liveBlocks, after.liveBlocks);
+  MS_ASSERT_EQ(before.currentBytes, after.currentBytes);
+}
+
 static const MsTestCase msTests[] = {
     {"Lexer.TokenTypeNameCoversEveryValue", testLexerTokenTypeNameCoversEveryValue},
     {"Lexer.TokenTypeNameSpots", testLexerTokenTypeNameSpots},
@@ -346,6 +500,11 @@ static const MsTestCase msTests[] = {
     {"Lexer.NonAsciiIdentifierAndInvalidUtf8", testLexerNonAsciiIdentifierAndInvalidUtf8},
     {"Lexer.NumberLiteralsScan", testLexerNumberLiteralsScan},
     {"Lexer.NumberLiteralsReportErrors", testLexerNumberLiteralsReportErrors},
+    {"Lexer.NumberErrorPositionPinned", testLexerNumberErrorPositionPinned},
     {"Lexer.DotFiveVersusMemberAccess", testLexerDotFiveVersusMemberAccess},
+    {"Lexer.StringLiteralsScan", testLexerStringLiteralsScan},
+    {"Lexer.UnescapeDecodesEscapes", testLexerUnescapeDecodesEscapes},
+    {"Lexer.StringErrors", testLexerStringErrors},
+    {"Lexer.UnescapeLeakFree", testLexerUnescapeLeakFree},
 };
 MS_TEST_MAIN(msTests)
