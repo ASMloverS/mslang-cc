@@ -587,9 +587,9 @@ MS_TEST(Lexer, OperatorsScan) {
     msTestLexAll(kOperatorCases[i].source, tokens, 4, &diags);
     MS_ASSERT_EQ(kOperatorCases[i].type, tokens[0].type);
     MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], kOperatorCases[i].source));
-    // "}" is absent from the table: a bare '}' outside any f-string frame is
-    // E111 + INVALID (see Lexer.FstringErrors), so MS_TOKEN_RIGHT_BRACE is
-    // exercised by the f-string tests instead.
+    // "}" is absent from the table: a lone '}' has no pairing '{' and is
+    // E111 + INVALID by design. MS_TOKEN_RIGHT_BRACE is exercised by
+    // Lexer.BracesPairInPlainCode and the f-string tests instead.
     MS_ASSERT_EQ(0, msDiagListCount(&diags));
     msDiagListDestroy(&diags);
   }
@@ -832,8 +832,7 @@ MS_TEST(Lexer, BlankLinesProduceNoExtraSemicolons) {
 MS_TEST(Lexer, SemicolonTriggerSetCoversAllEnders) {
   // Every statement-ender token of 01-lexical section 7, each as
   // "<trigger>\nx": the token right before the trailing "x" must be an
-  // auto-inserted semicolon. FSTRING_END stands in for RIGHT_BRACE: outside
-  // f-string frames a bare "}" is E111, so a plain-code "}" no longer scans.
+  // auto-inserted semicolon.
   static const char* const kEnderCases[] = {
       "foo\nx",      // identifier
       "42\nx",       // int
@@ -851,8 +850,8 @@ MS_TEST(Lexer, SemicolonTriggerSetCoversAllEnders) {
       "raise\nx",
       "(1)\nx",      // right paren
       "[1]\nx",      // right bracket
-      "f\"{a}\"\nx", // f-string end (a plain "}" outside frames is E111 now,
-                     // so RIGHT_BRACE only occurs mid-f-string)
+      "{1}\nx",      // right brace (paired '{' '}' in plain code)
+      "f\"{a}\"\nx", // f-string end
       "i++\nx",      // ++
       "i--\nx",      // --
   };
@@ -1104,28 +1103,94 @@ MS_TEST(Lexer, FstringDictBraceDepth) {
   // The '{' '}' of a dict literal inside an interpolation are tracked via
   // the frame's braceDepth, so the dict's ':' (depth 2) emits COLON instead
   // of opening a format segment, and the final '}' (depth -> 0) returns to
-  // text mode. Note: v0.1 has no single-quoted strings, so the two '\''
-  // bytes scan as E102 INVALIDs -- incidental to the brace-depth point.
-  struct MsDiagList diags;
-  struct MsToken tokens[MS_TEST_MAX_TOKENS];
-  size_t count = msTestLexAll("f\"{ {'a': 1} }\"", tokens, MS_TEST_MAX_TOKENS, &diags);
-  MS_ASSERT_EQ(2, msDiagListCount(&diags));
-  MS_ASSERT_EQ(102, msDiagListAt(&diags, 0)->code);
-  MS_ASSERT_EQ(102, msDiagListAt(&diags, 1)->code);
-  const MsTokenType expect[] = {
-      MS_TOKEN_FSTRING_START,
-      MS_TOKEN_LEFT_BRACE, MS_TOKEN_LEFT_BRACE,
-      MS_TOKEN_INVALID, MS_TOKEN_IDENTIFIER, MS_TOKEN_INVALID,
-      MS_TOKEN_COLON, MS_TOKEN_INT,
-      MS_TOKEN_RIGHT_BRACE, MS_TOKEN_RIGHT_BRACE,
-      MS_TOKEN_FSTRING_END,
-      MS_TOKEN_SEMICOLON, MS_TOKEN_EOF,
+  // text mode. Plain strings are allowed inside interpolations.
+  static const struct MsTestTokenExpect expect[] = {
+      {MS_TOKEN_FSTRING_START, "f\""},
+      {MS_TOKEN_LEFT_BRACE, "{"},
+      {MS_TOKEN_LEFT_BRACE, "{"},
+      {MS_TOKEN_STRING, "\"a\""},
+      {MS_TOKEN_COLON, ":"},
+      {MS_TOKEN_INT, "1"},
+      {MS_TOKEN_RIGHT_BRACE, "}"},
+      {MS_TOKEN_RIGHT_BRACE, "}"},
+      {MS_TOKEN_FSTRING_END, "\""},
+      {MS_TOKEN_SEMICOLON, ""},
   };
-  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
-  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
-    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  msTestExpectSequence("f\"{ {\"a\": 1} }\"", expect, MS_ARRAY_LEN(expect));
+}
+
+MS_TEST(Lexer, FstringStringInInterpolation) {
+  // Interpolation braces hold any expression, including plain string
+  // literals with the same quote: an inner string's closing quote never
+  // closes the outer f-string. Text-segment STRING lexemes are quote-free
+  // bodies; interpolation strings keep their quotes.
+  static const struct MsTestTokenExpect expect[] = {
+      {MS_TOKEN_FSTRING_START, "f\""},
+      {MS_TOKEN_STRING, "v="},
+      {MS_TOKEN_LEFT_BRACE, "{"},
+      {MS_TOKEN_STRING, "\"s\""},
+      {MS_TOKEN_PLUS, "+"},
+      {MS_TOKEN_STRING, "\"t\""},
+      {MS_TOKEN_RIGHT_BRACE, "}"},
+      {MS_TOKEN_FSTRING_END, "\""},
+      {MS_TOKEN_SEMICOLON, ""},
+  };
+  msTestExpectSequence("f\"v={\"s\" + \"t\"}\"", expect, MS_ARRAY_LEN(expect));
+}
+
+MS_TEST(Lexer, BracesPairInPlainCode) {
+  // '{' '}' pairs in plain code (blocks, dict/set literals) scan without
+  // diagnostics; only a '}' with no pairing '{' anywhere is E111.
+  {
+    static const struct MsTestTokenExpect expect[] = {
+        {MS_TOKEN_LEFT_BRACE, "{"},
+        {MS_TOKEN_RIGHT_BRACE, "}"},
+        {MS_TOKEN_SEMICOLON, ""},
+    };
+    msTestExpectSequence("{ }", expect, MS_ARRAY_LEN(expect));
   }
-  msDiagListDestroy(&diags);
+  {
+    static const struct MsTestTokenExpect expect[] = {
+        {MS_TOKEN_KW_IF, "if"},
+        {MS_TOKEN_IDENTIFIER, "x"},
+        {MS_TOKEN_LEFT_BRACE, "{"},
+        {MS_TOKEN_IDENTIFIER, "y"},
+        {MS_TOKEN_RIGHT_BRACE, "}"},
+        {MS_TOKEN_SEMICOLON, ""},
+    };
+    msTestExpectSequence("if x { y }", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    static const struct MsTestTokenExpect expect[] = {
+        {MS_TOKEN_LEFT_BRACE, "{"},
+        {MS_TOKEN_STRING, "\"a\""},
+        {MS_TOKEN_COLON, ":"},
+        {MS_TOKEN_INT, "1"},
+        {MS_TOKEN_RIGHT_BRACE, "}"},
+        {MS_TOKEN_SEMICOLON, ""},
+    };
+    msTestExpectSequence("{\"a\": 1}", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    static const struct MsTestTokenExpect expect[] = {
+        {MS_TOKEN_LEFT_BRACE, "{"},
+        {MS_TOKEN_LEFT_BRACE, "{"},
+        {MS_TOKEN_RIGHT_BRACE, "}"},
+        {MS_TOKEN_RIGHT_BRACE, "}"},
+        {MS_TOKEN_SEMICOLON, ""},
+    };
+    msTestExpectSequence("{ { } }", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    // A truly bare '}' is E111 + INVALID.
+    struct MsDiagList diags;
+    struct MsToken tokens[8];
+    msTestLexAll("}", tokens, 8, &diags);
+    MS_ASSERT_EQ(1, msDiagListCount(&diags));
+    MS_ASSERT_EQ(111, msDiagListAt(&diags, 0)->code);
+    MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[0].type);
+    msDiagListDestroy(&diags);
+  }
 }
 
 // Builds "f\"{f\"{...x...}\"}\"" with depth nested f-strings into out
@@ -1169,14 +1234,17 @@ MS_TEST(Lexer, FstringErrors) {
     MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
     msDiagListDestroy(&diags);
   }
-  // (b) f"{x" : the interpolation's '{' is unpaired when the closing quote
-  // arrives while scanning the interpolation expression -> E110.
+  // (b) f"{x" : plain strings are allowed inside interpolations, so the
+  // quote starts a plain string that runs unterminated to end of input
+  // (E103), and the interpolation's '{' is then unpaired at end of input
+  // (E110).
   {
     struct MsDiagList diags;
     struct MsToken tokens[16];
     size_t count = msTestLexAll("f\"{x\"", tokens, 16, &diags);
-    MS_ASSERT_EQ(1, msDiagListCount(&diags));
-    MS_ASSERT_EQ(110, msDiagListAt(&diags, 0)->code);
+    MS_ASSERT_EQ(2, msDiagListCount(&diags));
+    MS_ASSERT_EQ(103, msDiagListAt(&diags, 0)->code);
+    MS_ASSERT_EQ(110, msDiagListAt(&diags, 1)->code);
     MS_ASSERT_TRUE(count > 0);
     MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
     msDiagListDestroy(&diags);
@@ -1253,6 +1321,8 @@ static const MsTestCase msTests[] = {
     {"Lexer.FstringNestedFormat", testLexerFstringNestedFormat},
     {"Lexer.FstringNestedFstring", testLexerFstringNestedFstring},
     {"Lexer.FstringDictBraceDepth", testLexerFstringDictBraceDepth},
+    {"Lexer.FstringStringInInterpolation", testLexerFstringStringInInterpolation},
     {"Lexer.FstringErrors", testLexerFstringErrors},
+    {"Lexer.BracesPairInPlainCode", testLexerBracesPairInPlainCode},
 };
 MS_TEST_MAIN(msTests)

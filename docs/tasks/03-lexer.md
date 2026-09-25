@@ -228,12 +228,14 @@ f"x = {x + 1:08d}, {name}!"
 2. `FSTRING_TEXT` 按普通字符串规则扫描文本段（产出 `MS_TOKEN_STRING`），并识别边界：
    - `{{` / `}}` 是字面量大括号，归入文本段（解码时还原为单个 `{}`，由 `msLexerUnescape` 处理）；
    - 单个 `{`：产出 `MS_TOKEN_LEFT_BRACE`，`braceDepth=1`，切回 `NORMAL`；
-   - 闭合引号：产出 `MS_TOKEN_FSTRING_END`，弹帧；若弹空则回到 `NORMAL`，否则回到外层的 `FSTRING_TEXT`（f-string 插值里可再嵌套 f-string）；
+   - 闭合引号：产出 `MS_TOKEN_FSTRING_END`，弹帧；弹帧后一律回到 `NORMAL`——无剩余帧即普通代码，有剩余帧即外层插值表达式（嵌套 f-string 只出现在插值内，其外层帧必处于插值中）；`FSTRING_TEXT` 仅在插值 `}` 使 `braceDepth` 归零或新 f-string 起始（`f"`）时进入；
    - 换行或 EOF 未闭合：报 E103，恢复为弹帧。
 3. `NORMAL` 模式下、位于帧内（`frameCount > 0`）时：
    - `{`/`}` 照常产出 `MS_TOKEN_LEFT_BRACE`/`MS_TOKEN_RIGHT_BRACE` 并维护顶层帧的 `braceDepth`；`}` 使 `braceDepth` 归零时切回 `FSTRING_TEXT`；
    - 顶层帧 `braceDepth == 1` 处遇到 `:`：切到 `FSTRING_FORMAT`；
    - 帧外遇到裸 `}`（无配对 `{`）：报 E111。
+   - 插值表达式可含任意表达式，包括普通字符串/字节串/raw string 与嵌套 f-string：内层字符串的闭合引号不会误关外层 f-string（`FSTRING_END` 只在 `FSTRING_TEXT` 模式产出）。
+   - 插值内分号自动插入按 §7 规则机械执行；表达式中间出现分号由 parser 诊断，lexer 不特殊处理。
 4. `FSTRING_FORMAT`：收集原文直到使 `braceDepth` 归零的 `}`，期间允许 `{`/`}` 配对嵌套（格式说明内嵌套替换字段，对齐 Python）；产出 `MS_TOKEN_FSTRING_FORMAT`（词素不含首尾 `:`/`}`），随后该 `}` 照常产出 `MS_TOKEN_RIGHT_BRACE` 并切回 `FSTRING_TEXT`。未闭合报 E110。
 5. 插值嵌套超过 `MS_LEXER_MAX_FSTRING_DEPTH` 报 E109，随后按普通字符串扫描到闭合引号恢复。
 

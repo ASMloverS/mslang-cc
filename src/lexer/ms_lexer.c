@@ -426,14 +426,18 @@ static bool msLexerTokenEndsStatement(MsTokenType type) {
 // from its final type. Every token-producing path must route through this
 // (INVALID included -- it clears the state), and only the auto-inserted
 // semicolon and EOF bypass it (they maintain the state themselves).
-// A STRING token committed while an f-string frame is live is a text
-// segment mid-expression, not a string literal: it must not trigger
-// semicolon insertion even though plain STRING is a statement ender
+// A STRING token committed in FSTRING_TEXT mode is a text segment
+// mid-expression (handled in the body below), not a string literal.
 // (FSTRING_START/FORMAT/LEFT_BRACE are continuers already; FSTRING_END is
-// the one f-string token in the ender set).
+// the one f-string token in the ender set.)
 static void msLexerCommitToken(struct MsLexer* lexer, const struct MsToken* token) {
   lexer->canEndStatement = msLexerTokenEndsStatement(token->type);
-  if (lexer->frameCount > 0 && token->type == MS_TOKEN_STRING) {
+  // A STRING token committed in FSTRING_TEXT mode is an f-string text
+  // segment mid-expression, not a string literal: it must not trigger
+  // semicolon insertion even though plain STRING is a statement ender.
+  // Strings scanned inside an interpolation (NORMAL mode, frames live) are
+  // ordinary literals and follow the standard rules.
+  if (lexer->mode == MS_LEXMODE_FSTRING_TEXT && token->type == MS_TOKEN_STRING) {
     lexer->canEndStatement = false;
   }
 }
@@ -1152,6 +1156,8 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
         // frame's brace depth; its matching '}' will not close the
         // interpolation.
         ++lexer->frames[lexer->frameCount - 1].braceDepth;
+      } else {
+        ++lexer->blockBraceDepth;
       }
       type = MS_TOKEN_LEFT_BRACE;
       break;
@@ -1167,7 +1173,13 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
         type = MS_TOKEN_RIGHT_BRACE;
         break;
       }
-      // A bare '}' outside any f-string frame has no pairing '{'.
+      if (lexer->blockBraceDepth > 0) {
+        // Closes a block or dict/set literal opened in plain code.
+        --lexer->blockBraceDepth;
+        type = MS_TOKEN_RIGHT_BRACE;
+        break;
+      }
+      // A bare '}' with no pairing '{' anywhere.
       if (msLexerError(lexer, line, column, 111, "unmatched '}'") != MS_OK) {
         msLexerMakeEof(lexer, out);
         return MS_ERROR_SYNTAX;
@@ -1265,25 +1277,10 @@ static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
     }
   }
   if (c == '"') {
-    if (lexer->frameCount > 0) {
-      // The frame's closing quote arrived while the interpolation is still
-      // open: the '{' was never paired. (Same-quote strings cannot nest
-      // inside an interpolation in v0.1.) Recover by consuming the quote
-      // and popping the frame as if it had closed the f-string.
-      const char* start = lexer->source + lexer->pos;
-      uint32_t line = lexer->line;
-      uint32_t column = lexer->column;
-      msLexerAdvanceChar(lexer);
-      msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
-      msLexerPopFstringFrame(lexer);
-      if (msLexerError(lexer, line, column, 110,
-              "unpaired '{' in f-string interpolation") != MS_OK) {
-        msLexerMakeEof(lexer, out);
-        return MS_ERROR_SYNTAX;
-      }
-      msLexerCommitToken(lexer, out);
-      return MS_OK;
-    }
+    // Also inside an interpolation (frames live): plain strings may nest in
+    // interpolation expressions, and the inner string's closing quote can
+    // never close the outer f-string -- FSTRING_END is only produced in
+    // FSTRING_TEXT mode.
     return msLexerScanString(lexer, out, false);
   }
   if (c == '`') {
@@ -1359,6 +1356,7 @@ void msLexerInit(struct MsLexer* lexer, const char* source, size_t sourceLen,
       .hasPeeked = false,
       .diags = diags,
       .hitDiagCap = false,
+      .blockBraceDepth = 0,
   };
   if (sourceLen >= 3 && (unsigned char)source[0] == 0xEF && (unsigned char)source[1] == 0xBB
       && (unsigned char)source[2] == 0xBF) {

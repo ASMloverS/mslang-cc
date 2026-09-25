@@ -100,6 +100,10 @@ struct MsLexer {
   // Additive implementation detail beyond the spec: sticky flag set once a
   // report fills the diagnostic cap; scanning then yields EOF forever.
   bool hitDiagCap;
+  // Additive implementation detail beyond the spec: pairing depth of '{'
+  // '}' in plain code (frameCount == 0), so a '}' with no pairing '{'
+  // anywhere (E111) can be told apart from a block or dict/set close.
+  int blockBraceDepth;
 };
 
 // Initializes lexer over [source, sourceLen). source and chunkName must
