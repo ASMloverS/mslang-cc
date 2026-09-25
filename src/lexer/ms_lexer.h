@@ -16,7 +16,9 @@ typedef enum {
   MS_TOKEN_IDENTIFIER,
   MS_TOKEN_INT,             // integer (arbitrary precision; lexer validates form only, no value conversion)
   MS_TOKEN_FLOAT,           // float64
-  MS_TOKEN_STRING,          // "..." plain string (escapes validated, not decoded)
+  MS_TOKEN_STRING,          // "..." plain string (escapes validated, not decoded); also an
+                            // f-string text segment, whose lexeme is the raw text without
+                            // quotes and which decodes via msLexerUnescapeFstringText
   MS_TOKEN_RAW_STRING,      // `...` backquote raw string
   MS_TOKEN_BYTES,           // b"..." bytes literal
   MS_TOKEN_FSTRING_START,   // f" prefix (see f-string tokenization)
@@ -123,12 +125,20 @@ MsTokenType msLexerPeek(struct MsLexer* lexer);
 // Decodes the escape sequences of an already-validated string or bytes
 // literal body (raw slice without surrounding quotes/prefix) into a newly
 // msAlloc'd buffer. Caller owns *out and frees it with msFree. Braces are
-// NOT special here: '{' and '}' pass through as ordinary bytes -- the
-// {{/}} literal-brace escapes of f-string text segments are a separate
-// decode path landing with the f-string mode stack.
+// NOT special here: '{' and '}' pass through as ordinary bytes -- f-string
+// text segments use msLexerUnescapeFstringText instead.
 // raw must come from a token this lexer produced; invalid input is a
 // programming error (MS_ASSERT in debug builds).
 MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* outLen);
+
+// Decodes the body of an f-string text segment (the lexeme of a STRING
+// token produced in FSTRING_TEXT mode, without surrounding quotes) into a
+// newly msAlloc'd buffer: the same escapes as msLexerUnescape, plus the
+// literal-brace escapes '{{' -> '{' and '}}' -> '}'. Caller owns *out and
+// frees it with msFree. raw must come from a token this lexer produced;
+// invalid input (including a lone '{' or '}') is a programming error
+// (MS_ASSERT in debug builds).
+MsResult msLexerUnescapeFstringText(const char* raw, size_t rawLen, char** out, size_t* outLen);
 
 // Static name table for diagnostics and tests ("MS_TOKEN_KW_IF" etc.).
 const char* msTokenTypeName(MsTokenType type);

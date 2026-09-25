@@ -426,8 +426,16 @@ static bool msLexerTokenEndsStatement(MsTokenType type) {
 // from its final type. Every token-producing path must route through this
 // (INVALID included -- it clears the state), and only the auto-inserted
 // semicolon and EOF bypass it (they maintain the state themselves).
+// A STRING token committed while an f-string frame is live is a text
+// segment mid-expression, not a string literal: it must not trigger
+// semicolon insertion even though plain STRING is a statement ender
+// (FSTRING_START/FORMAT/LEFT_BRACE are continuers already; FSTRING_END is
+// the one f-string token in the ender set).
 static void msLexerCommitToken(struct MsLexer* lexer, const struct MsToken* token) {
   lexer->canEndStatement = msLexerTokenEndsStatement(token->type);
+  if (lexer->frameCount > 0 && token->type == MS_TOKEN_STRING) {
+    lexer->canEndStatement = false;
+  }
 }
 
 // Fills out with an auto-inserted semicolon: an empty lexeme at the position
@@ -811,6 +819,206 @@ static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out)
   }
 }
 
+// Pops the current f-string frame (after FSTRING_END or an error recovery)
+// and restores the mode of the enclosing context. A nested f-string only
+// starts inside an interpolation, so a surrounding frame with braceDepth > 0
+// resumes in NORMAL mid-interpolation; one with braceDepth == 0 resumes its
+// FSTRING_TEXT segment; an emptied stack returns to plain NORMAL.
+static void msLexerPopFstringFrame(struct MsLexer* lexer) {
+  MS_ASSERT(lexer->frameCount > 0);
+  --lexer->frameCount;
+  if (lexer->frameCount > 0 && lexer->frames[lexer->frameCount - 1].braceDepth == 0) {
+    lexer->mode = MS_LEXMODE_FSTRING_TEXT;
+  } else {
+    lexer->mode = MS_LEXMODE_NORMAL;
+  }
+}
+
+// Scans "f\"" (the caller verified the '"' after the 'f') into
+// MS_TOKEN_FSTRING_START, pushes a frame and switches to FSTRING_TEXT.
+// Pushing past MS_LEXER_MAX_FSTRING_DEPTH reports E109 at the 'f' and
+// recovers by scanning to the closing quote as if it were a plain string,
+// without pushing a frame.
+static MsResult msLexerScanFstringStart(struct MsLexer* lexer, struct MsToken* out) {
+  MS_ASSERT(msLexerCurrent(lexer) == 'f' && msLexerLookahead(lexer) == '"');
+  const char* start = lexer->source + lexer->pos;
+  uint32_t line = lexer->line;
+  uint32_t column = lexer->column;
+  msLexerAdvanceChar(lexer);  // 'f'
+  msLexerAdvanceChar(lexer);  // opening quote
+  if (lexer->frameCount >= MS_LEXER_MAX_FSTRING_DEPTH) {
+    for (;;) {
+      if (msLexerIsAtEnd(lexer) || msLexerCurrent(lexer) == '\r' || msLexerCurrent(lexer) == '\n') {
+        break;
+      }
+      char c = msLexerCurrent(lexer);
+      if (c == '\\' && lexer->pos + 1 < lexer->sourceLen && lexer->source[lexer->pos + 1] != '\r'
+          && lexer->source[lexer->pos + 1] != '\n') {
+        msLexerAdvanceChar(lexer);  // keep an escaped quote out of the scan
+        msLexerAdvanceChar(lexer);
+        continue;
+      }
+      msLexerAdvanceChar(lexer);
+      if (c == '"') {
+        break;
+      }
+    }
+    msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
+    if (msLexerError(lexer, line, column, 109, "f-string nesting too deep") != MS_OK) {
+      msLexerMakeEof(lexer, out);
+      return MS_ERROR_SYNTAX;
+    }
+    msLexerCommitToken(lexer, out);
+    return MS_OK;
+  }
+  lexer->frames[lexer->frameCount] = (struct MsLexerFrame){.quote = '"', .braceDepth = 0};
+  ++lexer->frameCount;
+  lexer->mode = MS_LEXMODE_FSTRING_TEXT;
+  msLexerMakeToken(lexer, out, MS_TOKEN_FSTRING_START, start, line, column);
+  msLexerCommitToken(lexer, out);
+  return MS_OK;
+}
+
+// Collects the raw format spec of an interpolation (FSTRING_FORMAT mode):
+// everything up to the '}' that closes the interpolation, allowing nested
+// '{' '}' pairs inside (Python-style nested replacement fields). Emits
+// MS_TOKEN_FSTRING_FORMAT whose lexeme excludes the closing '}' (the ':'
+// was consumed by the caller) and returns to NORMAL mode, leaving the '}'
+// to the ordinary brace logic, which emits RIGHT_BRACE and switches back to
+// FSTRING_TEXT. A newline or end of input first reports E110 and recovers
+// by popping the frame; the newline stays for the trivia path.
+static MsResult msLexerScanFstringFormat(struct MsLexer* lexer, struct MsToken* out) {
+  MS_ASSERT(lexer->frameCount > 0);
+  const char* start = lexer->source + lexer->pos;
+  uint32_t line = lexer->line;
+  uint32_t column = lexer->column;
+  int localDepth = 0;
+  for (;;) {
+    char c = msLexerCurrent(lexer);
+    if (msLexerIsAtEnd(lexer) || c == '\r' || c == '\n') {
+      msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
+      msLexerPopFstringFrame(lexer);
+      if (msLexerError(lexer, line, column, 110, "unpaired '{' in f-string interpolation") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      msLexerCommitToken(lexer, out);
+      return MS_OK;
+    }
+    if (c == '{') {
+      ++localDepth;
+    } else if (c == '}') {
+      if (localDepth == 0) {
+        break;  // the interpolation's closing brace; do not consume it
+      }
+      --localDepth;
+    }
+    msLexerAdvanceChar(lexer);
+  }
+  msLexerMakeToken(lexer, out, MS_TOKEN_FSTRING_FORMAT, start, line, column);
+  lexer->mode = MS_LEXMODE_NORMAL;
+  msLexerCommitToken(lexer, out);
+  return MS_OK;
+}
+
+// Scans one f-string text segment (FSTRING_TEXT mode). The raw text is
+// validated with the plain-string escape rules (E106) and emitted as
+// MS_TOKEN_STRING whose lexeme has no quotes. Boundaries: '{{' / '}}' are
+// literal-brace escapes and stay in the segment; a single '{' opens an
+// interpolation (LEFT_BRACE, braceDepth = 1, back to NORMAL); the frame's
+// closing quote ends the f-string (FSTRING_END, pop the frame); a lone '}'
+// is E111. A boundary met with pending text first emits the STRING and
+// leaves the boundary byte to the next scan call. An unescaped newline or
+// end of input reports E103 at the segment start (strings do not span
+// lines) and recovers by popping the frame as if the quote had closed; the
+// newline itself stays for the trivia path.
+static MsResult msLexerScanFstringText(struct MsLexer* lexer, struct MsToken* out) {
+  MS_ASSERT(lexer->frameCount > 0);
+  struct MsLexerFrame* frame = &lexer->frames[lexer->frameCount - 1];
+  const char* start = lexer->source + lexer->pos;
+  uint32_t line = lexer->line;
+  uint32_t column = lexer->column;
+  bool escapeError = false;
+  bool checkEscapes = true;
+  for (;;) {
+    char c = msLexerCurrent(lexer);
+    if (msLexerIsAtEnd(lexer) || c == '\r' || c == '\n') {
+      msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
+      msLexerPopFstringFrame(lexer);
+      if (msLexerError(lexer, line, column, 103, "unterminated string") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      msLexerCommitToken(lexer, out);
+      return MS_OK;
+    }
+    if (c == frame->quote) {
+      if (lexer->source + lexer->pos > start) {
+        break;  // emit the pending text; the quote is handled next call
+      }
+      msLexerAdvanceChar(lexer);  // closing quote
+      msLexerMakeToken(lexer, out, MS_TOKEN_FSTRING_END, start, line, column);
+      msLexerPopFstringFrame(lexer);
+      msLexerCommitToken(lexer, out);
+      return MS_OK;
+    }
+    if (c == '{') {
+      if (msLexerLookahead(lexer) == '{') {
+        msLexerAdvanceChar(lexer);  // '{{' decodes to a literal '{' later
+        msLexerAdvanceChar(lexer);
+        continue;
+      }
+      if (lexer->source + lexer->pos > start) {
+        break;  // emit the pending text; the '{' is handled next call
+      }
+      msLexerAdvanceChar(lexer);
+      frame->braceDepth = 1;
+      lexer->mode = MS_LEXMODE_NORMAL;
+      msLexerMakeToken(lexer, out, MS_TOKEN_LEFT_BRACE, start, line, column);
+      msLexerCommitToken(lexer, out);
+      return MS_OK;
+    }
+    if (c == '}') {
+      if (msLexerLookahead(lexer) == '}') {
+        msLexerAdvanceChar(lexer);  // '}}' decodes to a literal '}' later
+        msLexerAdvanceChar(lexer);
+        continue;
+      }
+      if (lexer->source + lexer->pos > start) {
+        break;  // emit the pending text; the '}' is handled next call
+      }
+      msLexerAdvanceChar(lexer);  // a lone '}' in text has no pairing '{'
+      msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
+      if (msLexerError(lexer, line, column, 111, "unmatched '}'") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      msLexerCommitToken(lexer, out);
+      return MS_OK;
+    }
+    if (c == '\\' && checkEscapes) {
+      if (!msLexerScanEscape(lexer)) {
+        if (!escapeError) {
+          escapeError = true;
+          // The cursor is still on the backslash of the bad escape.
+          if (msLexerError(lexer, lexer->line, lexer->column, 106,
+                  "invalid escape sequence") != MS_OK) {
+            msLexerMakeEof(lexer, out);
+            return MS_ERROR_SYNTAX;
+          }
+        }
+        checkEscapes = false;
+        msLexerAdvanceChar(lexer);  // consume the backslash, keep scanning
+      }
+      continue;
+    }
+    msLexerAdvanceChar(lexer);
+  }
+  msLexerMakeToken(lexer, out, escapeError ? MS_TOKEN_INVALID : MS_TOKEN_STRING, start, line, column);
+  msLexerCommitToken(lexer, out);
+  return MS_OK;
+}
+
 // Reports E102 for an offending byte, naming it: '%c' for printable ASCII,
 // '\xHH' for control or non-ASCII bytes.
 static MsResult msLexerErrorUnexpectedChar(struct MsLexer* lexer, uint32_t line,
@@ -902,7 +1110,18 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
       type = MS_TOKEN_TILDE;
       break;
     case ':':
-      type = msLexerMatch(lexer, '=') ? MS_TOKEN_COLON_EQUAL : MS_TOKEN_COLON;
+      if (msLexerMatch(lexer, '=')) {
+        type = MS_TOKEN_COLON_EQUAL;
+        break;
+      }
+      if (lexer->frameCount > 0 && lexer->frames[lexer->frameCount - 1].braceDepth == 1) {
+        // At the top level of an interpolation, ':' opens the format
+        // segment: it is consumed without a COLON token and the format
+        // collector produces the next token instead.
+        lexer->mode = MS_LEXMODE_FSTRING_FORMAT;
+        return msLexerScanFstringFormat(lexer, out);
+      }
+      type = MS_TOKEN_COLON;
       break;
     case '.':
       // The caller routes '.' + digit to msLexerScanNumber; here the
@@ -928,12 +1147,32 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
       type = MS_TOKEN_RIGHT_BRACKET;
       break;
     case '{':
-      // Plain braces for now; the f-string frame logic (including the E111
-      // bare-brace diagnostic) arrives in a later task.
+      if (lexer->frameCount > 0) {
+        // A '{' inside an interpolation (dict literal etc.) nests the
+        // frame's brace depth; its matching '}' will not close the
+        // interpolation.
+        ++lexer->frames[lexer->frameCount - 1].braceDepth;
+      }
       type = MS_TOKEN_LEFT_BRACE;
       break;
     case '}':
-      type = MS_TOKEN_RIGHT_BRACE;
+      if (lexer->frameCount > 0) {
+        struct MsLexerFrame* frame = &lexer->frames[lexer->frameCount - 1];
+        MS_ASSERT(frame->braceDepth > 0);
+        --frame->braceDepth;
+        if (frame->braceDepth == 0) {
+          // The interpolation closed; the f-string continues in text mode.
+          lexer->mode = MS_LEXMODE_FSTRING_TEXT;
+        }
+        type = MS_TOKEN_RIGHT_BRACE;
+        break;
+      }
+      // A bare '}' outside any f-string frame has no pairing '{'.
+      if (msLexerError(lexer, line, column, 111, "unmatched '}'") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      type = MS_TOKEN_INVALID;
       break;
     case ',':
       type = MS_TOKEN_COMMA;
@@ -961,6 +1200,14 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
 // statement end yields one compensating semicolon, and only the following
 // call produces EOF.
 static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
+  // f-string modes dispatch before trivia skipping: text and format segment
+  // bytes are raw content, so spaces and comments are not skipped there.
+  if (lexer->mode == MS_LEXMODE_FSTRING_TEXT) {
+    return msLexerScanFstringText(lexer, out);
+  }
+  if (lexer->mode == MS_LEXMODE_FSTRING_FORMAT) {
+    return msLexerScanFstringFormat(lexer, out);
+  }
   struct MsLexerNewline newline = {false, 0, 0, 0};
   if (msLexerSkipTrivia(lexer, &newline) != MS_OK) {
     msLexerMakeEof(lexer, out);
@@ -971,6 +1218,21 @@ static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
     return MS_OK;
   }
   if (msLexerIsAtEnd(lexer)) {
+    if (lexer->frameCount > 0) {
+      // End of input inside an interpolation expression: the '{' was never
+      // paired. Recover by popping the frame so scanning can terminate.
+      uint32_t line = lexer->line;
+      uint32_t column = lexer->column;
+      msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, lexer->source + lexer->pos, line, column);
+      msLexerPopFstringFrame(lexer);
+      if (msLexerError(lexer, line, column, 110,
+              "unpaired '{' in f-string interpolation") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      msLexerCommitToken(lexer, out);
+      return MS_OK;
+    }
     if (lexer->canEndStatement) {
       msLexerMakeSemicolon(lexer, out, lexer->pos, lexer->line, lexer->column);
       return MS_OK;
@@ -1003,10 +1265,34 @@ static MsResult msLexerScan(struct MsLexer* lexer, struct MsToken* out) {
     }
   }
   if (c == '"') {
+    if (lexer->frameCount > 0) {
+      // The frame's closing quote arrived while the interpolation is still
+      // open: the '{' was never paired. (Same-quote strings cannot nest
+      // inside an interpolation in v0.1.) Recover by consuming the quote
+      // and popping the frame as if it had closed the f-string.
+      const char* start = lexer->source + lexer->pos;
+      uint32_t line = lexer->line;
+      uint32_t column = lexer->column;
+      msLexerAdvanceChar(lexer);
+      msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
+      msLexerPopFstringFrame(lexer);
+      if (msLexerError(lexer, line, column, 110,
+              "unpaired '{' in f-string interpolation") != MS_OK) {
+        msLexerMakeEof(lexer, out);
+        return MS_ERROR_SYNTAX;
+      }
+      msLexerCommitToken(lexer, out);
+      return MS_OK;
+    }
     return msLexerScanString(lexer, out, false);
   }
   if (c == '`') {
     return msLexerScanRawString(lexer, out);
+  }
+  if (c == 'f' && msLexerLookahead(lexer) == '"') {
+    // 'f' immediately followed by '"' starts an f-string; any other 'f'
+    // falls through to the identifier branch below.
+    return msLexerScanFstringStart(lexer, out);
   }
   if (c == 'b' && msLexerLookahead(lexer) == '"') {
     // 'b' immediately followed by '"' starts a bytes literal; any other
@@ -1217,16 +1503,24 @@ static size_t msLexerDecodeEscape(const char* raw, size_t rawLen, size_t* pos, c
   }
 }
 
-MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* outLen) {
+// Shared two-pass core of msLexerUnescape and msLexerUnescapeFstringText.
+// With braceEscapes, the literal-brace escapes '{{' / '}}' of f-string text
+// segments decode to a single '{' / '}'; the input contract (pre-validated
+// token bodies) is unchanged, so a lone brace is a caller bug (MS_ASSERT).
+static MsResult msLexerUnescapeImpl(const char* raw, size_t rawLen, bool braceEscapes,
+    char** out, size_t* outLen) {
   // Pass 1: compute the decoded length (\u/\U expand to multi-byte UTF-8).
-  // Braces have no special meaning in a plain string or bytes body and pass
-  // through as ordinary bytes; the {{/}} literal-brace escapes of f-string
-  // text segments are a separate decode path landing with the mode stack.
   size_t decodedLen = 0;
   size_t pos = 0;
   while (pos < rawLen) {
     if (raw[pos] == '\\') {
       decodedLen += msLexerDecodeEscape(raw, rawLen, &pos, NULL);
+      continue;
+    }
+    if (braceEscapes && (raw[pos] == '{' || raw[pos] == '}')) {
+      MS_ASSERT(pos + 1 < rawLen && raw[pos + 1] == raw[pos]);
+      pos += 2;
+      ++decodedLen;
       continue;
     }
     ++pos;
@@ -1247,12 +1541,28 @@ MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* out
       outPos += msLexerDecodeEscape(raw, rawLen, &pos, buffer + outPos);
       continue;
     }
+    if (braceEscapes && (raw[pos] == '{' || raw[pos] == '}')) {
+      MS_ASSERT(pos + 1 < rawLen && raw[pos + 1] == raw[pos]);
+      buffer[outPos++] = raw[pos];
+      pos += 2;
+      continue;
+    }
     buffer[outPos++] = raw[pos++];
   }
   MS_ASSERT(outPos == decodedLen);
   *out = buffer;
   *outLen = decodedLen;
   return MS_OK;
+}
+
+MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* outLen) {
+  // Braces have no special meaning in a plain string or bytes body and pass
+  // through as ordinary bytes.
+  return msLexerUnescapeImpl(raw, rawLen, false, out, outLen);
+}
+
+MsResult msLexerUnescapeFstringText(const char* raw, size_t rawLen, char** out, size_t* outLen) {
+  return msLexerUnescapeImpl(raw, rawLen, true, out, outLen);
 }
 
 const char* msTokenTypeName(MsTokenType type) {
