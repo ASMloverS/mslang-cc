@@ -637,6 +637,8 @@ static MsResult msLexerScanNumber(struct MsLexer* lexer, struct MsToken* out) {
     }
     out->type = MS_TOKEN_INVALID;
     out->length = (size_t)(lexer->source + lexer->pos - out->start);
+    // Progress guarantee: an error token never has an empty lexeme.
+    MS_ASSERT(out->length > 0);
     if (msLexerError(lexer, errLine, errColumn, errCode, errMessage) != MS_OK) {
       msLexerMakeEof(lexer, out);
       return MS_ERROR_SYNTAX;
@@ -771,6 +773,8 @@ static MsResult msLexerScanString(struct MsLexer* lexer, struct MsToken* out, bo
     return MS_OK;
   }
   out->type = MS_TOKEN_INVALID;
+  // Progress guarantee: the opening quote was consumed, so length >= 1.
+  MS_ASSERT(out->length > 0);
   if (msLexerError(lexer, errLine, errColumn, errCode, errMessage) != MS_OK) {
     msLexerMakeEof(lexer, out);
     return MS_ERROR_SYNTAX;
@@ -795,6 +799,8 @@ static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out)
     if (msLexerIsAtEnd(lexer)) {
       out->type = MS_TOKEN_INVALID;
       out->length = (size_t)(lexer->source + lexer->pos - out->start);
+      // Progress guarantee: the opening backquote was consumed.
+      MS_ASSERT(out->length > 0);
       if (msLexerError(lexer, startLine, startColumn, 104, "unterminated raw string") != MS_OK) {
         msLexerMakeEof(lexer, out);
         return MS_ERROR_SYNTAX;
@@ -863,6 +869,8 @@ static MsResult msLexerScanFstringStart(struct MsLexer* lexer, struct MsToken* o
       }
     }
     msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
+    // Progress guarantee: at least the 'f' and the opening quote were consumed.
+    MS_ASSERT(out->length >= 2);
     if (msLexerError(lexer, line, column, 109, "f-string nesting too deep") != MS_OK) {
       msLexerMakeEof(lexer, out);
       return MS_ERROR_SYNTAX;
@@ -1217,6 +1225,9 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
       type = MS_TOKEN_INVALID;
       break;
   }
+  // Progress guarantee: the first byte was consumed on entry, so every
+  // operator or INVALID token has a non-empty lexeme.
+  MS_ASSERT(lexer->source + lexer->pos > start);
   msLexerMakeToken(lexer, out, type, start, line, column);
   msLexerCommitToken(lexer, out);
   return MS_OK;

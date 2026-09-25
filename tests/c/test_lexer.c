@@ -1383,6 +1383,72 @@ MS_TEST(Lexer, FstringErrors) {
   }
 }
 
+MS_TEST(Lexer, MultipleErrorsRecordedAndScanningContinues) {
+  struct MsDiagList diags;
+  struct MsToken tokens[16];
+  size_t count = msTestLexAll("! @ #", tokens, 16, &diags);
+  MS_ASSERT_EQ(3, msDiagListCount(&diags));
+  MS_ASSERT_EQ(102, msDiagListAt(&diags, 0)->code);
+  int invalids = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (tokens[i].type == MS_TOKEN_INVALID) {
+      ++invalids;
+    }
+  }
+  MS_ASSERT_EQ(3, invalids);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, DiagnosticCapAbortsWithSyntaxError) {
+  // 21 illegal chars -> exactly 20 diagnostics; then forced EOF.
+  const char* source = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !";
+  struct MsDiagList diags;
+  msDiagListInit(&diags, "test.ms");
+  struct MsLexer lexer;
+  msLexerInit(&lexer, source, strlen(source), "test.ms", &diags);
+  struct MsToken token;
+  MsResult result = MS_OK;
+  size_t guard = 0;
+  do {
+    result = msLexerNext(&lexer, &token);
+    ++guard;
+  } while (result == MS_OK && token.type != MS_TOKEN_EOF && guard < 128);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, result);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, token.type);
+  MS_ASSERT_EQ(20, msDiagListCount(&diags));
+  // Every later call stays at EOF without new diagnostics.
+  result = msLexerNext(&lexer, &token);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, result);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, token.type);
+  MS_ASSERT_EQ(20, msDiagListCount(&diags));
+  // Peeking at the cap reports the cached EOF, again without diagnostics.
+  MS_ASSERT_EQ(MS_TOKEN_EOF, msLexerPeek(&lexer));
+  MS_ASSERT_EQ(20, msDiagListCount(&diags));
+  msLexerDestroy(&lexer);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, PeekCachesAndNeverDoubleReports) {
+  struct MsDiagList diags;
+  msDiagListInit(&diags, "test.ms");
+  const char* source = "! x";
+  struct MsLexer lexer;
+  msLexerInit(&lexer, source, strlen(source), "test.ms", &diags);
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, msLexerPeek(&lexer));
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, msLexerPeek(&lexer));
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));  // no duplicate diagnostics
+  struct MsToken token;
+  MS_ASSERT_EQ(MS_OK, msLexerNext(&lexer, &token));
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, token.type);
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, msLexerPeek(&lexer));
+  MS_ASSERT_EQ(MS_OK, msLexerNext(&lexer, &token));
+  MS_ASSERT_EQ(MS_TOKEN_IDENTIFIER, token.type);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  msLexerDestroy(&lexer);
+  msDiagListDestroy(&diags);
+}
+
 static const MsTestCase msTests[] = {
     {"Lexer.TokenTypeNameCoversEveryValue", testLexerTokenTypeNameCoversEveryValue},
     {"Lexer.TokenTypeNameSpots", testLexerTokenTypeNameSpots},
@@ -1438,5 +1504,8 @@ static const MsTestCase msTests[] = {
     {"Lexer.FstringTextBadEscapeIsE106", testLexerFstringTextBadEscapeIsE106},
     {"Lexer.FstringErrors", testLexerFstringErrors},
     {"Lexer.BracesPairInPlainCode", testLexerBracesPairInPlainCode},
+    {"Lexer.MultipleErrorsRecordedAndScanningContinues", testLexerMultipleErrorsRecordedAndScanningContinues},
+    {"Lexer.DiagnosticCapAbortsWithSyntaxError", testLexerDiagnosticCapAbortsWithSyntaxError},
+    {"Lexer.PeekCachesAndNeverDoubleReports", testLexerPeekCachesAndNeverDoubleReports},
 };
 MS_TEST_MAIN(msTests)
