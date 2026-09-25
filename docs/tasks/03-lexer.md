@@ -226,13 +226,13 @@ f"x = {x + 1:08d}, {name}!"
 
 1. `NORMAL` 模式下扫到 `f"` 时产出 `MS_TOKEN_FSTRING_START`，压入一帧 `{quote='"', braceDepth=0}`，切到 `FSTRING_TEXT`。
 2. `FSTRING_TEXT` 按普通字符串规则扫描文本段（产出 `MS_TOKEN_STRING`），并识别边界：
-   - `{{` / `}}` 是字面量大括号，归入文本段（解码时还原为单个 `{}`，由 `msLexerUnescape` 处理）；
+   - `{{` / `}}` 是字面量大括号，归入文本段（解码时还原为单个 `{}`，由专用的 `msLexerUnescapeFstringText` 处理，普通 `msLexerUnescape` 不解码大括号）；
    - 单个 `{`：产出 `MS_TOKEN_LEFT_BRACE`，`braceDepth=1`，切回 `NORMAL`；
    - 闭合引号：产出 `MS_TOKEN_FSTRING_END`，弹帧；弹帧后一律回到 `NORMAL`——无剩余帧即普通代码，有剩余帧即外层插值表达式（嵌套 f-string 只出现在插值内，其外层帧必处于插值中）；`FSTRING_TEXT` 仅在插值 `}` 使 `braceDepth` 归零或新 f-string 起始（`f"`）时进入；
    - 换行或 EOF 未闭合：报 E103，恢复为弹帧。
 3. `NORMAL` 模式下、位于帧内（`frameCount > 0`）时：
    - `{`/`}` 照常产出 `MS_TOKEN_LEFT_BRACE`/`MS_TOKEN_RIGHT_BRACE` 并维护顶层帧的 `braceDepth`；`}` 使 `braceDepth` 归零时切回 `FSTRING_TEXT`；
-   - 顶层帧 `braceDepth == 1` 处遇到 `:`：切到 `FSTRING_FORMAT`；
+   - 顶层帧 `braceDepth == 1` 且 `bracketDepth == 0` 处遇到 `:`：切到 `FSTRING_FORMAT`（帧额外跟踪插值内 `(`/`[` 的嵌套深度 `bracketDepth`，使切片 `a[1:2]`、lambda 内的 `:` 不被误认为格式说明起点，对齐 Python）；
    - 帧外遇到裸 `}`（无配对 `{`）：报 E111。
    - 插值表达式可含任意表达式，包括普通字符串/字节串/raw string 与嵌套 f-string：内层字符串的闭合引号不会误关外层 f-string（`FSTRING_END` 只在 `FSTRING_TEXT` 模式产出）。
    - 插值内分号自动插入按 §7 规则机械执行；表达式中间出现分号由 parser 诊断，lexer 不特殊处理。

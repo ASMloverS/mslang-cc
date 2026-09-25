@@ -426,8 +426,6 @@ static bool msLexerTokenEndsStatement(MsTokenType type) {
 // from its final type. Every token-producing path must route through this
 // (INVALID included -- it clears the state), and only the auto-inserted
 // semicolon and EOF bypass it (they maintain the state themselves).
-// A STRING token committed in FSTRING_TEXT mode is a text segment
-// mid-expression (handled in the body below), not a string literal.
 // (FSTRING_START/FORMAT/LEFT_BRACE are continuers already; FSTRING_END is
 // the one f-string token in the ender set.)
 static void msLexerCommitToken(struct MsLexer* lexer, const struct MsToken* token) {
@@ -824,18 +822,15 @@ static MsResult msLexerScanRawString(struct MsLexer* lexer, struct MsToken* out)
 }
 
 // Pops the current f-string frame (after FSTRING_END or an error recovery)
-// and restores the mode of the enclosing context. A nested f-string only
-// starts inside an interpolation, so a surrounding frame with braceDepth > 0
-// resumes in NORMAL mid-interpolation; one with braceDepth == 0 resumes its
-// FSTRING_TEXT segment; an emptied stack returns to plain NORMAL.
+// and resumes NORMAL mode. Invariant: a frame is only ever pushed in NORMAL
+// mode (f-string starts are recognized nowhere else), and NORMAL mode under
+// a frame means mid-interpolation (braceDepth >= 1) -- so the enclosing
+// context after a pop is always plain code or an outer interpolation
+// expression, never an interrupted text segment.
 static void msLexerPopFstringFrame(struct MsLexer* lexer) {
   MS_ASSERT(lexer->frameCount > 0);
   --lexer->frameCount;
-  if (lexer->frameCount > 0 && lexer->frames[lexer->frameCount - 1].braceDepth == 0) {
-    lexer->mode = MS_LEXMODE_FSTRING_TEXT;
-  } else {
-    lexer->mode = MS_LEXMODE_NORMAL;
-  }
+  lexer->mode = MS_LEXMODE_NORMAL;
 }
 
 // Scans "f\"" (the caller verified the '"' after the 'f') into
@@ -875,7 +870,7 @@ static MsResult msLexerScanFstringStart(struct MsLexer* lexer, struct MsToken* o
     msLexerCommitToken(lexer, out);
     return MS_OK;
   }
-  lexer->frames[lexer->frameCount] = (struct MsLexerFrame){.quote = '"', .braceDepth = 0};
+  lexer->frames[lexer->frameCount] = (struct MsLexerFrame){.quote = '"', .braceDepth = 0, .bracketDepth = 0};
   ++lexer->frameCount;
   lexer->mode = MS_LEXMODE_FSTRING_TEXT;
   msLexerMakeToken(lexer, out, MS_TOKEN_FSTRING_START, start, line, column);
@@ -1118,10 +1113,12 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
         type = MS_TOKEN_COLON_EQUAL;
         break;
       }
-      if (lexer->frameCount > 0 && lexer->frames[lexer->frameCount - 1].braceDepth == 1) {
+      if (lexer->frameCount > 0 && lexer->frames[lexer->frameCount - 1].braceDepth == 1
+          && lexer->frames[lexer->frameCount - 1].bracketDepth == 0) {
         // At the top level of an interpolation, ':' opens the format
         // segment: it is consumed without a COLON token and the format
-        // collector produces the next token instead.
+        // collector produces the next token instead. A ':' nested in
+        // brackets (a slice like a[1:2], a lambda body) is a plain COLON.
         lexer->mode = MS_LEXMODE_FSTRING_FORMAT;
         return msLexerScanFstringFormat(lexer, out);
       }
@@ -1139,15 +1136,35 @@ static MsResult msLexerScanOperator(struct MsLexer* lexer, struct MsToken* out) 
       }
       break;
     case '(':
+      if (lexer->frameCount > 0) {
+        ++lexer->frames[lexer->frameCount - 1].bracketDepth;
+      }
       type = MS_TOKEN_LEFT_PAREN;
       break;
     case ')':
+      if (lexer->frameCount > 0) {
+        // Never below zero: an unbalanced closer is the parser's job, and
+        // the token is emitted regardless.
+        struct MsLexerFrame* parenFrame = &lexer->frames[lexer->frameCount - 1];
+        if (parenFrame->bracketDepth > 0) {
+          --parenFrame->bracketDepth;
+        }
+      }
       type = MS_TOKEN_RIGHT_PAREN;
       break;
     case '[':
+      if (lexer->frameCount > 0) {
+        ++lexer->frames[lexer->frameCount - 1].bracketDepth;
+      }
       type = MS_TOKEN_LEFT_BRACKET;
       break;
     case ']':
+      if (lexer->frameCount > 0) {
+        struct MsLexerFrame* bracketFrame = &lexer->frames[lexer->frameCount - 1];
+        if (bracketFrame->bracketDepth > 0) {
+          --bracketFrame->bracketDepth;
+        }
+      }
       type = MS_TOKEN_RIGHT_BRACKET;
       break;
     case '{':

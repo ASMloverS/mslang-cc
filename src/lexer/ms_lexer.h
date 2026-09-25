@@ -78,6 +78,10 @@ typedef enum {
 struct MsLexerFrame {         // one frame per f-string interpolation level
   char quote;                 // closing quote of the f-string ('"')
   int braceDepth;             // nesting depth of '{' '}' inside the interpolation expression
+  // Additive implementation detail beyond the spec struct: nesting depth of
+  // '(' '[' inside the interpolation, so a ':' inside brackets (slices,
+  // lambdas) is not mistaken for the format-spec opener (Python's rule).
+  int bracketDepth;
 };
 
 #define MS_LEXER_MAX_FSTRING_DEPTH 8

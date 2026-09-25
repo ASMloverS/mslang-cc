@@ -1138,6 +1138,102 @@ MS_TEST(Lexer, FstringStringInInterpolation) {
   msTestExpectSequence("f\"v={\"s\" + \"t\"}\"", expect, MS_ARRAY_LEN(expect));
 }
 
+MS_TEST(Lexer, FstringColonInsideBrackets) {
+  // A ':' nested in brackets is not the format-spec opener (Python's rule):
+  // slices and lambdas are valid interpolation expressions.
+  {
+    static const struct MsTestTokenExpect expect[] = {
+        {MS_TOKEN_FSTRING_START, "f\""},
+        {MS_TOKEN_LEFT_BRACE, "{"},
+        {MS_TOKEN_IDENTIFIER, "a"},
+        {MS_TOKEN_LEFT_BRACKET, "["},
+        {MS_TOKEN_INT, "1"},
+        {MS_TOKEN_COLON, ":"},
+        {MS_TOKEN_INT, "2"},
+        {MS_TOKEN_RIGHT_BRACKET, "]"},
+        {MS_TOKEN_RIGHT_BRACE, "}"},
+        {MS_TOKEN_FSTRING_END, "\""},
+        {MS_TOKEN_SEMICOLON, ""},
+    };
+    msTestExpectSequence("f\"{a[1:2]}\"", expect, MS_ARRAY_LEN(expect));
+  }
+  {
+    static const struct MsTestTokenExpect expect[] = {
+        {MS_TOKEN_FSTRING_START, "f\""},
+        {MS_TOKEN_LEFT_BRACE, "{"},
+        {MS_TOKEN_LEFT_PAREN, "("},
+        {MS_TOKEN_KW_LAMBDA, "lambda"},
+        {MS_TOKEN_IDENTIFIER, "x"},
+        {MS_TOKEN_COLON, ":"},
+        {MS_TOKEN_IDENTIFIER, "x"},
+        {MS_TOKEN_RIGHT_PAREN, ")"},
+        {MS_TOKEN_RIGHT_BRACE, "}"},
+        {MS_TOKEN_FSTRING_END, "\""},
+        {MS_TOKEN_SEMICOLON, ""},
+    };
+    msTestExpectSequence("f\"{(lambda x: x)}\"", expect, MS_ARRAY_LEN(expect));
+  }
+}
+
+MS_TEST(Lexer, FstringLoneBraceInTextIsE111) {
+  // A lone '}' in f-string text has no pairing '{': E111, and the text
+  // around it still scans as segments.
+  struct MsDiagList diags;
+  struct MsToken tokens[MS_TEST_MAX_TOKENS];
+  size_t count = msTestLexAll("f\"a}b\"", tokens, MS_TEST_MAX_TOKENS, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(111, msDiagListAt(&diags, 0)->code);
+  const MsTokenType expect[] = {
+      MS_TOKEN_FSTRING_START, MS_TOKEN_STRING, MS_TOKEN_INVALID,
+      MS_TOKEN_STRING, MS_TOKEN_FSTRING_END, MS_TOKEN_SEMICOLON, MS_TOKEN_EOF,
+  };
+  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
+  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], "a"));
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[2], "}"));
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[3], "b"));
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, FstringFormatNewlineIsE110) {
+  // A newline inside a format segment means the interpolation never closed:
+  // E110. The quote after the newline then opens an ordinary string that
+  // runs unterminated to end of input (E103).
+  struct MsDiagList diags;
+  struct MsToken tokens[MS_TEST_MAX_TOKENS];
+  size_t count = msTestLexAll("f\"{x:08\n\"", tokens, MS_TEST_MAX_TOKENS, &diags);
+  MS_ASSERT_EQ(2, msDiagListCount(&diags));
+  MS_ASSERT_EQ(110, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(103, msDiagListAt(&diags, 1)->code);
+  MS_ASSERT_TRUE(count > 0);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, FstringTextBadEscapeIsE106) {
+  // Text-segment escapes follow the plain-string rules: "\q" is E106 at the
+  // backslash and the segment comes out INVALID.
+  struct MsDiagList diags;
+  struct MsToken tokens[MS_TEST_MAX_TOKENS];
+  size_t count = msTestLexAll("f\"\\q\"", tokens, MS_TEST_MAX_TOKENS, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(106, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(1, msDiagListAt(&diags, 0)->line);
+  MS_ASSERT_EQ(3, msDiagListAt(&diags, 0)->column);  // the backslash
+  const MsTokenType expect[] = {
+      MS_TOKEN_FSTRING_START, MS_TOKEN_INVALID, MS_TOKEN_FSTRING_END,
+      MS_TOKEN_SEMICOLON, MS_TOKEN_EOF,
+  };
+  MS_ASSERT_EQ(MS_ARRAY_LEN(expect), count);
+  for (size_t i = 0; i < MS_ARRAY_LEN(expect); ++i) {
+    MS_ASSERT_EQ(expect[i], tokens[i].type);
+  }
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[1], "\\q"));
+  msDiagListDestroy(&diags);
+}
+
 MS_TEST(Lexer, BracesPairInPlainCode) {
   // '{' '}' pairs in plain code (blocks, dict/set literals) scan without
   // diagnostics; only a '}' with no pairing '{' anywhere is E111.
@@ -1230,8 +1326,22 @@ MS_TEST(Lexer, FstringErrors) {
     size_t count = msTestLexAll(nested, tokens, MS_TEST_MAX_TOKENS, &diags);
     MS_ASSERT_EQ(1, msDiagListCount(&diags));
     MS_ASSERT_EQ(109, msDiagListAt(&diags, 0)->code);
-    MS_ASSERT_TRUE(count > 0);
-    MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[count - 1].type);
+    // Recovery scans the 9th f-string to its closing quote as a plain
+    // string; the 8 outer frames then close cleanly: START/LBRACE pairs,
+    // the INVALID recovery token, RBRACE/END pairs, semicolon, EOF.
+    MS_ASSERT_EQ(35, count);
+    for (size_t i = 0; i < 8; ++i) {
+      MS_ASSERT_EQ(MS_TOKEN_FSTRING_START, tokens[i * 2].type);
+      MS_ASSERT_EQ(MS_TOKEN_LEFT_BRACE, tokens[i * 2 + 1].type);
+    }
+    MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[16].type);
+    MS_ASSERT_TRUE(msTestLexemeEq(&tokens[16], "f\"{x}\""));
+    for (size_t i = 0; i < 8; ++i) {
+      MS_ASSERT_EQ(MS_TOKEN_RIGHT_BRACE, tokens[17 + i * 2].type);
+      MS_ASSERT_EQ(MS_TOKEN_FSTRING_END, tokens[17 + i * 2 + 1].type);
+    }
+    MS_ASSERT_EQ(MS_TOKEN_SEMICOLON, tokens[33].type);
+    MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[34].type);
     msDiagListDestroy(&diags);
   }
   // (b) f"{x" : plain strings are allowed inside interpolations, so the
@@ -1322,6 +1432,10 @@ static const MsTestCase msTests[] = {
     {"Lexer.FstringNestedFstring", testLexerFstringNestedFstring},
     {"Lexer.FstringDictBraceDepth", testLexerFstringDictBraceDepth},
     {"Lexer.FstringStringInInterpolation", testLexerFstringStringInInterpolation},
+    {"Lexer.FstringColonInsideBrackets", testLexerFstringColonInsideBrackets},
+    {"Lexer.FstringLoneBraceInTextIsE111", testLexerFstringLoneBraceInTextIsE111},
+    {"Lexer.FstringFormatNewlineIsE110", testLexerFstringFormatNewlineIsE110},
+    {"Lexer.FstringTextBadEscapeIsE106", testLexerFstringTextBadEscapeIsE106},
     {"Lexer.FstringErrors", testLexerFstringErrors},
     {"Lexer.BracesPairInPlainCode", testLexerBracesPairInPlainCode},
 };
