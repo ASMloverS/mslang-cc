@@ -129,7 +129,7 @@ struct MsLexer {
   size_t pos;                 // 当前扫描字节偏移
   uint32_t line;              // 当前行，1 起始
   uint32_t column;            // 当前列，1 起始，按字节计
-  const char* chunkName;      // 文件名/块名，调用者持有，写入诊断
+  const char* chunkName;      // 文件名/块名，调用者持有；仅信息性字段，诊断的文件名取自 MsDiagList
   bool canEndStatement;       // 上一个 token 允许在行尾插入分号
   MsLexerModeKind mode;
   struct MsLexerFrame frames[MS_LEXER_MAX_FSTRING_DEPTH];
@@ -191,7 +191,7 @@ const char* msTokenTypeName(MsTokenType type);
 - `msLexerNext` 若有前瞻缓存则直接弹出；否则进入扫描：跳过空白（空格、制表符）与注释，处理换行（见分号插入），再按当前 `mode` 分派到 token 扫描。
 - `\r\n` 归一为一次换行；裸 `\r`（后非 `\n`）报 E112 非法字符后按换行处理，保证恢复。
 - 行/列在消费字符时维护，均为 1 起始；token 的行列记录其第一个字符的位置。
-- UTF-8：多字节序列做形式校验（长度与续字节），非法序列报 E102；非 ASCII 码点一律允许出现在标识符中（v0.1 简化：不查 Unicode 字母类别表，完整 `unicodeLetter` 判定留待后续版本，此处与 01-lexical §3 的差异须在任务文档中显式承认）。
+- UTF-8：多字节序列做形式校验（长度与续字节），非法序列报 E102；非 ASCII 码点一律允许出现在标识符中（v0.1 简化：不查 Unicode 字母类别表，完整 `unicodeLetter` 判定留待后续版本，此处与 01-lexical §3 的差异须在任务文档中显式承认）。v0.1 仅在字符串、raw string、字节串与 f-string 文本段之外做 UTF-8 形状校验；字面量内容只校验转义序列，完整 UTF-8 校验留待后续版本。
 
 ### 关键字表
 

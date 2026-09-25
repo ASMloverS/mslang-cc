@@ -1449,6 +1449,48 @@ MS_TEST(Lexer, PeekCachesAndNeverDoubleReports) {
   msDiagListDestroy(&diags);
 }
 
+MS_TEST(Lexer, WhitespaceOnlyProducesEof) {
+  // No statement ender precedes the newline, so no semicolon is inserted.
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("  \t \n ", tokens, 8, &diags);
+  MS_ASSERT_EQ(0, msDiagListCount(&diags));
+  MS_ASSERT_EQ(1, count);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[0].type);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, DigitLedIdentifierIsNumberError) {
+  // A letter right after digits is a number error (E107), not an identifier
+  // start; the INVALID lexeme covers the whole [0-9A-Za-z_] run.
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("1abc", tokens, 8, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(107, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(2, count);
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[0].type);
+  MS_ASSERT_TRUE(msTestLexemeEq(&tokens[0], "1abc"));
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[1].type);
+  msDiagListDestroy(&diags);
+}
+
+MS_TEST(Lexer, FstringTextBadEscapeAtEofReportsOnce) {
+  // f"\ at end of input: the bad escape reports E106; the unterminated
+  // segment must not add an E103 (one diagnostic per string, same policy
+  // as plain strings).
+  struct MsDiagList diags;
+  struct MsToken tokens[8];
+  size_t count = msTestLexAll("f\"\\", tokens, 8, &diags);
+  MS_ASSERT_EQ(1, msDiagListCount(&diags));
+  MS_ASSERT_EQ(106, msDiagListAt(&diags, 0)->code);
+  MS_ASSERT_EQ(3, count);
+  MS_ASSERT_EQ(MS_TOKEN_FSTRING_START, tokens[0].type);
+  MS_ASSERT_EQ(MS_TOKEN_INVALID, tokens[1].type);
+  MS_ASSERT_EQ(MS_TOKEN_EOF, tokens[2].type);
+  msDiagListDestroy(&diags);
+}
+
 static const MsTestCase msTests[] = {
     {"Lexer.TokenTypeNameCoversEveryValue", testLexerTokenTypeNameCoversEveryValue},
     {"Lexer.TokenTypeNameSpots", testLexerTokenTypeNameSpots},
@@ -1507,5 +1549,8 @@ static const MsTestCase msTests[] = {
     {"Lexer.MultipleErrorsRecordedAndScanningContinues", testLexerMultipleErrorsRecordedAndScanningContinues},
     {"Lexer.DiagnosticCapAbortsWithSyntaxError", testLexerDiagnosticCapAbortsWithSyntaxError},
     {"Lexer.PeekCachesAndNeverDoubleReports", testLexerPeekCachesAndNeverDoubleReports},
+    {"Lexer.WhitespaceOnlyProducesEof", testLexerWhitespaceOnlyProducesEof},
+    {"Lexer.DigitLedIdentifierIsNumberError", testLexerDigitLedIdentifierIsNumberError},
+    {"Lexer.FstringTextBadEscapeAtEofReportsOnce", testLexerFstringTextBadEscapeAtEofReportsOnce},
 };
 MS_TEST_MAIN(msTests)

@@ -938,7 +938,9 @@ static MsResult msLexerScanFstringFormat(struct MsLexer* lexer, struct MsToken* 
 // leaves the boundary byte to the next scan call. An unescaped newline or
 // end of input reports E103 at the segment start (strings do not span
 // lines) and recovers by popping the frame as if the quote had closed; the
-// newline itself stays for the trivia path.
+// newline itself stays for the trivia path. As in msLexerScanString, one
+// diagnostic per string: a segment that already reported a bad escape
+// (E106) does not also report E103 when it then runs unterminated.
 static MsResult msLexerScanFstringText(struct MsLexer* lexer, struct MsToken* out) {
   MS_ASSERT(lexer->frameCount > 0);
   struct MsLexerFrame* frame = &lexer->frames[lexer->frameCount - 1];
@@ -952,7 +954,10 @@ static MsResult msLexerScanFstringText(struct MsLexer* lexer, struct MsToken* ou
     if (msLexerIsAtEnd(lexer) || c == '\r' || c == '\n') {
       msLexerMakeToken(lexer, out, MS_TOKEN_INVALID, start, line, column);
       msLexerPopFstringFrame(lexer);
-      if (msLexerError(lexer, line, column, 103, "unterminated string") != MS_OK) {
+      // One diagnostic per string: a reported bad escape already covers this
+      // segment, so an unterminated tail adds no E103.
+      if (!escapeError
+          && msLexerError(lexer, line, column, 103, "unterminated string") != MS_OK) {
         msLexerMakeEof(lexer, out);
         return MS_ERROR_SYNTAX;
       }

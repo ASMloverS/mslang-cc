@@ -11,7 +11,9 @@
 
 typedef enum {
   MS_TOKEN_EOF,             // end of file
-  MS_TOKEN_INVALID,         // lexical error placeholder (diagnostic recorded, for parser sync)
+  MS_TOKEN_INVALID,         // lexical error placeholder (diagnostic recorded, for parser
+                            // sync); at EOF recovery (f-string E103/E110 paths) the lexeme
+                            // may be empty -- consumers must not assume a non-empty lexeme
 
   MS_TOKEN_IDENTIFIER,
   MS_TOKEN_INT,             // integer (arbitrary precision; lexer validates form only, no value conversion)
@@ -92,7 +94,8 @@ struct MsLexer {
   size_t pos;                 // current scan byte offset
   uint32_t line;              // current line, 1-based
   uint32_t column;            // current column, 1-based, byte count
-  const char* chunkName;      // file/chunk name, caller-owned, written into diagnostics
+  const char* chunkName;      // file/chunk name, caller-owned; informational only --
+                              // diagnostics take the chunk name from the MsDiagList
   bool canEndStatement;       // previous token allows semicolon insertion at end of line
   MsLexerModeKind mode;
   struct MsLexerFrame frames[MS_LEXER_MAX_FSTRING_DEPTH];
