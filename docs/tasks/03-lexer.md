@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [02 核心基础设施](02-core-infrastructure.md) |
+| v0.1 | ✅ | [02 核心基础设施](02-core-infrastructure.md) |
 
 ## 任务目标
 
@@ -116,6 +116,9 @@ typedef enum {
 struct MsLexerFrame {         // 每层 f-string 插值一帧
   char quote;                 // f-string 的闭合引号（'"'）
   int braceDepth;             // 插值表达式内 '{' '}' 的嵌套深度
+  // 规范结构体之外的增量字段：插值内 '(' '[' 的嵌套深度，使切片
+  // a[1:2]、lambda 内的 ':' 不被误认为格式说明起点（对齐 Python）。
+  int bracketDepth;
 };
 
 #define MS_LEXER_MAX_FSTRING_DEPTH 8
@@ -135,6 +138,11 @@ struct MsLexer {
   MsResult peekedResult;
   bool hasPeeked;
   struct MsDiagList* diags;   // 诊断收集器（任务 02），调用者持有
+  // 规范之外的增量字段：诊断满额后置位的粘滞标志，此后扫描恒产出 EOF。
+  bool hitDiagCap;
+  // 规范之外的增量字段：普通代码（frameCount == 0）中 '{' '}' 的配对深度，
+  // 用于区分块/字典闭合与全文件无配对 '{' 的裸 '}'（E111）。
+  int blockBraceDepth;
 };
 ```
 
@@ -167,6 +175,12 @@ MsTokenType msLexerPeek(struct MsLexer* lexer);
 // raw must come from a token this lexer produced; invalid input is a
 // programming error (MS_ASSERT in debug builds).
 MsResult msLexerUnescape(const char* raw, size_t rawLen, char** out, size_t* outLen);
+
+// Decodes the body of an f-string text segment (the lexeme of a STRING
+// token produced in FSTRING_TEXT mode): the same escapes as
+// msLexerUnescape, plus the literal-brace escapes '{{' -> '{' and
+// '}}' -> '}'. Caller owns *out and frees it with msFree.
+MsResult msLexerUnescapeFstringText(const char* raw, size_t rawLen, char** out, size_t* outLen);
 
 // Static name table for diagnostics and tests ("MS_TOKEN_KW_IF" etc.).
 const char* msTokenTypeName(MsTokenType type);
@@ -310,12 +324,12 @@ f"x = {x + 1:08d}, {name}!"
 
 ## 验收标准
 
-- [ ] `src/lexer/ms_lexer.h` / `ms_lexer.c` 存在，guard 为 `MSLANG_SRC_LEXER_MS_LEXER_H_`，头文件自包含，代码风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、`struct MsLexer` 不 typedef）。
-- [ ] `MsTokenType` 覆盖 01-lexical §4 全部 37 个关键字与 §6 全部运算符/定界符，另有 `++`/`--`（§7 要求）；`msTokenTypeName` 表完整。
-- [ ] token 携带类型/词素切片/行/列；词素不复制、指向调用者缓冲区；模块堆分配仅 `msLexerUnescape` 一处且经 `msAlloc`，调用者 `msFree`，任务 02 的分配统计显示无泄漏。
-- [ ] 数字、字符串、raw string、字节串、f-string 的字面量规则与本文「详细设计」一致，含 `.5` 合法、`5.` 报 E108。
-- [ ] 分号自动插入实现 §7 全部触发与续行情形，含块注释换行、显式 `;`、EOF 补分号。
-- [ ] f-string 展开为 `FSTRING_START` … `FSTRING_END` 的 token 序列，支持格式说明与嵌套，深度上限 8。
-- [ ] 词法错误经任务 02 诊断收集器记录（文件/行/列/错误码 E101–E112），错误后产出 `MS_TOKEN_INVALID` 继续扫描，满 20 条后返回 `MS_ERROR_SYNTAX` 中止。
-- [ ] `tests/c/test_lexer.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；与任务 02 的接口假定（`struct MsDiagList`、`msAlloc` 等）在实现时已对齐。
+- [x] `src/lexer/ms_lexer.h` / `ms_lexer.c` 存在，guard 为 `MSLANG_SRC_LEXER_MS_LEXER_H_`，头文件自包含，代码风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、`struct MsLexer` 不 typedef）。
+- [x] `MsTokenType` 覆盖 01-lexical §4 全部 37 个关键字与 §6 全部运算符/定界符，另有 `++`/`--`（§7 要求）；`msTokenTypeName` 表完整。
+- [x] token 携带类型/词素切片/行/列；词素不复制、指向调用者缓冲区；模块堆分配仅 `msLexerUnescape` / `msLexerUnescapeFstringText`（共享实现，仅解码出口）且经 `msAlloc`，调用者 `msFree`，任务 02 的分配统计显示无泄漏。
+- [x] 数字、字符串、raw string、字节串、f-string 的字面量规则与本文「详细设计」一致，含 `.5` 合法、`5.` 报 E108。
+- [x] 分号自动插入实现 §7 全部触发与续行情形，含块注释换行、显式 `;`、EOF 补分号。
+- [x] f-string 展开为 `FSTRING_START` … `FSTRING_END` 的 token 序列，支持格式说明与嵌套，深度上限 8。
+- [x] 词法错误经任务 02 诊断收集器记录（文件/行/列/错误码 E101–E112），错误后产出 `MS_TOKEN_INVALID` 继续扫描，满 20 条后返回 `MS_ERROR_SYNTAX` 中止。
+- [x] `tests/c/test_lexer.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；与任务 02 的接口假定（`struct MsDiagList`、`msAlloc` 等）在实现时已对齐。
