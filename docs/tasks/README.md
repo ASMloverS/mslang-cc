@@ -41,7 +41,7 @@
 |---|---|---|---|
 | ✅ | 01 | v0.1 | [工程骨架与构建系统](01-project-skeleton.md) |
 | ✅ | 02 | v0.1 | [核心基础设施（msAlloc、MsResult、通用宏）](02-core-infrastructure.md) |
-| ⬜ | 03 | v0.1 | [词法分析器（Lexer）](03-lexer.md) |
+| ✅ | 03 | v0.1 | [词法分析器（Lexer）](03-lexer.md) |
 | ⬜ | 04 | v0.1 | [语法分析器与 AST](04-parser-ast.md) |
 | ⬜ | 05 | v0.1 | [字节码格式与 MsProto](05-bytecode-proto.md) |
 | ⬜ | 06 | v0.1 | [对象模型基础](06-object-model.md) |

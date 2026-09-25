@@ -48,7 +48,7 @@ IEEE 754 双精度。特殊值：`math.inf`、`math.nan`（`nan != nan`，用 `m
 
 ### 3.3 混合运算与转换
 
-- `int op float` → `float`；`int / int` → `float`；`int // int` → `int`（向下取整除法）。
+- `int op float` → `float`；`int / int` → `float`；`int div int` → `int`（向下取整除法，`div` 是关键字，见 01-lexical §4）。
 - 显式转换：`int("42")`、`int(3.9)`（截断）、`float("3.14")`、`str(42)`、`bool(x)`。
 - `float → int` 隐式转换**不存在**，避免精度静默丢失。
 

@@ -208,7 +208,7 @@ MS_OP_UNPACK  ABC 格式
 - `block_scope.ms`：`if` 块内 `:=` 产生块局部；嵌套块读外层局部；嵌套块 `=` 穿透改写外层局部（`if true { x := 1; if true { x = 2 }; assert(x == 2) }`）；内层 `:=` 遮蔽同名全局，出块后全局值不变。
 - `slot_reuse.ms`：兄弟块先后声明不同名局部（`{ x := 1 } { y := 2 }`）行为正确（槽位复用对脚本透明，回归用）。
 - `multi_assign.ms`：`a, b := 1, 2` 逐值断言；`a, b = b, a` 交换；三目标轮转 `a, b, c = b, c, a`；右侧先整体求值（`a := 1; b := 2; a, b = a + b, a - b` 断言为 `(3, -1)`）。
-- `aug_assign.ms`：全局与块局部的 `+=`/`-=`/`*=`/`//=`/`%=`/`<<=` 各一例；复合赋值作用于遮蔽后的块局部而非全局。
+- `aug_assign.ms`：全局与块局部的 `+=`/`-=`/`*=`/`**=`/`%=`/`<<=` 各一例；复合赋值作用于遮蔽后的块局部而非全局。
 - `unpack.ms` + `unpack.out`：`a, b, c := range(3)` 逐值断言；`first, *rest := range(5)` 后 `print(rest)` 输出 `[1, 2, 3, 4]` 全文比对；`a, *mid, b := range(5)` 中段收集；`a, b = range(2)`（`=` 形式的解包）。
 - `global_stmt.ms`：顶层 `global x` 后 `x = 5` 合法（无 `:=`）；`global a, b` 多名字；`global` 与既有顶层 `:=` 共存无冲突。
 - 编译错误负例（各配 `.exit` 内容 `2`，诊断含行号）：`err_undeclared_assign.ms`（`x = 1` → E301）；`err_no_new_name.ms`（`x := 1; x := 2` → E302；同块 `a, b := 1, 2` 后 `a, b := 3, 4` 同样 E302）；`err_arity_mismatch.ms`（`a, b = 1, 2, 3` → E303）；`err_aug_multi.ms`（`a, b += 1, 2` → E305）；`err_global_conflict.ms`（块内 `x := 1` 后同函数 ctx 的 `global x` → E304，函数侧用例随任务 13 补充）；`err_index_target.ms`（`a := range(3); a[0] = 9` → 阶段性编译错误，任务 16 转为正例并移除）；`err_local_overflow.ms`（生成 300 个块内 `:=` → E306）。

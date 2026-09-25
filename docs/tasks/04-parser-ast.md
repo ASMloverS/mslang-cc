@@ -29,7 +29,7 @@ AST 覆盖全量语法（含 try/with/select/import/推导式/f-string/class 继
 
 规范歧义的处理（实现时按本文口径）：
 
-- `static` 不在 01-lexical §4 的 36 个关键字中，但 03-syntax §5 的 class 示例使用 `static func`。parser 将 `static` 作**上下文关键字**处理：仅在 class 体内、紧邻 `func` 之前时识别为静态方法修饰符，其余位置是普通标识符。
+- `static` 不在 01-lexical §4 的 37 个关键字中，但 03-syntax §5 的 class 示例使用 `static func`。parser 将 `static` 作**上下文关键字**处理：仅在 class 体内、紧邻 `func` 之前时识别为静态方法修饰符，其余位置是普通标识符。
 - 03-syntax 的 EBNF 未给出容器字面量与推导式的产生式，但 §5/§6.2 示例使用 `[]`、`{k: v}`、三种推导式。parser 以示例语义补全：list 字面量 `[expr, ...]`、dict 字面量 `{k: v, ...}`、set 字面量 `{expr, ...}`、空 `{}` 一律为 dict（对齐 Python）；`[`/`{` 后跟 `for` 子句时切换为对应推导式。
 - f-string 格式说明内的嵌套替换字段（`f"{n:{w}d}"`）：lexer 按约定产出单条 `MS_TOKEN_FSTRING_FORMAT` 原文切片，parser **不再展开**，存为原始文本节点；格式说明的二次解析由任务 28（f-string）在编译期复用 lexer/parser 管线完成。
 
@@ -269,7 +269,7 @@ typedef enum {
   MS_PREC_BIT_AND,       // 8  &
   MS_PREC_SHIFT,         // 7  << >>
   MS_PREC_TERM,          // 6  + -
-  MS_PREC_FACTOR,        // 5  * / // %
+  MS_PREC_FACTOR,        // 5  * / % div
   MS_PREC_UNARY,         // 4  +x -x ~x not x
   MS_PREC_POWER,         // 3  **（右结合）
   MS_PREC_POSTFIX,       // 2  [] 切片 属性 调用 await

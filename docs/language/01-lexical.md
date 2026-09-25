@@ -32,16 +32,17 @@ letter     = "a".."z" | "A".."Z" | "_" | unicodeLetter
 
 ```
 and      as       async    await    break    case     class    continue
-default  del      else     except   false    finally  for      from
-func     global   if       import   in       is       lambda   nil
-not      or       pass     raise    return   select   self     super
-true     try      while    with
+default  del      div      else     except   false    finally  for
+from     func     global   if       import   in       is       lambda
+nil      not      or       pass     raise    return   select   self
+super    true     try      while    with
 ```
 
 说明：
 
 - `chan` 不是关键字，是内建构造函数 `chan(capacity)`。
 - `self`/`super` 是关键字，仅在 class 方法体内可用。
+- `div` 是向下取整除法（floor division）的运算符，以关键字形式出现（与 `and`/`or`/`not` 同属词运算符）；无 `div=` 复合赋值。`//` 恒为行注释起点，不是运算符——旧设计中 `//` 注释与 `//` 运算符的冲突以此裁决消除。
 - 以下名字为内建函数而非关键字，可被遮蔽（不建议）：`len cap str int float bool bytes list tuple dict set range enumerate zip map filter sorted reversed type isinstance issubclass hasattr getattr setattr delattr repr chr ord hex oct bin abs min max sum round divmod pow open input print iter next id hash vars globals locals dir callable chan`。
 
 ## 5. 字面量
@@ -93,14 +94,14 @@ true  false  nil
 ## 6. 运算符与定界符
 
 ```
-算术:   +  -  *  /  //  %  **
+算术:   +  -  *  /  %  **
 比较:   ==  !=  <  <=  >  >=
 位运算: &  |  ^  ~  <<  >>
-赋值:   :=  =  +=  -=  *=  /=  //=  %=  **=  &=  |=  ^=  <<=  >>=
+赋值:   :=  =  +=  -=  *=  /=  %=  **=  &=  |=  ^=  <<=  >>=
 其他:   (  )  [  ]  {  }  ,  :  .  ;  ...
 ```
 
-关键字形式的逻辑运算：`and or not`；身份比较 `is` / `is not`；成员测试 `in` / `not in`。
+关键字形式的运算：逻辑 `and or not`、向下取整除法 `div`；身份比较 `is` / `is not`；成员测试 `in` / `not in`。
 
 ## 7. 分号自动插入
 
