@@ -563,6 +563,48 @@ MS_TEST(parser, lambdaEmptyAndMultiParam) {
       "          MS_AST_IDENT \"b\"\n");
 }
 
+MS_TEST(parser, compareChainOpsGrowth) {
+  // Six operands push the ops array past its initial capacity of 4,
+  // exercising the arena-grown doubling path.
+  msTestExpectDump("a < b < c < d < e < f",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_LT,MS_CMP_LT,MS_CMP_LT,MS_CMP_LT,MS_CMP_LT\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "      MS_AST_IDENT \"c\"\n"
+      "      MS_AST_IDENT \"d\"\n"
+      "      MS_AST_IDENT \"e\"\n"
+      "      MS_AST_IDENT \"f\"\n");
+}
+
+MS_TEST(parser, selfSuperContextError) {
+  // self/super outside a class method: E210. ('=' assignment is Task 7; the
+  // E210 from parseSelfSuper trips panic mode, so the trailing '=' adds no
+  // second diagnostic.)
+  static const uint32_t codes[] = { 210 };
+  msTestExpectDiags("self.x = 1", codes, 1);
+  msTestExpectDiags("super", codes, 1);
+}
+
+MS_TEST(parser, selfTreeDespiteContextError) {
+  // The E210 context error must not break the tree: bare 'self' still
+  // produces an IDENT node.
+  MsTestFixture fix;
+  msTestParse(&fix, "self");
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  MS_ASSERT_EQ(210, (long long)msDiagListAt(&fix.diags, 0)->code);
+  char buf[MS_TEST_DUMP_CAP];
+  msTestDump(fix.root, buf, sizeof(buf));
+  const char* expected =
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_IDENT \"self\"\n";
+  MS_ASSERT_EQ(0, strcmp(buf, expected));
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -600,5 +642,8 @@ static const MsTestCase msTests[] = {
     {"parser.conditionalRightAssoc", testparserconditionalRightAssoc},
     {"parser.awaitBindsAtPostfix", testparserawaitBindsAtPostfix},
     {"parser.lambdaEmptyAndMultiParam", testparserlambdaEmptyAndMultiParam},
+    {"parser.compareChainOpsGrowth", testparsercompareChainOpsGrowth},
+    {"parser.selfSuperContextError", testparserselfSuperContextError},
+    {"parser.selfTreeDespiteContextError", testparserselfTreeDespiteContextError},
 };
 MS_TEST_MAIN(msTests)

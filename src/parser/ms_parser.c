@@ -390,6 +390,12 @@ static struct MsAst* parseIndexOrSlice(struct MsParser* p, bool canAssign) {
   } else if (start == NULL) {
     parserErrorAt(p, &p->current, 203, "expected index or slice, got %s",
         msTokenTypeName(p->current.type));
+    // Keep the tree complete: an INVALID placeholder stands in for the
+    // missing index so no INDEX child is ever NULL.
+    start = parserNewNode(p, MS_AST_INVALID, &p->current);
+    if (start == NULL) {
+      return NULL;
+    }
   }
   parserConsume(p, MS_TOKEN_RIGHT_BRACKET, "expected ']' after subscript, got %s",
       msTokenTypeName(p->current.type));
@@ -568,7 +574,10 @@ static struct MsAst* parseAwait(struct MsParser* p, bool canAssign) {
 
 // Prefix: lambda [ident {"," ident}] ":" expr. Reuses the func union branch
 // with a NULL name; the body is a single expression at CONDITIONAL (a bare
-// nested lambda needs parens).
+// nested lambda needs parens). When func declarations land (Task 8), the
+// body parse must save and reset funcDepth/funcIsAsync around it: a lambda
+// is a new function scope, so 'await'/'return' context must not leak
+// across the boundary in either direction.
 static struct MsAst* parseLambda(struct MsParser* p, bool canAssign) {
   MS_UNUSED(canAssign);
   struct MsToken token = p->previous;
