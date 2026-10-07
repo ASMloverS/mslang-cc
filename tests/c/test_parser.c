@@ -257,6 +257,117 @@ MS_TEST(parser, nodePositions) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(parser, precedenceTermFactor) {
+  msTestExpectDump("1 + 2 * 3",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_PLUS\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_BINARY op=MS_TOKEN_STAR\n"
+      "        MS_AST_INT \"2\"\n"
+      "        MS_AST_INT \"3\"\n");
+}
+
+MS_TEST(parser, powerRightAssoc) {
+  msTestExpectDump("2 ** 3 ** 4",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_DOUBLE_STAR\n"
+      "      MS_AST_INT \"2\"\n"
+      "      MS_AST_BINARY op=MS_TOKEN_DOUBLE_STAR\n"
+      "        MS_AST_INT \"3\"\n"
+      "        MS_AST_INT \"4\"\n");
+}
+
+MS_TEST(parser, unaryBindsLooserThanPower) {
+  // -2 ** 2 == -(2 ** 2): unary is level 4, ** is level 3 (tighter).
+  msTestExpectDump("-2 ** 2",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_UNARY op=MS_TOKEN_MINUS\n"
+      "      MS_AST_BINARY op=MS_TOKEN_DOUBLE_STAR\n"
+      "        MS_AST_INT \"2\"\n"
+      "        MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, unaryBindsTighterThanFactor) {
+  // -2 * 3 == (-2) * 3.
+  msTestExpectDump("-2 * 3",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_STAR\n"
+      "      MS_AST_UNARY op=MS_TOKEN_MINUS\n"
+      "        MS_AST_INT \"2\"\n"
+      "      MS_AST_INT \"3\"\n");
+}
+
+MS_TEST(parser, logicalPrecedence) {
+  // not a and b or c == ((not a) and b) or c
+  msTestExpectDump("not a and b or c",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_LOGICAL op=MS_TOKEN_KW_OR\n"
+      "      MS_AST_LOGICAL op=MS_TOKEN_KW_AND\n"
+      "        MS_AST_UNARY op=MS_TOKEN_KW_NOT\n"
+      "          MS_AST_IDENT \"a\"\n"
+      "        MS_AST_IDENT \"b\"\n"
+      "      MS_AST_IDENT \"c\"\n");
+}
+
+MS_TEST(parser, bitwiseLevelChain) {
+  msTestExpectDump("a | b ^ c & d << 1",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_PIPE\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_BINARY op=MS_TOKEN_CARET\n"
+      "        MS_AST_IDENT \"b\"\n"
+      "        MS_AST_BINARY op=MS_TOKEN_AMP\n"
+      "          MS_AST_IDENT \"c\"\n"
+      "          MS_AST_BINARY op=MS_TOKEN_SHIFT_LEFT\n"
+      "            MS_AST_IDENT \"d\"\n"
+      "            MS_AST_INT \"1\"\n");
+}
+
+MS_TEST(parser, floorDivKeyword) {
+  msTestExpectDump("a div b",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_KW_DIV\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n");
+}
+
+MS_TEST(parser, parensOverride) {
+  msTestExpectDump("(1 + 2) * 3",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_STAR\n"
+      "      MS_AST_BINARY op=MS_TOKEN_PLUS\n"
+      "        MS_AST_INT \"1\"\n"
+      "        MS_AST_INT \"2\"\n"
+      "      MS_AST_INT \"3\"\n");
+}
+
+MS_TEST(parser, literalKinds) {
+  // The lexer keeps quotes/backticks/prefix in STRING/RAW_STRING/BYTES
+  // lexemes (see Lexer.StringLiteralsScan), so the dumps show them too.
+  msTestExpectDump("1.5\n`s raw `\nb\"xy\"\ntrue\nfalse\nnil",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_FLOAT \"1.5\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_RAW_STRING \"`s raw `\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BYTES \"b\\\"xy\\\"\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BOOL true\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BOOL false\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_NIL\n");
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -271,5 +382,14 @@ static const MsTestCase msTests[] = {
     {"parser.emptyStatement", testparseremptyStatement},
     {"parser.missingSemicolon", testparsermissingSemicolon},
     {"parser.nodePositions", testparsernodePositions},
+    {"parser.precedenceTermFactor", testparserprecedenceTermFactor},
+    {"parser.powerRightAssoc", testparserpowerRightAssoc},
+    {"parser.unaryBindsLooserThanPower", testparserunaryBindsLooserThanPower},
+    {"parser.unaryBindsTighterThanFactor", testparserunaryBindsTighterThanFactor},
+    {"parser.logicalPrecedence", testparserlogicalPrecedence},
+    {"parser.bitwiseLevelChain", testparserbitwiseLevelChain},
+    {"parser.floorDivKeyword", testparserfloorDivKeyword},
+    {"parser.parensOverride", testparserparensOverride},
+    {"parser.literalKinds", testparserliteralKinds},
 };
 MS_TEST_MAIN(msTests)

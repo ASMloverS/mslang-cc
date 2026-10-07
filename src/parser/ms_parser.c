@@ -93,11 +93,81 @@ static void consumeStatementEnd(struct MsParser* p) {
       msTokenTypeName(p->current.type));
 }
 
-// Temporary primary for the skeleton: literal and identifier tokens only.
-// Task 4 replaces this with the real Pratt parser entry (parsePrecedence).
-static struct MsAst* parseExpression(struct MsParser* p) {
-  struct MsToken token = p->current;
-  MsAstKind kind;
+// Pratt precedence levels: enum order is increasing binding power,
+// matching 03-syntax section 6 from level 15 (lambda) down to 1 (primary).
+typedef enum {
+  MS_PREC_NONE,
+  MS_PREC_LAMBDA,        // 15 lambda
+  MS_PREC_CONDITIONAL,   // 14 a if cond else b (right assoc)
+  MS_PREC_OR,            // 13
+  MS_PREC_AND,           // 12
+  MS_PREC_COMPARE,       // 11 comparisons / in / is (chained)
+  MS_PREC_BIT_OR,        // 10 |
+  MS_PREC_BIT_XOR,       // 9  ^
+  MS_PREC_BIT_AND,       // 8  &
+  MS_PREC_SHIFT,         // 7  << >>
+  MS_PREC_TERM,          // 6  + -
+  MS_PREC_FACTOR,        // 5  * / % div
+  MS_PREC_UNARY,         // 4  +x -x ~x not x
+  MS_PREC_POWER,         // 3  ** (right assoc)
+  MS_PREC_POSTFIX,       // 2  [] slice attr call await
+  MS_PREC_PRIMARY        // 1  literals / ident / (expr)
+} MsPrecedence;
+
+typedef struct MsAst* (*MsParseFn)(struct MsParser* p, bool canAssign);
+
+struct MsParseRule {
+  MsParseFn prefix;      // NULL: token cannot start an expression
+  MsParseFn infix;       // NULL: not an operator
+  MsPrecedence prec;
+};
+
+static struct MsAst* parseLiteral(struct MsParser* p, bool canAssign);
+static struct MsAst* parseGrouping(struct MsParser* p, bool canAssign);
+static struct MsAst* parseUnary(struct MsParser* p, bool canAssign);
+static struct MsAst* parseBinary(struct MsParser* p, bool canAssign);
+static struct MsAst* parseLogical(struct MsParser* p, bool canAssign);
+static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec);
+
+// Pratt rule table indexed by MsTokenType. Tokens without an entry
+// zero-initialize to { NULL, NULL, MS_PREC_NONE } -- neither prefix nor
+// infix -- so the fold loop stops at statement boundaries (semicolon,
+// ')', ',') on its own. Later tasks add the remaining entries.
+static const struct MsParseRule msParseRules[MS_TOKEN_ELLIPSIS + 1] = {
+    [MS_TOKEN_IDENTIFIER]  = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_INT]         = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_FLOAT]       = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_STRING]      = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_RAW_STRING]  = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_BYTES]       = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_TRUE]     = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_FALSE]    = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_NIL]      = { parseLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_LEFT_PAREN]  = { parseGrouping, NULL, MS_PREC_NONE },
+    [MS_TOKEN_TILDE]       = { parseUnary, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_NOT]      = { parseUnary, NULL, MS_PREC_NONE },
+    [MS_TOKEN_PLUS]        = { parseUnary, parseBinary, MS_PREC_TERM },
+    [MS_TOKEN_MINUS]       = { parseUnary, parseBinary, MS_PREC_TERM },
+    [MS_TOKEN_STAR]        = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_SLASH]       = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_PERCENT]     = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_KW_DIV]      = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_DOUBLE_STAR] = { NULL, parseBinary, MS_PREC_POWER },
+    [MS_TOKEN_SHIFT_LEFT]  = { NULL, parseBinary, MS_PREC_SHIFT },
+    [MS_TOKEN_SHIFT_RIGHT] = { NULL, parseBinary, MS_PREC_SHIFT },
+    [MS_TOKEN_AMP]         = { NULL, parseBinary, MS_PREC_BIT_AND },
+    [MS_TOKEN_CARET]       = { NULL, parseBinary, MS_PREC_BIT_XOR },
+    [MS_TOKEN_PIPE]        = { NULL, parseBinary, MS_PREC_BIT_OR },
+    [MS_TOKEN_KW_AND]      = { NULL, parseLogical, MS_PREC_AND },
+    [MS_TOKEN_KW_OR]       = { NULL, parseLogical, MS_PREC_OR },
+};
+
+// Prefix: literals, identifiers, and the keyword constants. The token is
+// p->previous (parsePrecedence already advanced past it).
+static struct MsAst* parseLiteral(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken token = p->previous;
+  MsAstKind kind = MS_AST_INVALID;
   switch (token.type) {
     case MS_TOKEN_INT:
       kind = MS_AST_INT;
@@ -125,12 +195,10 @@ static struct MsAst* parseExpression(struct MsParser* p) {
       kind = MS_AST_NIL;
       break;
     default:
-      parserErrorAt(p, &token, 201, "expected expression, got %s", msTokenTypeName(token.type));
-      parserAdvance(p);
-      // Placeholder keeps the tree traversable; the diagnostic stands above.
-      return parserNewNode(p, MS_AST_INVALID, &token);
+      // Unreachable: the rule table routes only the tokens above here.
+      MS_UNREACHABLE();
+      break;
   }
-  parserAdvance(p);
   struct MsAst* node = parserNewNode(p, kind, &token);
   if (node == NULL) {
     return NULL;
@@ -142,6 +210,88 @@ static struct MsAst* parseExpression(struct MsParser* p) {
     node->as.literal.length = token.length;
   }
   return node;
+}
+
+// Prefix: '(' expr ')'.
+static struct MsAst* parseGrouping(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsAst* expr = parsePrecedence(p, MS_PREC_LAMBDA + 1);
+  parserConsume(p, MS_TOKEN_RIGHT_PAREN, "expected ')' after expression, got %s",
+      msTokenTypeName(p->current.type));
+  return expr;
+}
+
+// Prefix: +x -x ~x not x. The operand starts one level tighter than UNARY,
+// which is the pin that makes POWER fold into the operand (-2 ** 2 ==
+// -(2 ** 2)) while FACTOR does not (-2 * 3 == (-2) * 3).
+static struct MsAst* parseUnary(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken op = p->previous;
+  struct MsAst* operand = parsePrecedence(p, MS_PREC_UNARY + 1);
+  struct MsAst* node = parserNewNode(p, MS_AST_UNARY, &op);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.unary.op = op.type;
+  node->as.unary.operand = operand;
+  return node;
+}
+
+// Infix: arithmetic, bitwise, and shift operators. The left operand arrives
+// via p->infixLeft (stashed by parsePrecedence). Left-associative operators
+// recurse at prec + 1; '**' is right-associative and recurses at its own
+// level, so 2 ** 3 ** 4 == 2 ** (3 ** 4).
+static struct MsAst* parseBinary(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken op = p->previous;
+  struct MsAst* left = p->infixLeft;
+  MsPrecedence prec = msParseRules[op.type].prec;
+  MsPrecedence rightPrec = op.type == MS_TOKEN_DOUBLE_STAR ? prec : prec + 1;
+  struct MsAst* right = parsePrecedence(p, rightPrec);
+  struct MsAst* node = parserNewNode(p, MS_AST_BINARY, &op);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.binary.op = op.type;
+  node->as.binary.left = left;
+  node->as.binary.right = right;
+  return node;
+}
+
+// Infix: and / or (short-circuit logical, left-associative).
+static struct MsAst* parseLogical(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken op = p->previous;
+  struct MsAst* left = p->infixLeft;
+  struct MsAst* right = parsePrecedence(p, msParseRules[op.type].prec + 1);
+  struct MsAst* node = parserNewNode(p, MS_AST_LOGICAL, &op);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.binary.op = op.type;
+  node->as.binary.left = left;
+  node->as.binary.right = right;
+  return node;
+}
+
+// Pratt fold loop: parse one prefix, then keep folding infix operators
+// whose binding power is at least minPrec.
+static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec) {
+  parserAdvance(p);
+  MsParseFn prefix = msParseRules[p->previous.type].prefix;
+  if (prefix == NULL) {
+    parserErrorAt(p, &p->previous, 201, "expected expression, got %s",
+        msTokenTypeName(p->previous.type));
+    return parserNewNode(p, MS_AST_INVALID, &p->previous);   // tree stays complete
+  }
+  struct MsAst* left = prefix(p, true);
+  while (msParseRules[p->current.type].infix != NULL
+      && msParseRules[p->current.type].prec >= minPrec) {
+    parserAdvance(p);
+    p->infixLeft = left;
+    left = msParseRules[p->previous.type].infix(p, true);
+  }
+  return left;
 }
 
 MsResult msParserParse(struct MsParser* p, struct MsAst** out) {
@@ -164,7 +314,7 @@ MsResult msParserParse(struct MsParser* p, struct MsAst** out) {
       continue;
     }
     struct MsToken start = p->current;
-    struct MsAst* expr = parseExpression(p);
+    struct MsAst* expr = parsePrecedence(p, MS_PREC_LAMBDA + 1);
     if (expr == NULL) {
       return MS_ERROR_OOM;
     }

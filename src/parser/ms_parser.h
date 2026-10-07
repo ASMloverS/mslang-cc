@@ -15,6 +15,10 @@ struct MsParser {
   struct MsDiagList* diags;     // borrowed, shared with the lexer (combined cap 20)
   struct MsToken current;       // current token
   struct MsToken previous;      // previous token (node position source)
+  // Additive implementation detail beyond the spec struct: parsePrecedence
+  // stashes the already-parsed left operand here before invoking an infix
+  // rule, because MsParseFn carries no left parameter.
+  struct MsAst* infixLeft;
   bool panicMode;               // suppresses cascading errors until synchronize()
   int loopDepth;                // break/continue context check
   int funcDepth;                // return context check
