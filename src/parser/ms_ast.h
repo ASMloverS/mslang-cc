@@ -117,7 +117,8 @@ struct MsAst {
     struct { struct MsAstList clauses; struct MsAst* elem; struct MsAst* key; } comprehension;
     struct { struct MsAstList targets; struct MsAstList values; } decl;      // DECL, ASSIGN
     struct { struct MsAst* expr; } exprStmt;                        // EXPR_STMT
-    struct { MsTokenType op; struct MsAst* target; struct MsAst* value; } augAssign;  // AUG_ASSIGN, INC_DEC (value NULL)
+    // AUG_ASSIGN, INC_DEC (value NULL)
+    struct { MsTokenType op; struct MsAst* target; struct MsAst* value; } augAssign;
     struct { struct MsAst* cond; struct MsAst* thenBlock; struct MsAst* elseBranch; } ifStmt;
     struct { MsForKind forKind; struct MsAst* init; struct MsAst* cond; struct MsAst* post;
              struct MsAstList targets; struct MsAst* iterable; struct MsAst* body; } forStmt;
