@@ -397,6 +397,172 @@ MS_TEST(parser, literalKinds) {
       "    MS_AST_NIL\n");
 }
 
+MS_TEST(parser, postfixMixedChain) {
+  // m.a[0](x).b
+  msTestExpectDump("m.a[0](x).b",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_ATTR \"b\"\n"
+      "      MS_AST_CALL\n"
+      "        MS_AST_INDEX\n"
+      "          MS_AST_ATTR \"a\"\n"
+      "            MS_AST_IDENT \"m\"\n"
+      "          MS_AST_INT \"0\"\n"
+      "        MS_AST_IDENT \"x\"\n");
+}
+
+MS_TEST(parser, callKeywordArgs) {
+  msTestExpectDump("f(1, x = 2)",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_CALL\n"
+      "      MS_AST_IDENT \"f\"\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_KW_ARG \"x\"\n"
+      "        MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, callTrailingCommaAndEmpty) {
+  msTestExpectDump("f()\ng(a, b, )",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_CALL\n"
+      "      MS_AST_IDENT \"f\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_CALL\n"
+      "      MS_AST_IDENT \"g\"\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n");
+}
+
+MS_TEST(parser, sliceCombinations) {
+  msTestExpectDump("a[:]\nb[::2]\nc[1:]\nd[1:2:3]\ne[1:2]",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SLICE parts=\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SLICE parts=step\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "      MS_AST_INT \"2\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SLICE parts=start\n"
+      "      MS_AST_IDENT \"c\"\n"
+      "      MS_AST_INT \"1\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SLICE parts=start,stop,step\n"
+      "      MS_AST_IDENT \"d\"\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n"
+      "      MS_AST_INT \"3\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SLICE parts=start,stop\n"
+      "      MS_AST_IDENT \"e\"\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, emptySubscriptIsError) {
+  static const uint32_t codes[] = { 203 };
+  msTestExpectDiags("a[]", codes, 1);
+}
+
+MS_TEST(parser, compareChain) {
+  msTestExpectDump("a < b <= c == d",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_LT,MS_CMP_LE,MS_CMP_EQ\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "      MS_AST_IDENT \"c\"\n"
+      "      MS_AST_IDENT \"d\"\n");
+}
+
+MS_TEST(parser, compareTwoTokenOps) {
+  msTestExpectDump("a not in b\na is not b\na in b\na is b",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_NOT_IN\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_IS_NOT\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_IN\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_IS\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n");
+}
+
+MS_TEST(parser, notAInBVsANotInB) {
+  // MS precedence: unary not (4) binds tighter than in (11), so
+  // `not a in b` is `(not a) in b` -- deliberately unlike Python.
+  msTestExpectDump("not a in b",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_IN\n"
+      "      MS_AST_UNARY op=MS_TOKEN_KW_NOT\n"
+      "        MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"b\"\n");
+}
+
+MS_TEST(parser, conditionalRightAssoc) {
+  msTestExpectDump("a if c1 else b if c2 else d",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_CONDITIONAL\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"c1\"\n"
+      "      MS_AST_CONDITIONAL\n"
+      "        MS_AST_IDENT \"b\"\n"
+      "        MS_AST_IDENT \"c2\"\n"
+      "        MS_AST_IDENT \"d\"\n");
+}
+
+MS_TEST(parser, awaitBindsAtPostfix) {
+  // await f(x) + 1 == (await f(x)) + 1. Top-level await reports E210
+  // (context check), but the tree must still be correct.
+  MsTestFixture fix;
+  msTestParse(&fix, "await f(x) + 1");
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  MS_ASSERT_EQ(210, (long long)msDiagListAt(&fix.diags, 0)->code);
+  char buf[MS_TEST_DUMP_CAP];
+  msTestDump(fix.root, buf, sizeof(buf));
+  const char* expected =
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_PLUS\n"
+      "      MS_AST_AWAIT\n"
+      "        MS_AST_CALL\n"
+      "          MS_AST_IDENT \"f\"\n"
+      "          MS_AST_IDENT \"x\"\n"
+      "      MS_AST_INT \"1\"\n";
+  MS_ASSERT_EQ(0, strcmp(buf, expected));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, lambdaEmptyAndMultiParam) {
+  msTestExpectDump("f(lambda: 0, lambda a, b: a + b)",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_CALL\n"
+      "      MS_AST_IDENT \"f\"\n"
+      "      MS_AST_LAMBDA\n"
+      "        MS_AST_INT \"0\"\n"
+      "      MS_AST_LAMBDA\n"
+      "        MS_AST_PARAM \"a\" kind=MS_PARAM_NORMAL\n"
+      "        MS_AST_PARAM \"b\" kind=MS_PARAM_NORMAL\n"
+      "        MS_AST_BINARY op=MS_TOKEN_PLUS\n"
+      "          MS_AST_IDENT \"a\"\n"
+      "          MS_AST_IDENT \"b\"\n");
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -423,5 +589,16 @@ static const MsTestCase msTests[] = {
     {"parser.groupingOnInfixRight", testparsergroupingOnInfixRight},
     {"parser.unaryPlusAndTilde", testparserunaryPlusAndTilde},
     {"parser.trailingOperatorIsE201", testparsertrailingOperatorIsE201},
+    {"parser.postfixMixedChain", testparserpostfixMixedChain},
+    {"parser.callKeywordArgs", testparsercallKeywordArgs},
+    {"parser.callTrailingCommaAndEmpty", testparsercallTrailingCommaAndEmpty},
+    {"parser.sliceCombinations", testparsersliceCombinations},
+    {"parser.emptySubscriptIsError", testparseremptySubscriptIsError},
+    {"parser.compareChain", testparsercompareChain},
+    {"parser.compareTwoTokenOps", testparsercompareTwoTokenOps},
+    {"parser.notAInBVsANotInB", testparsernotAInBVsANotInB},
+    {"parser.conditionalRightAssoc", testparserconditionalRightAssoc},
+    {"parser.awaitBindsAtPostfix", testparserawaitBindsAtPostfix},
+    {"parser.lambdaEmptyAndMultiParam", testparserlambdaEmptyAndMultiParam},
 };
 MS_TEST_MAIN(msTests)

@@ -130,6 +130,14 @@ static struct MsAst* parseGrouping(struct MsParser* p, bool canAssign);
 static struct MsAst* parseUnary(struct MsParser* p, bool canAssign);
 static struct MsAst* parseBinary(struct MsParser* p, bool canAssign);
 static struct MsAst* parseLogical(struct MsParser* p, bool canAssign);
+static struct MsAst* parseCall(struct MsParser* p, bool canAssign);
+static struct MsAst* parseIndexOrSlice(struct MsParser* p, bool canAssign);
+static struct MsAst* parseAttr(struct MsParser* p, bool canAssign);
+static struct MsAst* parseCompareChain(struct MsParser* p, bool canAssign);
+static struct MsAst* parseConditional(struct MsParser* p, bool canAssign);
+static struct MsAst* parseAwait(struct MsParser* p, bool canAssign);
+static struct MsAst* parseLambda(struct MsParser* p, bool canAssign);
+static struct MsAst* parseSelfSuper(struct MsParser* p, bool canAssign);
 static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec);
 
 // Pratt rule table indexed by MsTokenType. Tokens without an entry
@@ -146,23 +154,38 @@ static const struct MsParseRule msParseRules[MS_TOKEN_ELLIPSIS + 1] = {
     [MS_TOKEN_KW_TRUE]     = { parseLiteral, NULL, MS_PREC_NONE },
     [MS_TOKEN_KW_FALSE]    = { parseLiteral, NULL, MS_PREC_NONE },
     [MS_TOKEN_KW_NIL]      = { parseLiteral, NULL, MS_PREC_NONE },
-    [MS_TOKEN_LEFT_PAREN]  = { parseGrouping, NULL, MS_PREC_NONE },
-    [MS_TOKEN_TILDE]       = { parseUnary, NULL, MS_PREC_NONE },
-    [MS_TOKEN_KW_NOT]      = { parseUnary, NULL, MS_PREC_NONE },
-    [MS_TOKEN_PLUS]        = { parseUnary, parseBinary, MS_PREC_TERM },
-    [MS_TOKEN_MINUS]       = { parseUnary, parseBinary, MS_PREC_TERM },
-    [MS_TOKEN_STAR]        = { NULL, parseBinary, MS_PREC_FACTOR },
-    [MS_TOKEN_SLASH]       = { NULL, parseBinary, MS_PREC_FACTOR },
-    [MS_TOKEN_PERCENT]     = { NULL, parseBinary, MS_PREC_FACTOR },
-    [MS_TOKEN_KW_DIV]      = { NULL, parseBinary, MS_PREC_FACTOR },
-    [MS_TOKEN_DOUBLE_STAR] = { NULL, parseBinary, MS_PREC_POWER },
-    [MS_TOKEN_SHIFT_LEFT]  = { NULL, parseBinary, MS_PREC_SHIFT },
-    [MS_TOKEN_SHIFT_RIGHT] = { NULL, parseBinary, MS_PREC_SHIFT },
-    [MS_TOKEN_AMP]         = { NULL, parseBinary, MS_PREC_BIT_AND },
-    [MS_TOKEN_CARET]       = { NULL, parseBinary, MS_PREC_BIT_XOR },
-    [MS_TOKEN_PIPE]        = { NULL, parseBinary, MS_PREC_BIT_OR },
-    [MS_TOKEN_KW_AND]      = { NULL, parseLogical, MS_PREC_AND },
-    [MS_TOKEN_KW_OR]       = { NULL, parseLogical, MS_PREC_OR },
+    [MS_TOKEN_LEFT_PAREN]    = { parseGrouping, parseCall, MS_PREC_POSTFIX },
+    [MS_TOKEN_LEFT_BRACKET]  = { NULL, parseIndexOrSlice, MS_PREC_POSTFIX },
+    [MS_TOKEN_DOT]           = { NULL, parseAttr, MS_PREC_POSTFIX },
+    [MS_TOKEN_TILDE]         = { parseUnary, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_NOT]        = { parseUnary, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_PLUS]          = { parseUnary, parseBinary, MS_PREC_TERM },
+    [MS_TOKEN_MINUS]         = { parseUnary, parseBinary, MS_PREC_TERM },
+    [MS_TOKEN_STAR]          = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_SLASH]         = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_PERCENT]       = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_KW_DIV]        = { NULL, parseBinary, MS_PREC_FACTOR },
+    [MS_TOKEN_DOUBLE_STAR]   = { NULL, parseBinary, MS_PREC_POWER },
+    [MS_TOKEN_SHIFT_LEFT]    = { NULL, parseBinary, MS_PREC_SHIFT },
+    [MS_TOKEN_SHIFT_RIGHT]   = { NULL, parseBinary, MS_PREC_SHIFT },
+    [MS_TOKEN_AMP]           = { NULL, parseBinary, MS_PREC_BIT_AND },
+    [MS_TOKEN_CARET]         = { NULL, parseBinary, MS_PREC_BIT_XOR },
+    [MS_TOKEN_PIPE]          = { NULL, parseBinary, MS_PREC_BIT_OR },
+    [MS_TOKEN_EQUAL_EQUAL]   = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_BANG_EQUAL]    = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_LESS]          = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_LESS_EQUAL]    = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_GREATER]       = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_GREATER_EQUAL] = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_KW_IN]         = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_KW_IS]         = { NULL, parseCompareChain, MS_PREC_COMPARE },
+    [MS_TOKEN_KW_AND]        = { NULL, parseLogical, MS_PREC_AND },
+    [MS_TOKEN_KW_OR]         = { NULL, parseLogical, MS_PREC_OR },
+    [MS_TOKEN_KW_IF]         = { NULL, parseConditional, MS_PREC_CONDITIONAL },
+    [MS_TOKEN_KW_AWAIT]      = { parseAwait, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_LAMBDA]     = { parseLambda, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_SELF]       = { parseSelfSuper, NULL, MS_PREC_NONE },
+    [MS_TOKEN_KW_SUPER]      = { parseSelfSuper, NULL, MS_PREC_NONE },
 };
 
 // Prefix: literals, identifiers, and the keyword constants. The token is
@@ -286,8 +309,323 @@ static struct MsAst* parseLogical(struct MsParser* p, bool canAssign) {
   return node;
 }
 
+// Infix: call arguments. Grammar: "(" [expr {"," expr} [","]] ")"; an
+// identifier directly followed by '=' (2-token lookahead) is a keyword
+// argument.
+static struct MsAst* parseCall(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken paren = p->previous;
+  struct MsAst* callee = p->infixLeft;
+  struct MsAst* node = parserNewNode(p, MS_AST_CALL, &paren);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.call.callee = callee;
+  while (!parserCheck(p, MS_TOKEN_RIGHT_PAREN) && !parserCheck(p, MS_TOKEN_EOF)) {
+    struct MsAst* arg = NULL;
+    if (parserCheck(p, MS_TOKEN_IDENTIFIER) && msLexerPeek(p->lexer) == MS_TOKEN_EQUAL) {
+      struct MsToken name = p->current;
+      parserAdvance(p);   // name
+      parserAdvance(p);   // '='
+      struct MsAst* value = parsePrecedence(p, MS_PREC_EXPR);
+      if (value == NULL) {
+        return NULL;
+      }
+      arg = parserNewNode(p, MS_AST_KW_ARG, &name);
+      if (arg == NULL) {
+        return NULL;
+      }
+      arg->as.kwArg.start = name.start;
+      arg->as.kwArg.length = name.length;
+      arg->as.kwArg.value = value;
+    } else {
+      arg = parsePrecedence(p, MS_PREC_EXPR);
+      if (arg == NULL) {
+        return NULL;
+      }
+    }
+    if (!msAstListPush(p->arena, &node->as.call.args, arg)) {
+      parserErrorAt(p, &paren, 0, "out of memory");
+      return NULL;
+    }
+    if (!parserMatch(p, MS_TOKEN_COMMA)) {
+      break;
+    }
+  }
+  parserConsume(p, MS_TOKEN_RIGHT_PAREN, "expected ')' after arguments, got %s",
+      msTokenTypeName(p->current.type));
+  return node;
+}
+
+// Infix: subscript a[i] or slice a[i:j:k] with every component optional.
+// A component expression parses only when the current token is neither ':'
+// nor ']'. "a[]" (no component, no colon) is E203.
+static struct MsAst* parseIndexOrSlice(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken bracket = p->previous;
+  struct MsAst* target = p->infixLeft;
+  struct MsAst* start = NULL;
+  struct MsAst* stop = NULL;
+  struct MsAst* step = NULL;
+  if (!parserCheck(p, MS_TOKEN_COLON) && !parserCheck(p, MS_TOKEN_RIGHT_BRACKET)) {
+    start = parsePrecedence(p, MS_PREC_EXPR);
+    if (start == NULL) {
+      return NULL;
+    }
+  }
+  bool isSlice = parserMatch(p, MS_TOKEN_COLON);
+  if (isSlice) {
+    if (!parserCheck(p, MS_TOKEN_COLON) && !parserCheck(p, MS_TOKEN_RIGHT_BRACKET)) {
+      stop = parsePrecedence(p, MS_PREC_EXPR);
+      if (stop == NULL) {
+        return NULL;
+      }
+    }
+    if (parserMatch(p, MS_TOKEN_COLON) && !parserCheck(p, MS_TOKEN_RIGHT_BRACKET)) {
+      step = parsePrecedence(p, MS_PREC_EXPR);
+      if (step == NULL) {
+        return NULL;
+      }
+    }
+  } else if (start == NULL) {
+    parserErrorAt(p, &p->current, 203, "expected index or slice, got %s",
+        msTokenTypeName(p->current.type));
+  }
+  parserConsume(p, MS_TOKEN_RIGHT_BRACKET, "expected ']' after subscript, got %s",
+      msTokenTypeName(p->current.type));
+  struct MsAst* node = parserNewNode(p, isSlice ? MS_AST_SLICE : MS_AST_INDEX, &bracket);
+  if (node == NULL) {
+    return NULL;
+  }
+  if (isSlice) {
+    node->as.slice.target = target;
+    node->as.slice.start = start;
+    node->as.slice.stop = stop;
+    node->as.slice.step = step;
+  } else {
+    node->as.index.target = target;
+    node->as.index.index = start;
+  }
+  return node;
+}
+
+// Infix: attribute access a.b. The name must be a plain identifier ('self'
+// and 'super' are keywords and cannot be attribute names).
+static struct MsAst* parseAttr(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken dot = p->previous;
+  struct MsAst* target = p->infixLeft;
+  parserConsume(p, MS_TOKEN_IDENTIFIER, "expected attribute name after '.', got %s",
+      msTokenTypeName(p->current.type));
+  struct MsToken name = p->previous;   // the identifier, or '.' on error
+  struct MsAst* node = parserNewNode(p, MS_AST_ATTR, &dot);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.attr.start = name.start;
+  node->as.attr.length = name.length;
+  node->as.attr.target = target;
+  return node;
+}
+
+// Normalizes a single-token comparison operator; two-token operators
+// ('not in', 'is not') are resolved by parseCompareChain directly.
+static MsCompareOp compareOpForToken(MsTokenType type) {
+  switch (type) {
+    case MS_TOKEN_EQUAL_EQUAL: return MS_CMP_EQ;
+    case MS_TOKEN_BANG_EQUAL: return MS_CMP_NE;
+    case MS_TOKEN_LESS: return MS_CMP_LT;
+    case MS_TOKEN_LESS_EQUAL: return MS_CMP_LE;
+    case MS_TOKEN_GREATER: return MS_CMP_GT;
+    case MS_TOKEN_GREATER_EQUAL: return MS_CMP_GE;
+    case MS_TOKEN_KW_IN: return MS_CMP_IN;
+    case MS_TOKEN_KW_IS: return MS_CMP_IS;
+    default:
+      // Unreachable: the rule table routes only the tokens above here.
+      MS_UNREACHABLE();
+      return MS_CMP_EQ;
+  }
+}
+
+// Infix: chained comparison a < b <= c. The first comparison creates the
+// COMPARE_CHAIN node; further compare-level operators are consumed by the
+// internal loop (operands at COMPARE + 1) instead of the Pratt fold loop,
+// so the whole chain lands in one node. The ops array is arena-grown with
+// capacity doubling, like msAstListPush.
+static struct MsAst* parseCompareChain(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken op = p->previous;
+  struct MsAst* left = p->infixLeft;
+  struct MsAst* node = parserNewNode(p, MS_AST_COMPARE_CHAIN, &op);
+  if (node == NULL) {
+    return NULL;
+  }
+  if (!msAstListPush(p->arena, &node->as.compareChain.operands, left)) {
+    parserErrorAt(p, &op, 0, "out of memory");
+    return NULL;
+  }
+  MsCompareOp* ops = NULL;
+  size_t opCount = 0;
+  size_t opCapacity = 0;
+  for (;;) {
+    MsCompareOp cmp = MS_CMP_EQ;
+    if (op.type == MS_TOKEN_KW_NOT) {
+      // Reaching here as infix guarantees the next token is 'in' (the fold
+      // loop checks msLexerPeek before folding KW_NOT).
+      parserAdvance(p);   // 'in'
+      cmp = MS_CMP_NOT_IN;
+    } else if (op.type == MS_TOKEN_KW_IS) {
+      cmp = parserMatch(p, MS_TOKEN_KW_NOT) ? MS_CMP_IS_NOT : MS_CMP_IS;
+    } else {
+      cmp = compareOpForToken(op.type);
+    }
+    if (opCount == opCapacity) {
+      size_t newCapacity = opCapacity != 0 ? opCapacity * 2 : 4;
+      MsCompareOp* newOps = msAstArenaAlloc(p->arena, newCapacity * sizeof(*newOps));
+      if (newOps == NULL) {
+        parserErrorAt(p, &op, 0, "out of memory");
+        return NULL;
+      }
+      if (ops != NULL) {
+        memcpy(newOps, ops, opCount * sizeof(*ops));
+      }
+      ops = newOps;
+      opCapacity = newCapacity;
+    }
+    ops[opCount] = cmp;
+    ++opCount;
+    struct MsAst* operand = parsePrecedence(p, MS_PREC_COMPARE + 1);
+    if (operand == NULL) {
+      return NULL;
+    }
+    if (!msAstListPush(p->arena, &node->as.compareChain.operands, operand)) {
+      parserErrorAt(p, &op, 0, "out of memory");
+      return NULL;
+    }
+    // After an operand at COMPARE + 1, nothing tighter than COMPARE can
+    // remain; a COMPARE-level infix here is always another chain link.
+    // 'not' links only when followed by 'in'.
+    if (msParseRules[p->current.type].prec != MS_PREC_COMPARE
+        || msParseRules[p->current.type].infix == NULL
+        || (p->current.type == MS_TOKEN_KW_NOT && msLexerPeek(p->lexer) != MS_TOKEN_KW_IN)) {
+      break;
+    }
+    parserAdvance(p);
+    op = p->previous;
+  }
+  node->as.compareChain.ops = ops;
+  node->as.compareChain.opCount = opCount;
+  return node;
+}
+
+// Infix: conditional expression "value if cond else elseValue" (right
+// associative: the else branch recurses at CONDITIONAL). The condition
+// parses at OR so it cannot swallow a nested 'if' or lambda.
+static struct MsAst* parseConditional(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken ifToken = p->previous;
+  struct MsAst* value = p->infixLeft;
+  struct MsAst* cond = parsePrecedence(p, MS_PREC_OR);
+  if (cond == NULL) {
+    return NULL;
+  }
+  parserConsume(p, MS_TOKEN_KW_ELSE, "expected 'else' in conditional expression, got %s",
+      msTokenTypeName(p->current.type));
+  struct MsAst* elseValue = parsePrecedence(p, MS_PREC_CONDITIONAL);
+  if (elseValue == NULL) {
+    return NULL;
+  }
+  struct MsAst* node = parserNewNode(p, MS_AST_CONDITIONAL, &ifToken);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.conditional.value = value;
+  node->as.conditional.cond = cond;
+  node->as.conditional.elseValue = elseValue;
+  return node;
+}
+
+// Prefix: await expr. The operand parses at POSTFIX, so 'await f(x) + 1'
+// is '(await f(x)) + 1'. Context check (E210): only legal inside an async
+// function; funcDepth/funcIsAsync track the innermost function.
+static struct MsAst* parseAwait(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken token = p->previous;
+  if (p->funcDepth == 0 || !p->funcIsAsync) {
+    parserErrorAt(p, &token, 210, "'await' outside async function");
+  }
+  struct MsAst* operand = parsePrecedence(p, MS_PREC_POSTFIX);
+  if (operand == NULL) {
+    return NULL;
+  }
+  struct MsAst* node = parserNewNode(p, MS_AST_AWAIT, &token);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.awaitExpr.operand = operand;
+  return node;
+}
+
+// Prefix: lambda [ident {"," ident}] ":" expr. Reuses the func union branch
+// with a NULL name; the body is a single expression at CONDITIONAL (a bare
+// nested lambda needs parens).
+static struct MsAst* parseLambda(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken token = p->previous;
+  struct MsAst* node = parserNewNode(p, MS_AST_LAMBDA, &token);
+  if (node == NULL) {
+    return NULL;
+  }
+  while (parserCheck(p, MS_TOKEN_IDENTIFIER)) {
+    struct MsToken name = p->current;
+    parserAdvance(p);
+    struct MsAst* param = parserNewNode(p, MS_AST_PARAM, &name);
+    if (param == NULL) {
+      return NULL;
+    }
+    param->as.param.name = name.start;
+    param->as.param.nameLen = name.length;
+    param->as.param.paramKind = MS_PARAM_NORMAL;
+    if (!msAstListPush(p->arena, &node->as.func.params, param)) {
+      parserErrorAt(p, &name, 0, "out of memory");
+      return NULL;
+    }
+    if (!parserMatch(p, MS_TOKEN_COMMA)) {
+      break;
+    }
+  }
+  parserConsume(p, MS_TOKEN_COLON, "expected ':' after lambda parameters, got %s",
+      msTokenTypeName(p->current.type));
+  struct MsAst* body = parsePrecedence(p, MS_PREC_CONDITIONAL);
+  if (body == NULL) {
+    return NULL;
+  }
+  node->as.func.body = body;
+  return node;
+}
+
+// Prefix: self / super. Both parse as plain IDENT nodes; the context check
+// (E210) fires outside a class method.
+static struct MsAst* parseSelfSuper(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken token = p->previous;
+  if (!p->inMethod) {
+    parserErrorAt(p, &token, 210, "'self'/'super' outside class method");
+  }
+  struct MsAst* node = parserNewNode(p, MS_AST_IDENT, &token);
+  if (node == NULL) {
+    return NULL;
+  }
+  node->as.literal.start = token.start;
+  node->as.literal.length = token.length;
+  return node;
+}
+
 // Pratt fold loop: parse one prefix, then keep folding infix operators
-// whose binding power is at least minPrec.
+// whose binding power is at least minPrec. 'not' folds as the infix
+// operator of a comparison chain only when 'in' follows (msLexerPeek);
+// otherwise a leading 'not' stays the unary prefix (so 'not a in b' is
+// '(not a) in b', deliberately unlike Python).
 static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec) {
   parserAdvance(p);
   MsParseFn prefix = msParseRules[p->previous.type].prefix;
@@ -298,7 +636,8 @@ static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec) {
   }
   struct MsAst* left = prefix(p, true);
   while (left != NULL && msParseRules[p->current.type].infix != NULL
-      && msParseRules[p->current.type].prec >= minPrec) {
+      && msParseRules[p->current.type].prec >= minPrec
+      && (p->current.type != MS_TOKEN_KW_NOT || msLexerPeek(p->lexer) == MS_TOKEN_KW_IN)) {
     parserAdvance(p);
     p->infixLeft = left;
     left = msParseRules[p->previous.type].infix(p, true);
