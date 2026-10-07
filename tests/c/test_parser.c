@@ -1,8 +1,84 @@
+#include <stdio.h>
 #include <string.h>
 
+#include "core/ms_diag.h"
 #include "core/ms_memory.h"
+#include "lexer/ms_lexer.h"
 #include "parser/ms_ast.h"
+#include "parser/ms_parser.h"
 #include "ms_test.h"
+
+#define MS_TEST_DUMP_CAP 65536
+
+typedef struct {
+  struct MsDiagList diags;
+  struct MsAstArena arena;
+  struct MsLexer lexer;
+  struct MsParser parser;
+  struct MsAst* root;
+  MsResult result;
+} MsTestFixture;
+
+// Parses source end-to-end into fix. Call msTestFixtureDestroy afterwards.
+static void msTestParse(MsTestFixture* fix, const char* source) {
+  msDiagListInit(&fix->diags, "test.ms");
+  msAstArenaInit(&fix->arena);
+  msLexerInit(&fix->lexer, source, strlen(source), "test.ms", &fix->diags);
+  msParserInit(&fix->parser, &fix->lexer, &fix->arena, &fix->diags);
+  fix->root = NULL;
+  fix->result = msParserParse(&fix->parser, &fix->root);
+  msLexerDestroy(&fix->lexer);
+}
+
+static void msTestFixtureDestroy(MsTestFixture* fix) {
+  msAstArenaDestroy(&fix->arena);
+  msDiagListDestroy(&fix->diags);
+}
+
+// Dumps root into buf (NUL-terminated).
+static void msTestDump(const struct MsAst* root, char* buf, size_t bufSize) {
+  FILE* out = tmpfile();
+  MS_ASSERT_TRUE(out != NULL);
+  msAstDump(root, out);
+  rewind(out);
+  size_t n = fread(buf, 1, bufSize - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+}
+
+// Asserts: parse succeeds, zero diagnostics, dump matches expected exactly.
+static void msTestExpectDump(const char* source, const char* expected) {
+  MsTestFixture fix;
+  msTestParse(&fix, source);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(0, (long long)msDiagListCount(&fix.diags));
+  char buf[MS_TEST_DUMP_CAP];
+  msTestDump(fix.root, buf, sizeof(buf));
+  if (strcmp(buf, expected) != 0) {
+    printf("--- expected ---\n%s--- actual ---\n%s---\n", expected, buf);
+    MS_ASSERT_TRUE(false);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+// Asserts: parse fails with MS_ERROR_SYNTAX and the diagnostic codes in
+// order equal expectedCodes[0..expectedCount).
+static void msTestExpectDiags(const char* source, const uint32_t* expectedCodes,
+    size_t expectedCount) {
+  MsTestFixture fix;
+  msTestParse(&fix, source);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ((long long)expectedCount, (long long)msDiagListCount(&fix.diags));
+  size_t n = msDiagListCount(&fix.diags);
+  if (n > expectedCount) {
+    n = expectedCount;
+  }
+  for (size_t i = 0; i < n; ++i) {
+    MS_ASSERT_EQ((long long)expectedCodes[i],
+        (long long)msDiagListAt(&fix.diags, i)->code);
+  }
+  msTestFixtureDestroy(&fix);
+}
 
 MS_TEST(parser, kindNameTable) {
   // Every enum value has a distinct non-NULL name starting with "MS_AST_".
@@ -128,6 +204,58 @@ MS_TEST(parser, dumpEscapesLexemes) {
   msAstArenaDestroy(&arena);
 }
 
+MS_TEST(parser, emptySource) {
+  msTestExpectDump("", "MS_AST_SOURCE_FILE\n");
+}
+
+MS_TEST(parser, literalExprStmt) {
+  msTestExpectDump("42",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_INT \"42\"\n");
+}
+
+MS_TEST(parser, twoStatementsTwoLines) {
+  msTestExpectDump("1\n2",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_INT \"1\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, explicitSemicolons) {
+  msTestExpectDump("1; 2;",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_INT \"1\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, emptyStatement) {
+  static const uint32_t codes[] = { 204 };
+  msTestExpectDiags(";", codes, 1);
+}
+
+MS_TEST(parser, missingSemicolon) {
+  static const uint32_t codes[] = { 203 };
+  msTestExpectDiags("1 2", codes, 1);   // auto-insertion only at line end
+}
+
+MS_TEST(parser, nodePositions) {
+  MsTestFixture fix;
+  msTestParse(&fix, "x\n  y");
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  struct MsAst* first = fix.root->as.block.items[0];
+  struct MsAst* second = fix.root->as.block.items[1];
+  MS_ASSERT_EQ(1, (long long)first->line);
+  MS_ASSERT_EQ(1, (long long)first->column);
+  MS_ASSERT_EQ(2, (long long)second->line);
+  MS_ASSERT_EQ(3, (long long)second->column);
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -135,5 +263,12 @@ static const MsTestCase msTests[] = {
     {"parser.arenaOom", testparserarenaOom},
     {"parser.dumpHandBuiltTree", testparserdumpHandBuiltTree},
     {"parser.dumpEscapesLexemes", testparserdumpEscapesLexemes},
+    {"parser.emptySource", testparseremptySource},
+    {"parser.literalExprStmt", testparserliteralExprStmt},
+    {"parser.twoStatementsTwoLines", testparsertwoStatementsTwoLines},
+    {"parser.explicitSemicolons", testparserexplicitSemicolons},
+    {"parser.emptyStatement", testparseremptyStatement},
+    {"parser.missingSemicolon", testparsermissingSemicolon},
+    {"parser.nodePositions", testparsernodePositions},
 };
 MS_TEST_MAIN(msTests)
