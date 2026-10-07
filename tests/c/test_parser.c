@@ -665,7 +665,9 @@ MS_TEST(parser, comprehensionNestedFor) {
 }
 
 MS_TEST(parser, dictAndSetComprehension) {
-  msTestExpectDump("{k: v * 2 for k, v in m}\n{x % 10 for x in xs}",
+  // Dict comprehension uses the bracket form per 03-syntax section 6.2;
+  // the brace form is accepted too (same AST kind).
+  msTestExpectDump("[k: v * 2 for k, v in m]\n{x % 10 for x in xs}",
       "MS_AST_SOURCE_FILE\n"
       "  MS_AST_EXPR_STMT\n"
       "    MS_AST_DICT_COMP\n"
@@ -690,6 +692,41 @@ MS_TEST(parser, dictAndSetComprehension) {
 MS_TEST(parser, comprehensionForMissingIn) {
   static const uint32_t codes[] = { 203 };
   msTestExpectDiags("[x for x xs]", codes, 1);
+}
+
+MS_TEST(parser, dictCompMissingFor) {
+  // No bracket dict literal exists: [k: v] without 'for' is E203.
+  static const uint32_t codes[] = { 203 };
+  msTestExpectDiags("[k: v]", codes, 1);
+}
+
+MS_TEST(parser, containerTruncatedEof) {
+  // Truncated containers report exactly one diagnostic (panic-mode
+  // suppression) and terminate. The missing element/iterable surfaces as
+  // E201 (expected expression) at EOF or the closing bracket.
+  static const uint32_t codes[] = { 201 };
+  msTestExpectDiags("[1,", codes, 1);
+  msTestExpectDiags("[x for x in]", codes, 1);
+  msTestExpectDiags("{,}", codes, 1);
+}
+
+MS_TEST(parser, containerTrailingComma) {
+  // Trailing commas are legal in all three literal forms; the dumps match
+  // the non-trailing forms.
+  msTestExpectDump("[1, 2,]\n{1: 2,}\n{1, 2,}",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_LIST_LIT\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_DICT_LIT\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SET_LIT\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n");
 }
 
 static const MsTestCase msTests[] = {
@@ -738,5 +775,8 @@ static const MsTestCase msTests[] = {
     {"parser.comprehensionNestedFor", testparsercomprehensionNestedFor},
     {"parser.dictAndSetComprehension", testparserdictAndSetComprehension},
     {"parser.comprehensionForMissingIn", testparsercomprehensionForMissingIn},
+    {"parser.dictCompMissingFor", testparserdictCompMissingFor},
+    {"parser.containerTruncatedEof", testparsercontainerTruncatedEof},
+    {"parser.containerTrailingComma", testparsercontainerTrailingComma},
 };
 MS_TEST_MAIN(msTests)

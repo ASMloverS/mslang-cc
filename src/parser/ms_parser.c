@@ -654,7 +654,7 @@ static bool parseComprehensionClauses(struct MsParser* p, struct MsAst* comp) {
       do {
         parserConsume(p, MS_TOKEN_IDENTIFIER, "expected identifier after 'for', got %s",
             msTokenTypeName(p->current.type));
-        struct MsToken name = p->previous;   // the identifier, or 'for' on error
+        struct MsToken name = p->previous;   // the identifier, or the token before the error
         struct MsAst* target = parserNewNode(p, MS_AST_IDENT, &name);
         if (target == NULL) {
           return false;
@@ -692,8 +692,10 @@ static bool parseComprehensionClauses(struct MsParser* p, struct MsAst* comp) {
   return true;
 }
 
-// Prefix: list literal or list comprehension. '[]' is an empty LIST_LIT;
-// otherwise the first element decides: KW_FOR after it means LIST_COMP
+// Prefix: list literal or list/dict comprehension. '[]' is an empty
+// LIST_LIT; otherwise the first element decides: ':' starts the bracket
+// dict comprehension [k: v for ...] (03-syntax section 6.2; there is no
+// bracket dict literal, so 'for' is mandatory), KW_FOR means LIST_COMP
 // (elem + clauses), anything else means LIST_LIT (','-separated elements,
 // trailing comma allowed).
 static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign) {
@@ -710,7 +712,22 @@ static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign
   if (first == NULL) {
     return NULL;
   }
-  if (parserCheck(p, MS_TOKEN_KW_FOR)) {
+  if (parserMatch(p, MS_TOKEN_COLON)) {
+    struct MsAst* value = parsePrecedence(p, MS_PREC_EXPR);
+    if (value == NULL) {
+      return NULL;
+    }
+    node->kind = MS_AST_DICT_COMP;
+    node->as.comprehension.key = first;
+    node->as.comprehension.elem = value;
+    if (!parserCheck(p, MS_TOKEN_KW_FOR)) {
+      parserErrorAt(p, &p->current, 203, "expected 'for' in dict comprehension, got %s",
+          msTokenTypeName(p->current.type));
+    }
+    if (!parseComprehensionClauses(p, node)) {
+      return NULL;
+    }
+  } else if (parserCheck(p, MS_TOKEN_KW_FOR)) {
     node->kind = MS_AST_LIST_COMP;
     node->as.comprehension.elem = first;
     if (!parseComprehensionClauses(p, node)) {
@@ -739,9 +756,10 @@ static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign
 
 // Prefix: set/dict literal or set/dict comprehension. '{}' is always an
 // empty DICT_LIT (Python rule). Otherwise the first expression decides:
-// ':' starts the dict path (DICT_COMP when KW_FOR follows the value,
-// DICT_LIT with key/value pairs interleaved otherwise); KW_FOR directly
-// means SET_COMP; anything else means SET_LIT. Trailing commas allowed.
+// ':' starts the dict path (DICT_COMP when KW_FOR follows the value -- the
+// brace dict-comp form, kept alongside the spec's bracket form; DICT_LIT
+// with key/value pairs interleaved otherwise); KW_FOR directly means
+// SET_COMP; anything else means SET_LIT. Trailing commas allowed.
 // A '{' at statement start is a block, but blocks do not exist until the
 // statement dispatcher lands, so for now this rule also fires there.
 static struct MsAst* parseBraceLiteral(struct MsParser* p, bool canAssign) {
