@@ -247,6 +247,7 @@ MS_TEST(parser, nodePositions) {
   MsTestFixture fix;
   msTestParse(&fix, "x\n  y");
   MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(2, (long long)fix.root->as.block.count);
   struct MsAst* first = fix.root->as.block.items[0];
   struct MsAst* second = fix.root->as.block.items[1];
   MS_ASSERT_EQ(1, (long long)first->line);
