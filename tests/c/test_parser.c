@@ -349,6 +349,35 @@ MS_TEST(parser, parensOverride) {
       "      MS_AST_INT \"3\"\n");
 }
 
+MS_TEST(parser, groupingOnInfixRight) {
+  // Exercises the infixLeft stash through parseGrouping on the right side of
+  // an infix: the nested fold loop must not clobber the outer left operand.
+  msTestExpectDump("1 + (2 * 3)",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_PLUS\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_BINARY op=MS_TOKEN_STAR\n"
+      "        MS_AST_INT \"2\"\n"
+      "        MS_AST_INT \"3\"\n");
+}
+
+MS_TEST(parser, unaryPlusAndTilde) {
+  msTestExpectDump("+x\n~x",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_UNARY op=MS_TOKEN_PLUS\n"
+      "      MS_AST_IDENT \"x\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_UNARY op=MS_TOKEN_TILDE\n"
+      "      MS_AST_IDENT \"x\"\n");
+}
+
+MS_TEST(parser, trailingOperatorIsE201) {
+  static const uint32_t codes[] = { 201 };
+  msTestExpectDiags("1 +", codes, 1);   // the expression ends at EOF
+}
+
 MS_TEST(parser, literalKinds) {
   // The lexer keeps quotes/backticks/prefix in STRING/RAW_STRING/BYTES
   // lexemes (see Lexer.StringLiteralsScan), so the dumps show them too.
@@ -391,5 +420,8 @@ static const MsTestCase msTests[] = {
     {"parser.floorDivKeyword", testparserfloorDivKeyword},
     {"parser.parensOverride", testparserparensOverride},
     {"parser.literalKinds", testparserliteralKinds},
+    {"parser.groupingOnInfixRight", testparsergroupingOnInfixRight},
+    {"parser.unaryPlusAndTilde", testparserunaryPlusAndTilde},
+    {"parser.trailingOperatorIsE201", testparsertrailingOperatorIsE201},
 };
 MS_TEST_MAIN(msTests)

@@ -17,7 +17,9 @@ struct MsParser {
   struct MsToken previous;      // previous token (node position source)
   // Additive implementation detail beyond the spec struct: parsePrecedence
   // stashes the already-parsed left operand here before invoking an infix
-  // rule, because MsParseFn carries no left parameter.
+  // rule, because MsParseFn carries no left parameter. Infix rules MUST copy
+  // this to a local before any nested parsePrecedence call (the nested fold
+  // loop overwrites it).
   struct MsAst* infixLeft;
   bool panicMode;               // suppresses cascading errors until synchronize()
   int loopDepth;                // break/continue context check

@@ -114,6 +114,9 @@ typedef enum {
   MS_PREC_PRIMARY        // 1  literals / ident / (expr)
 } MsPrecedence;
 
+// Entry level for a full expression: everything except lambda folds.
+#define MS_PREC_EXPR ((MsPrecedence)(MS_PREC_LAMBDA + 1))
+
 typedef struct MsAst* (*MsParseFn)(struct MsParser* p, bool canAssign);
 
 struct MsParseRule {
@@ -215,7 +218,7 @@ static struct MsAst* parseLiteral(struct MsParser* p, bool canAssign) {
 // Prefix: '(' expr ')'.
 static struct MsAst* parseGrouping(struct MsParser* p, bool canAssign) {
   MS_UNUSED(canAssign);
-  struct MsAst* expr = parsePrecedence(p, MS_PREC_LAMBDA + 1);
+  struct MsAst* expr = parsePrecedence(p, MS_PREC_EXPR);
   parserConsume(p, MS_TOKEN_RIGHT_PAREN, "expected ')' after expression, got %s",
       msTokenTypeName(p->current.type));
   return expr;
@@ -228,6 +231,9 @@ static struct MsAst* parseUnary(struct MsParser* p, bool canAssign) {
   MS_UNUSED(canAssign);
   struct MsToken op = p->previous;
   struct MsAst* operand = parsePrecedence(p, MS_PREC_UNARY + 1);
+  if (operand == NULL) {
+    return NULL;
+  }
   struct MsAst* node = parserNewNode(p, MS_AST_UNARY, &op);
   if (node == NULL) {
     return NULL;
@@ -248,6 +254,9 @@ static struct MsAst* parseBinary(struct MsParser* p, bool canAssign) {
   MsPrecedence prec = msParseRules[op.type].prec;
   MsPrecedence rightPrec = op.type == MS_TOKEN_DOUBLE_STAR ? prec : prec + 1;
   struct MsAst* right = parsePrecedence(p, rightPrec);
+  if (right == NULL) {
+    return NULL;
+  }
   struct MsAst* node = parserNewNode(p, MS_AST_BINARY, &op);
   if (node == NULL) {
     return NULL;
@@ -264,6 +273,9 @@ static struct MsAst* parseLogical(struct MsParser* p, bool canAssign) {
   struct MsToken op = p->previous;
   struct MsAst* left = p->infixLeft;
   struct MsAst* right = parsePrecedence(p, msParseRules[op.type].prec + 1);
+  if (right == NULL) {
+    return NULL;
+  }
   struct MsAst* node = parserNewNode(p, MS_AST_LOGICAL, &op);
   if (node == NULL) {
     return NULL;
@@ -285,7 +297,7 @@ static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec) {
     return parserNewNode(p, MS_AST_INVALID, &p->previous);   // tree stays complete
   }
   struct MsAst* left = prefix(p, true);
-  while (msParseRules[p->current.type].infix != NULL
+  while (left != NULL && msParseRules[p->current.type].infix != NULL
       && msParseRules[p->current.type].prec >= minPrec) {
     parserAdvance(p);
     p->infixLeft = left;
@@ -314,7 +326,7 @@ MsResult msParserParse(struct MsParser* p, struct MsAst** out) {
       continue;
     }
     struct MsToken start = p->current;
-    struct MsAst* expr = parsePrecedence(p, MS_PREC_LAMBDA + 1);
+    struct MsAst* expr = parsePrecedence(p, MS_PREC_EXPR);
     if (expr == NULL) {
       return MS_ERROR_OOM;
     }
