@@ -185,6 +185,10 @@ static void dumpList(FILE* out, const struct MsAstList* list, int depth) {
 
 static void dumpNode(const struct MsAst* node, FILE* out, int depth) {
   dumpIndent(out, depth);
+  if (node == NULL) {
+    fputs("<null>\n", out);
+    return;
+  }
   fputs(msAstKindName(node->kind), out);
   switch (node->kind) {
     case MS_AST_INT:
@@ -227,6 +231,7 @@ static void dumpNode(const struct MsAst* node, FILE* out, int depth) {
         if (i > 0) {
           fputc(',', out);
         }
+        MS_ASSERT(node->as.compareChain.ops[i] >= MS_CMP_LT && node->as.compareChain.ops[i] <= MS_CMP_IS_NOT);
         fputs(msCompareOpNames[node->as.compareChain.ops[i]], out);
       }
       fputc('\n', out);
@@ -512,5 +517,7 @@ static void dumpNode(const struct MsAst* node, FILE* out, int depth) {
 
 void msAstDump(const struct MsAst* node, FILE* out) {
   MS_ASSERT(node != NULL);
+  MS_ASSERT(out != NULL);
+  MS_ASSERT(MS_ARRAY_LEN(msCompareOpNames) == (size_t)MS_CMP_IS_NOT + 1);
   dumpNode(node, out, 0);
 }

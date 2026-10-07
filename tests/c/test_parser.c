@@ -114,8 +114,8 @@ MS_TEST(parser, dumpEscapesLexemes) {
   struct MsAstArena arena;
   msAstArenaInit(&arena);
   struct MsAst* str = msAstNew(&arena, MS_AST_STRING, 1, 1);
-  str->as.literal.start = "a\\tb\"c";   // raw bytes: a \ t b " c
-  str->as.literal.length = 6;
+  str->as.literal.start = "a\\tb\"c\nd\re\tf";   // raw bytes: a \ t b " c LF d CR e TAB f
+  str->as.literal.length = 12;
   FILE* out = tmpfile();
   MS_ASSERT_TRUE(out != NULL);
   msAstDump(str, out);
@@ -124,7 +124,7 @@ MS_TEST(parser, dumpEscapesLexemes) {
   size_t n = fread(buf, 1, sizeof(buf) - 1, out);
   buf[n] = '\0';
   fclose(out);
-  MS_ASSERT_EQ(0, strcmp(buf, "MS_AST_STRING \"a\\\\tb\\\"c\"\n"));
+  MS_ASSERT_EQ(0, strcmp(buf, "MS_AST_STRING \"a\\\\tb\\\"c\\nd\\re\\tf\"\n"));
   msAstArenaDestroy(&arena);
 }
 
