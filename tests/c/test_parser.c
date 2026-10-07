@@ -61,10 +61,79 @@ MS_TEST(parser, arenaOom) {
   msAstArenaDestroy(&arena);
 }
 
+// Builds: (sourceFile (exprStmt (binary + (int "1") (binary * (int "2") (int "3")))))
+MS_TEST(parser, dumpHandBuiltTree) {
+  struct MsAstArena arena;
+  msAstArenaInit(&arena);
+  struct MsAst* one = msAstNew(&arena, MS_AST_INT, 1, 1);
+  one->as.literal.start = "1";
+  one->as.literal.length = 1;
+  struct MsAst* two = msAstNew(&arena, MS_AST_INT, 1, 3);
+  two->as.literal.start = "2";
+  two->as.literal.length = 1;
+  struct MsAst* three = msAstNew(&arena, MS_AST_INT, 1, 5);
+  three->as.literal.start = "3";
+  three->as.literal.length = 1;
+  struct MsAst* mul = msAstNew(&arena, MS_AST_BINARY, 1, 4);
+  mul->as.binary.op = MS_TOKEN_STAR;
+  mul->as.binary.left = two;
+  mul->as.binary.right = three;
+  struct MsAst* add = msAstNew(&arena, MS_AST_BINARY, 1, 2);
+  add->as.binary.op = MS_TOKEN_PLUS;
+  add->as.binary.left = one;
+  add->as.binary.right = mul;
+  struct MsAst* stmt = msAstNew(&arena, MS_AST_EXPR_STMT, 1, 1);
+  stmt->as.exprStmt.expr = add;
+  struct MsAst* root = msAstNew(&arena, MS_AST_SOURCE_FILE, 1, 1);
+  MS_ASSERT_TRUE(msAstListPush(&arena, &root->as.block, stmt));
+
+  FILE* out = tmpfile();
+  MS_ASSERT_TRUE(out != NULL);
+  msAstDump(root, out);
+  rewind(out);
+  char buf[1024];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  const char* expected =
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_BINARY op=MS_TOKEN_PLUS\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_BINARY op=MS_TOKEN_STAR\n"
+      "        MS_AST_INT \"2\"\n"
+      "        MS_AST_INT \"3\"\n";
+  if (strcmp(buf, expected) != 0) {
+    printf("--- expected ---\n%s--- actual ---\n%s---\n", expected, buf);
+    MS_ASSERT_TRUE(false);
+  }
+  msAstArenaDestroy(&arena);
+}
+
+MS_TEST(parser, dumpEscapesLexemes) {
+  struct MsAstArena arena;
+  msAstArenaInit(&arena);
+  struct MsAst* str = msAstNew(&arena, MS_AST_STRING, 1, 1);
+  str->as.literal.start = "a\\tb\"c";   // raw bytes: a \ t b " c
+  str->as.literal.length = 6;
+  FILE* out = tmpfile();
+  MS_ASSERT_TRUE(out != NULL);
+  msAstDump(str, out);
+  rewind(out);
+  char buf[256];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  MS_ASSERT_EQ(0, strcmp(buf, "MS_AST_STRING \"a\\\\tb\\\"c\"\n"));
+  msAstArenaDestroy(&arena);
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
     {"parser.arenaListPushGrowth", testparserarenaListPushGrowth},
     {"parser.arenaOom", testparserarenaOom},
+    {"parser.dumpHandBuiltTree", testparserdumpHandBuiltTree},
+    {"parser.dumpEscapesLexemes", testparserdumpEscapesLexemes},
 };
 MS_TEST_MAIN(msTests)

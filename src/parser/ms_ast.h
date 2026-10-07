@@ -195,7 +195,7 @@ bool msAstListPush(struct MsAstArena* arena, struct MsAstList* list, struct MsAs
 const char* msAstKindName(MsAstKind kind);
 
 // Writes an S-expression dump of the tree (one node per line, 2-space
-// indent) for golden-file style unit tests. (Implemented in Task 2.)
+// indent) for golden-file style unit tests.
 void msAstDump(const struct MsAst* node, FILE* out);
 
 #endif  // MSLANG_SRC_PARSER_MS_AST_H_
