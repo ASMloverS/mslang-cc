@@ -1,5 +1,6 @@
 #include "parser/ms_ast.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #include "core/ms_common.h"
@@ -23,6 +24,13 @@ void msAstArenaDestroy(struct MsAstArena* arena) {
 
 void* msAstArenaAlloc(struct MsAstArena* arena, size_t size) {
   MS_ASSERT(size > 0);
+  if (size > SIZE_MAX - (MS_AST_ARENA_ALIGN - 1)) {
+    return NULL;
+  }
+  // Clamp zero-size requests to one align unit so no two calls alias.
+  if (size == 0) {
+    size = MS_AST_ARENA_ALIGN;
+  }
   size_t aligned = (size + (MS_AST_ARENA_ALIGN - 1)) & ~(size_t)(MS_AST_ARENA_ALIGN - 1);
   struct MsAstArenaBlock* block = arena->head;
   if (block == NULL || block->capacity - block->used < aligned) {

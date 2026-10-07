@@ -146,7 +146,9 @@ struct MsAst {
 };
 
 #define MS_AST_ARENA_BLOCK_SIZE 4096
-#define MS_AST_ARENA_ALIGN 16
+// Allocation granularity and alignment: matches alignof(max_align_t) (8
+// bytes on this toolchain), which covers every AST type's alignment.
+#define MS_AST_ARENA_ALIGN 8
 
 #if defined(_MSC_VER) && !defined(__clang__)
 // MSVC C mode (-std:c11) does not implement C11 flexible array members and
@@ -178,7 +180,8 @@ struct MsAstArena {
 void msAstArenaInit(struct MsAstArena* arena);
 void msAstArenaDestroy(struct MsAstArena* arena);
 
-// Raw arena allocation (16-byte aligned, NOT zeroed). Returns NULL on OOM.
+// Raw arena allocation (aligned to MS_AST_ARENA_ALIGN, NOT zeroed). Returns
+// NULL on OOM.
 void* msAstArenaAlloc(struct MsAstArena* arena, size_t size);
 
 // Allocates a zeroed node of the given kind. Returns NULL on OOM (caller
