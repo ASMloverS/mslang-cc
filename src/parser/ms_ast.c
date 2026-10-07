@@ -351,7 +351,9 @@ static void dumpNode(const struct MsAst* node, FILE* out, int depth) {
     case MS_AST_IF:
       fputc('\n', out);
       dumpNode(node->as.ifStmt.cond, out, depth + 1);
-      dumpNode(node->as.ifStmt.thenBlock, out, depth + 1);
+      if (node->as.ifStmt.thenBlock != NULL) {
+        dumpNode(node->as.ifStmt.thenBlock, out, depth + 1);
+      }
       if (node->as.ifStmt.elseBranch != NULL) {
         dumpNode(node->as.ifStmt.elseBranch, out, depth + 1);
       }
@@ -378,7 +380,9 @@ static void dumpNode(const struct MsAst* node, FILE* out, int depth) {
         dumpList(out, &node->as.forStmt.targets, depth + 1);
         dumpNode(node->as.forStmt.iterable, out, depth + 1);
       }
-      dumpNode(node->as.forStmt.body, out, depth + 1);
+      if (node->as.forStmt.body != NULL) {
+        dumpNode(node->as.forStmt.body, out, depth + 1);
+      }
       return;
     case MS_AST_WHILE:
       fputc('\n', out);

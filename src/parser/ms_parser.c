@@ -138,6 +138,8 @@ static struct MsAst* parseConditional(struct MsParser* p, bool canAssign);
 static struct MsAst* parseAwait(struct MsParser* p, bool canAssign);
 static struct MsAst* parseLambda(struct MsParser* p, bool canAssign);
 static struct MsAst* parseSelfSuper(struct MsParser* p, bool canAssign);
+static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign);
+static struct MsAst* parseBraceLiteral(struct MsParser* p, bool canAssign);
 static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec);
 
 // Pratt rule table indexed by MsTokenType. Tokens without an entry
@@ -155,7 +157,8 @@ static const struct MsParseRule msParseRules[MS_TOKEN_ELLIPSIS + 1] = {
     [MS_TOKEN_KW_FALSE]    = { parseLiteral, NULL, MS_PREC_NONE },
     [MS_TOKEN_KW_NIL]      = { parseLiteral, NULL, MS_PREC_NONE },
     [MS_TOKEN_LEFT_PAREN]    = { parseGrouping, parseCall, MS_PREC_POSTFIX },
-    [MS_TOKEN_LEFT_BRACKET]  = { NULL, parseIndexOrSlice, MS_PREC_POSTFIX },
+    [MS_TOKEN_LEFT_BRACKET]  = { parseListOrComprehension, parseIndexOrSlice, MS_PREC_POSTFIX },
+    [MS_TOKEN_LEFT_BRACE]    = { parseBraceLiteral, NULL, MS_PREC_NONE },
     [MS_TOKEN_DOT]           = { NULL, parseAttr, MS_PREC_POSTFIX },
     [MS_TOKEN_TILDE]         = { parseUnary, NULL, MS_PREC_NONE },
     [MS_TOKEN_KW_NOT]        = { parseUnary, parseCompareChain, MS_PREC_COMPARE },
@@ -627,6 +630,195 @@ static struct MsAst* parseSelfSuper(struct MsParser* p, bool canAssign) {
   }
   node->as.literal.start = token.start;
   node->as.literal.length = token.length;
+  return node;
+}
+
+// Parses the clause tail of a comprehension: one or more 'for'/'if' clauses
+// appended to comp->as.comprehension.clauses in order. A for-clause reuses
+// MS_AST_FOR (forKind MS_FOR_IN, body NULL); an if-clause reuses MS_AST_IF
+// (thenBlock/elseBranch NULL). The iterable and the if condition parse at
+// MS_PREC_OR, the pin that stops them from swallowing a following clause:
+// 'if' as an infix is CONDITIONAL (< OR) and 'for' has no infix rule at all.
+// Returns false on OOM.
+static bool parseComprehensionClauses(struct MsParser* p, struct MsAst* comp) {
+  while (parserCheck(p, MS_TOKEN_KW_FOR) || parserCheck(p, MS_TOKEN_KW_IF)) {
+    struct MsToken keyword = p->current;
+    parserAdvance(p);
+    struct MsAst* clause = NULL;
+    if (keyword.type == MS_TOKEN_KW_FOR) {
+      clause = parserNewNode(p, MS_AST_FOR, &keyword);
+      if (clause == NULL) {
+        return false;
+      }
+      clause->as.forStmt.forKind = MS_FOR_IN;
+      do {
+        parserConsume(p, MS_TOKEN_IDENTIFIER, "expected identifier after 'for', got %s",
+            msTokenTypeName(p->current.type));
+        struct MsToken name = p->previous;   // the identifier, or 'for' on error
+        struct MsAst* target = parserNewNode(p, MS_AST_IDENT, &name);
+        if (target == NULL) {
+          return false;
+        }
+        target->as.literal.start = name.start;
+        target->as.literal.length = name.length;
+        if (!msAstListPush(p->arena, &clause->as.forStmt.targets, target)) {
+          parserErrorAt(p, &keyword, 0, "out of memory");
+          return false;
+        }
+      } while (parserMatch(p, MS_TOKEN_COMMA));
+      parserConsume(p, MS_TOKEN_KW_IN, "expected 'in' in comprehension, got %s",
+          msTokenTypeName(p->current.type));
+      struct MsAst* iterable = parsePrecedence(p, MS_PREC_OR);
+      if (iterable == NULL) {
+        return false;
+      }
+      clause->as.forStmt.iterable = iterable;
+    } else {
+      struct MsAst* cond = parsePrecedence(p, MS_PREC_OR);
+      if (cond == NULL) {
+        return false;
+      }
+      clause = parserNewNode(p, MS_AST_IF, &keyword);
+      if (clause == NULL) {
+        return false;
+      }
+      clause->as.ifStmt.cond = cond;
+    }
+    if (!msAstListPush(p->arena, &comp->as.comprehension.clauses, clause)) {
+      parserErrorAt(p, &keyword, 0, "out of memory");
+      return false;
+    }
+  }
+  return true;
+}
+
+// Prefix: list literal or list comprehension. '[]' is an empty LIST_LIT;
+// otherwise the first element decides: KW_FOR after it means LIST_COMP
+// (elem + clauses), anything else means LIST_LIT (','-separated elements,
+// trailing comma allowed).
+static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken bracket = p->previous;
+  struct MsAst* node = parserNewNode(p, MS_AST_LIST_LIT, &bracket);
+  if (node == NULL) {
+    return NULL;
+  }
+  if (parserMatch(p, MS_TOKEN_RIGHT_BRACKET)) {
+    return node;
+  }
+  struct MsAst* first = parsePrecedence(p, MS_PREC_EXPR);
+  if (first == NULL) {
+    return NULL;
+  }
+  if (parserCheck(p, MS_TOKEN_KW_FOR)) {
+    node->kind = MS_AST_LIST_COMP;
+    node->as.comprehension.elem = first;
+    if (!parseComprehensionClauses(p, node)) {
+      return NULL;
+    }
+  } else {
+    if (!msAstListPush(p->arena, &node->as.block, first)) {
+      parserErrorAt(p, &bracket, 0, "out of memory");
+      return NULL;
+    }
+    while (parserMatch(p, MS_TOKEN_COMMA) && !parserCheck(p, MS_TOKEN_RIGHT_BRACKET)) {
+      struct MsAst* elem = parsePrecedence(p, MS_PREC_EXPR);
+      if (elem == NULL) {
+        return NULL;
+      }
+      if (!msAstListPush(p->arena, &node->as.block, elem)) {
+        parserErrorAt(p, &bracket, 0, "out of memory");
+        return NULL;
+      }
+    }
+  }
+  parserConsume(p, MS_TOKEN_RIGHT_BRACKET, "expected ']' after list, got %s",
+      msTokenTypeName(p->current.type));
+  return node;
+}
+
+// Prefix: set/dict literal or set/dict comprehension. '{}' is always an
+// empty DICT_LIT (Python rule). Otherwise the first expression decides:
+// ':' starts the dict path (DICT_COMP when KW_FOR follows the value,
+// DICT_LIT with key/value pairs interleaved otherwise); KW_FOR directly
+// means SET_COMP; anything else means SET_LIT. Trailing commas allowed.
+// A '{' at statement start is a block, but blocks do not exist until the
+// statement dispatcher lands, so for now this rule also fires there.
+static struct MsAst* parseBraceLiteral(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken brace = p->previous;
+  struct MsAst* node = parserNewNode(p, MS_AST_DICT_LIT, &brace);
+  if (node == NULL) {
+    return NULL;
+  }
+  if (parserMatch(p, MS_TOKEN_RIGHT_BRACE)) {
+    return node;
+  }
+  struct MsAst* first = parsePrecedence(p, MS_PREC_EXPR);
+  if (first == NULL) {
+    return NULL;
+  }
+  if (parserMatch(p, MS_TOKEN_COLON)) {
+    struct MsAst* value = parsePrecedence(p, MS_PREC_EXPR);
+    if (value == NULL) {
+      return NULL;
+    }
+    if (parserCheck(p, MS_TOKEN_KW_FOR)) {
+      node->kind = MS_AST_DICT_COMP;
+      node->as.comprehension.key = first;
+      node->as.comprehension.elem = value;
+      if (!parseComprehensionClauses(p, node)) {
+        return NULL;
+      }
+    } else {
+      if (!msAstListPush(p->arena, &node->as.block, first)
+          || !msAstListPush(p->arena, &node->as.block, value)) {
+        parserErrorAt(p, &brace, 0, "out of memory");
+        return NULL;
+      }
+      while (parserMatch(p, MS_TOKEN_COMMA) && !parserCheck(p, MS_TOKEN_RIGHT_BRACE)) {
+        struct MsAst* key = parsePrecedence(p, MS_PREC_EXPR);
+        if (key == NULL) {
+          return NULL;
+        }
+        parserConsume(p, MS_TOKEN_COLON, "expected ':' in dict literal, got %s",
+            msTokenTypeName(p->current.type));
+        value = parsePrecedence(p, MS_PREC_EXPR);
+        if (value == NULL) {
+          return NULL;
+        }
+        if (!msAstListPush(p->arena, &node->as.block, key)
+            || !msAstListPush(p->arena, &node->as.block, value)) {
+          parserErrorAt(p, &brace, 0, "out of memory");
+          return NULL;
+        }
+      }
+    }
+  } else if (parserCheck(p, MS_TOKEN_KW_FOR)) {
+    node->kind = MS_AST_SET_COMP;
+    node->as.comprehension.elem = first;
+    if (!parseComprehensionClauses(p, node)) {
+      return NULL;
+    }
+  } else {
+    node->kind = MS_AST_SET_LIT;
+    if (!msAstListPush(p->arena, &node->as.block, first)) {
+      parserErrorAt(p, &brace, 0, "out of memory");
+      return NULL;
+    }
+    while (parserMatch(p, MS_TOKEN_COMMA) && !parserCheck(p, MS_TOKEN_RIGHT_BRACE)) {
+      struct MsAst* elem = parsePrecedence(p, MS_PREC_EXPR);
+      if (elem == NULL) {
+        return NULL;
+      }
+      if (!msAstListPush(p->arena, &node->as.block, elem)) {
+        parserErrorAt(p, &brace, 0, "out of memory");
+        return NULL;
+      }
+    }
+  }
+  parserConsume(p, MS_TOKEN_RIGHT_BRACE, "expected '}' after literal, got %s",
+      msTokenTypeName(p->current.type));
   return node;
 }
 

@@ -605,6 +605,93 @@ MS_TEST(parser, selfTreeDespiteContextError) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(parser, listAndSetAndDict) {
+  msTestExpectDump("[1, 2]\n{1, 2}\n{1: 2}\n{}",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_LIST_LIT\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SET_LIT\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_DICT_LIT\n"
+      "      MS_AST_INT \"1\"\n"
+      "      MS_AST_INT \"2\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_DICT_LIT\n");
+}
+
+MS_TEST(parser, emptyList) {
+  msTestExpectDump("[]",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_LIST_LIT\n");
+}
+
+MS_TEST(parser, listComprehension) {
+  msTestExpectDump("[x * x for x in xs if x > 0]",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_LIST_COMP\n"
+      "      MS_AST_BINARY op=MS_TOKEN_STAR\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "      MS_AST_FOR kind=MS_FOR_IN\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "        MS_AST_IDENT \"xs\"\n"
+      "      MS_AST_IF\n"
+      "        MS_AST_COMPARE_CHAIN ops=MS_CMP_GT\n"
+      "          MS_AST_IDENT \"x\"\n"
+      "          MS_AST_INT \"0\"\n");
+}
+
+MS_TEST(parser, comprehensionNestedFor) {
+  msTestExpectDump("[x + y for x in a for y in b]",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_LIST_COMP\n"
+      "      MS_AST_BINARY op=MS_TOKEN_PLUS\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "        MS_AST_IDENT \"y\"\n"
+      "      MS_AST_FOR kind=MS_FOR_IN\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "        MS_AST_IDENT \"a\"\n"
+      "      MS_AST_FOR kind=MS_FOR_IN\n"
+      "        MS_AST_IDENT \"y\"\n"
+      "        MS_AST_IDENT \"b\"\n");
+}
+
+MS_TEST(parser, dictAndSetComprehension) {
+  msTestExpectDump("{k: v * 2 for k, v in m}\n{x % 10 for x in xs}",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_DICT_COMP\n"
+      "      MS_AST_IDENT \"k\"\n"
+      "      MS_AST_BINARY op=MS_TOKEN_STAR\n"
+      "        MS_AST_IDENT \"v\"\n"
+      "        MS_AST_INT \"2\"\n"
+      "      MS_AST_FOR kind=MS_FOR_IN\n"
+      "        MS_AST_IDENT \"k\"\n"
+      "        MS_AST_IDENT \"v\"\n"
+      "        MS_AST_IDENT \"m\"\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_SET_COMP\n"
+      "      MS_AST_BINARY op=MS_TOKEN_PERCENT\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "        MS_AST_INT \"10\"\n"
+      "      MS_AST_FOR kind=MS_FOR_IN\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "        MS_AST_IDENT \"xs\"\n");
+}
+
+MS_TEST(parser, comprehensionForMissingIn) {
+  static const uint32_t codes[] = { 203 };
+  msTestExpectDiags("[x for x xs]", codes, 1);
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -645,5 +732,11 @@ static const MsTestCase msTests[] = {
     {"parser.compareChainOpsGrowth", testparsercompareChainOpsGrowth},
     {"parser.selfSuperContextError", testparserselfSuperContextError},
     {"parser.selfTreeDespiteContextError", testparserselfTreeDespiteContextError},
+    {"parser.listAndSetAndDict", testparserlistAndSetAndDict},
+    {"parser.emptyList", testparseremptyList},
+    {"parser.listComprehension", testparserlistComprehension},
+    {"parser.comprehensionNestedFor", testparsercomprehensionNestedFor},
+    {"parser.dictAndSetComprehension", testparserdictAndSetComprehension},
+    {"parser.comprehensionForMissingIn", testparsercomprehensionForMissingIn},
 };
 MS_TEST_MAIN(msTests)
