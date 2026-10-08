@@ -87,10 +87,20 @@ static struct MsAst* parserNewNode(struct MsParser* p, MsAstKind kind, const str
   return node;
 }
 
-// After a simple statement: exactly one semicolon, explicit or auto-inserted.
+// After a simple statement: exactly one semicolon, explicit or
+// auto-inserted. As in Go, the semicolon may be omitted before a closing
+// '}' (left for the enclosing parseBlock).
 static void consumeStatementEnd(struct MsParser* p) {
+  if (parserCheck(p, MS_TOKEN_RIGHT_BRACE)) {
+    return;
+  }
   parserConsume(p, MS_TOKEN_SEMICOLON, "expected ';' after statement, got %s",
       msTokenTypeName(p->current.type));
+}
+
+// After a block: one optional semicolon (explicit or auto-inserted).
+static void consumeOptionalStatementEnd(struct MsParser* p) {
+  parserMatch(p, MS_TOKEN_SEMICOLON);
 }
 
 // Pratt precedence levels: enum order is increasing binding power,
@@ -141,6 +151,9 @@ static struct MsAst* parseSelfSuper(struct MsParser* p, bool canAssign);
 static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign);
 static struct MsAst* parseBraceLiteral(struct MsParser* p, bool canAssign);
 static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec);
+static struct MsAst* parseStatement(struct MsParser* p);
+static struct MsAst* parseBlock(struct MsParser* p);
+static struct MsAst* parseSimpleStatement(struct MsParser* p);
 
 // Pratt rule table indexed by MsTokenType. Tokens without an entry
 // zero-initialize to { NULL, NULL, MS_PREC_NONE } -- neither prefix nor
@@ -760,8 +773,9 @@ static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign
 // brace dict-comp form, kept alongside the spec's bracket form; DICT_LIT
 // with key/value pairs interleaved otherwise); KW_FOR directly means
 // SET_COMP; anything else means SET_LIT. Trailing commas allowed.
-// A '{' at statement start is a block, but blocks do not exist until the
-// statement dispatcher lands, so for now this rule also fires there.
+// A '{' at statement start is a block: parseStatement dispatches to
+// parseBlock before any expression parsing, so this rule only fires in
+// expression position.
 static struct MsAst* parseBraceLiteral(struct MsParser* p, bool canAssign) {
   MS_UNUSED(canAssign);
   struct MsToken brace = p->previous;
@@ -864,6 +878,213 @@ static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec) {
   return left;
 }
 
+// True for the augmented-assignment operators, which are contiguous in
+// MsTokenType (MS_TOKEN_PLUS_EQUAL .. MS_TOKEN_SHIFT_RIGHT_EQUAL).
+static bool parserIsAugAssign(MsTokenType type) {
+  return type >= MS_TOKEN_PLUS_EQUAL && type <= MS_TOKEN_SHIFT_RIGHT_EQUAL;
+}
+
+// True for the '*' unpack target form built by parseSimpleStatement's
+// pre-pass, the only source of UNARY nodes with op == MS_TOKEN_STAR.
+static bool astIsUnpackTarget(const struct MsAst* node) {
+  return node->kind == MS_AST_UNARY && node->as.unary.op == MS_TOKEN_STAR
+      && node->as.unary.operand != NULL && node->as.unary.operand->kind == MS_AST_IDENT;
+}
+
+// Reports at an already-consumed node's position: reinterpretation errors
+// (E205/E212) surface only after the target tokens are gone.
+static void parserErrorAtNode(struct MsParser* p, const struct MsAst* node, uint32_t code,
+    const char* message) {
+  struct MsToken at;
+  memset(&at, 0, sizeof(at));
+  at.line = node->line;
+  at.column = node->column;
+  parserErrorAt(p, &at, code, "%s", message);
+}
+
+// declStmt / assignStmt / exprStmt, by parse-then-reinterpret: the left
+// side parses as a plain expression list and the token after it decides the
+// node kind. A '*' directly followed by an identifier starts an unpack
+// target: STAR has no prefix rule, so the pre-pass builds UNARY(STAR,
+// IDENT) here or '*rest := xs' would surface as E201. Validation errors
+// (E205/E212) still produce the DECL/ASSIGN node with every parsed child,
+// and the right side is always consumed so the statement boundary is found.
+// Returns NULL only on OOM.
+static struct MsAst* parseSimpleStatement(struct MsParser* p) {
+  struct MsToken start = p->current;
+  struct MsAstList targets = { NULL, 0, 0 };
+  for (;;) {
+    struct MsAst* item = NULL;
+    if (parserCheck(p, MS_TOKEN_STAR) && msLexerPeek(p->lexer) == MS_TOKEN_IDENTIFIER) {
+      struct MsToken star = p->current;
+      parserAdvance(p);   // '*'
+      struct MsToken name = p->current;
+      parserAdvance(p);   // identifier
+      struct MsAst* operand = parserNewNode(p, MS_AST_IDENT, &name);
+      if (operand == NULL) {
+        return NULL;
+      }
+      operand->as.literal.start = name.start;
+      operand->as.literal.length = name.length;
+      item = parserNewNode(p, MS_AST_UNARY, &star);
+      if (item == NULL) {
+        return NULL;
+      }
+      item->as.unary.op = MS_TOKEN_STAR;
+      item->as.unary.operand = operand;
+    } else {
+      item = parsePrecedence(p, MS_PREC_EXPR);
+      if (item == NULL) {
+        return NULL;
+      }
+    }
+    if (!msAstListPush(p->arena, &targets, item)) {
+      parserErrorAt(p, &start, 0, "out of memory");
+      return NULL;
+    }
+    if (!parserMatch(p, MS_TOKEN_COMMA)) {
+      break;
+    }
+  }
+
+  MsTokenType op = p->current.type;
+  if (op == MS_TOKEN_COLON_EQUAL || op == MS_TOKEN_EQUAL || parserIsAugAssign(op)) {
+    // Reinterpret the expression list as assignment targets: IDENT / INDEX /
+    // ATTR are assignable; a '*' unpack target is legal only for ':=' (and
+    // for-in, Task 8) and at most once per list (E212); anything else E205.
+    size_t starCount = 0;
+    struct MsAst* lastStar = NULL;
+    for (size_t i = 0; i < targets.count; ++i) {
+      struct MsAst* target = targets.items[i];
+      if (astIsUnpackTarget(target)) {
+        ++starCount;
+        lastStar = target;
+        continue;
+      }
+      if (target->kind != MS_AST_IDENT && target->kind != MS_AST_INDEX
+          && target->kind != MS_AST_ATTR) {
+        parserErrorAtNode(p, target, 205, "invalid assignment target");
+      }
+    }
+    if (starCount > 1) {
+      parserErrorAtNode(p, lastStar, 212, "too many unpack targets");
+    } else if (starCount == 1 && op != MS_TOKEN_COLON_EQUAL) {
+      parserErrorAtNode(p, lastStar, 212, "unpack target only allowed in ':=' or 'for'-'in'");
+    }
+    parserAdvance(p);   // ':=' / '=' / augOp
+    struct MsAstList values = { NULL, 0, 0 };
+    do {
+      struct MsAst* value = parsePrecedence(p, MS_PREC_EXPR);
+      if (value == NULL) {
+        return NULL;
+      }
+      if (!msAstListPush(p->arena, &values, value)) {
+        parserErrorAt(p, &start, 0, "out of memory");
+        return NULL;
+      }
+    } while (parserMatch(p, MS_TOKEN_COMMA));
+    if (parserIsAugAssign(op)) {
+      // The grammar allows 'targetList augOp exprList', so extra items parse
+      // without an error, but the augAssign branch holds one target/value
+      // pair; only the first of each is stored.
+      struct MsAst* node = parserNewNode(p, MS_AST_AUG_ASSIGN, &start);
+      if (node == NULL) {
+        return NULL;
+      }
+      node->as.augAssign.op = op;
+      node->as.augAssign.target = targets.items[0];
+      node->as.augAssign.value = values.items[0];
+      return node;
+    }
+    struct MsAst* node = parserNewNode(p,
+        op == MS_TOKEN_COLON_EQUAL ? MS_AST_DECL : MS_AST_ASSIGN, &start);
+    if (node == NULL) {
+      return NULL;
+    }
+    node->as.decl.targets = targets;
+    node->as.decl.values = values;
+    return node;
+  }
+
+  if (op == MS_TOKEN_PLUS_PLUS || op == MS_TOKEN_MINUS_MINUS) {
+    // The '++'/'--' statement form is legal only as the post statement of a
+    // three-part for clause (Task 8 permits it there); everywhere else E206.
+    parserErrorAt(p, &p->current, 206, "'++'/'--' statement only allowed in a for clause");
+    parserAdvance(p);
+  }
+
+  if (targets.count > 1) {
+    parserErrorAt(p, &p->current, 203, "expected ':=' or '=' after expression list");
+  } else if (astIsUnpackTarget(targets.items[0])) {
+    parserErrorAtNode(p, targets.items[0], 212, "unpack target only allowed in ':=' or 'for'-'in'");
+  }
+  struct MsAst* stmt = parserNewNode(p, MS_AST_EXPR_STMT, &start);
+  if (stmt == NULL) {
+    return NULL;
+  }
+  stmt->as.exprStmt.expr = targets.items[0];
+  return stmt;
+}
+
+// "{" { statement } "}". A missing '}' is E211 (unclosed construct), not
+// the generic E203 parserConsume would report. Returns NULL only on OOM.
+static struct MsAst* parseBlock(struct MsParser* p) {
+  struct MsToken brace = p->current;
+  parserAdvance(p);   // '{'
+  struct MsAst* node = parserNewNode(p, MS_AST_BLOCK, &brace);
+  if (node == NULL) {
+    return NULL;
+  }
+  while (!parserCheck(p, MS_TOKEN_RIGHT_BRACE) && !parserCheck(p, MS_TOKEN_EOF)) {
+    struct MsToken start = p->current;
+    struct MsAst* stmt = parseStatement(p);
+    if (stmt == NULL) {
+      // Empty statement (E204, no node) or OOM; see parseStatement.
+      if (start.type != MS_TOKEN_SEMICOLON) {
+        return NULL;
+      }
+      continue;
+    }
+    if (!msAstListPush(p->arena, &node->as.block, stmt)) {
+      parserErrorAt(p, &brace, 0, "out of memory");
+      return NULL;
+    }
+  }
+  if (!parserMatch(p, MS_TOKEN_RIGHT_BRACE)) {
+    parserErrorAt(p, &p->current, 211, "expected '}'");
+  }
+  return node;
+}
+
+// Statement dispatch shared by the top level and blocks (compound
+// statements join in Task 8). A leading '{' is a block; a statement-start
+// semicolon is an empty statement (E204, skipped, no node produced);
+// anything else is a simple statement plus its terminating semicolon.
+// Returns NULL for the empty statement and on OOM; callers tell the two
+// apart by the token the statement started with (SEMICOLON == empty), since
+// every other NULL path comes from allocation failure.
+static struct MsAst* parseStatement(struct MsParser* p) {
+  if (parserCheck(p, MS_TOKEN_SEMICOLON)) {
+    parserErrorAt(p, &p->current, 204, "empty statement; use 'pass' instead");
+    parserAdvance(p);
+    return NULL;
+  }
+  if (parserCheck(p, MS_TOKEN_LEFT_BRACE)) {
+    struct MsAst* block = parseBlock(p);
+    if (block == NULL) {
+      return NULL;
+    }
+    consumeOptionalStatementEnd(p);
+    return block;
+  }
+  struct MsAst* stmt = parseSimpleStatement(p);
+  if (stmt == NULL) {
+    return NULL;
+  }
+  consumeStatementEnd(p);
+  return stmt;
+}
+
 MsResult msParserParse(struct MsParser* p, struct MsAst** out) {
   MS_ASSERT(p != NULL);
   MS_ASSERT(out != NULL);
@@ -876,24 +1097,15 @@ MsResult msParserParse(struct MsParser* p, struct MsAst** out) {
   }
   *out = root;   // partial tree stays inspectable on failure
   while (!parserCheck(p, MS_TOKEN_EOF)) {
-    if (parserCheck(p, MS_TOKEN_SEMICOLON)) {
-      // A semicolon where a statement is expected: empty statement (E204).
-      // No node is produced; just skip it.
-      parserErrorAt(p, &p->current, 204, "empty statement; use 'pass' instead");
-      parserAdvance(p);
+    struct MsToken start = p->current;
+    struct MsAst* stmt = parseStatement(p);
+    if (stmt == NULL) {
+      // Empty statement (E204, no node) or OOM; see parseStatement.
+      if (start.type != MS_TOKEN_SEMICOLON) {
+        return MS_ERROR_OOM;
+      }
       continue;
     }
-    struct MsToken start = p->current;
-    struct MsAst* expr = parsePrecedence(p, MS_PREC_EXPR);
-    if (expr == NULL) {
-      return MS_ERROR_OOM;
-    }
-    struct MsAst* stmt = parserNewNode(p, MS_AST_EXPR_STMT, &start);
-    if (stmt == NULL) {
-      return MS_ERROR_OOM;
-    }
-    stmt->as.exprStmt.expr = expr;
-    consumeStatementEnd(p);
     if (!msAstListPush(p->arena, &root->as.block, stmt)) {
       parserErrorAt(p, &start, 0, "out of memory");
       return MS_ERROR_OOM;

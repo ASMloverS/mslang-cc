@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "core/ms_common.h"
 #include "core/ms_diag.h"
 #include "core/ms_memory.h"
 #include "lexer/ms_lexer.h"
@@ -606,7 +607,9 @@ MS_TEST(parser, selfTreeDespiteContextError) {
 }
 
 MS_TEST(parser, listAndSetAndDict) {
-  msTestExpectDump("[1, 2]\n{1, 2}\n{1: 2}\n{}",
+  // Statement-start '{' is a block (Task 7 dispatch), so the brace literals
+  // are exercised in expression position.
+  msTestExpectDump("[1, 2]\n({1, 2})\n({1: 2})\n({})",
       "MS_AST_SOURCE_FILE\n"
       "  MS_AST_EXPR_STMT\n"
       "    MS_AST_LIST_LIT\n"
@@ -667,7 +670,7 @@ MS_TEST(parser, comprehensionNestedFor) {
 MS_TEST(parser, dictAndSetComprehension) {
   // Dict comprehension uses the bracket form per 03-syntax section 6.2;
   // the brace form is accepted too (same AST kind).
-  msTestExpectDump("[k: v * 2 for k, v in m]\n{x % 10 for x in xs}",
+  msTestExpectDump("[k: v * 2 for k, v in m]\n({x % 10 for x in xs})",
       "MS_AST_SOURCE_FILE\n"
       "  MS_AST_EXPR_STMT\n"
       "    MS_AST_DICT_COMP\n"
@@ -707,13 +710,14 @@ MS_TEST(parser, containerTruncatedEof) {
   static const uint32_t codes[] = { 201 };
   msTestExpectDiags("[1,", codes, 1);
   msTestExpectDiags("[x for x in]", codes, 1);
-  msTestExpectDiags("{,}", codes, 1);
+  msTestExpectDiags("({,})", codes, 1);   // statement-start '{' is a block now
 }
 
 MS_TEST(parser, containerTrailingComma) {
   // Trailing commas are legal in all three literal forms; the dumps match
-  // the non-trailing forms.
-  msTestExpectDump("[1, 2,]\n{1: 2,}\n{1, 2,}",
+  // the non-trailing forms. Brace forms sit in expression position because
+  // statement-start '{' is a block.
+  msTestExpectDump("[1, 2,]\n({1: 2,})\n({1, 2,})",
       "MS_AST_SOURCE_FILE\n"
       "  MS_AST_EXPR_STMT\n"
       "    MS_AST_LIST_LIT\n"
@@ -727,6 +731,107 @@ MS_TEST(parser, containerTrailingComma) {
       "    MS_AST_SET_LIT\n"
       "      MS_AST_INT \"1\"\n"
       "      MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, declAndAssign) {
+  msTestExpectDump("a := 1\na = 2",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_DECL\n"
+      "    MS_AST_IDENT \"a\"\n"
+      "    MS_AST_INT \"1\"\n"
+      "  MS_AST_ASSIGN\n"
+      "    MS_AST_IDENT \"a\"\n"
+      "    MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, swapAssign) {
+  msTestExpectDump("a, b = b, a",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_ASSIGN\n"
+      "    MS_AST_IDENT \"a\"\n"
+      "    MS_AST_IDENT \"b\"\n"
+      "    MS_AST_IDENT \"b\"\n"
+      "    MS_AST_IDENT \"a\"\n");
+}
+
+MS_TEST(parser, unpackDecl) {
+  msTestExpectDump("a, *rest := xs",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_DECL\n"
+      "    MS_AST_IDENT \"a\"\n"
+      "    MS_AST_UNARY op=MS_TOKEN_STAR\n"
+      "      MS_AST_IDENT \"rest\"\n"
+      "    MS_AST_IDENT \"xs\"\n");
+}
+
+MS_TEST(parser, assignTargetsAttrIndex) {
+  msTestExpectDump("o.f, a[i] = 1, 2",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_ASSIGN\n"
+      "    MS_AST_ATTR \"f\"\n"
+      "      MS_AST_IDENT \"o\"\n"
+      "    MS_AST_INDEX\n"
+      "      MS_AST_IDENT \"a\"\n"
+      "      MS_AST_IDENT \"i\"\n"
+      "    MS_AST_INT \"1\"\n"
+      "    MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, augAssignOps) {
+  static const struct { const char* source; const char* op; } cases[] = {
+    { "a += 1", "MS_TOKEN_PLUS_EQUAL" },
+    { "a -= 1", "MS_TOKEN_MINUS_EQUAL" },
+    { "a *= 1", "MS_TOKEN_STAR_EQUAL" },
+    { "a /= 1", "MS_TOKEN_SLASH_EQUAL" },
+    { "a %= 1", "MS_TOKEN_PERCENT_EQUAL" },
+    { "a **= 1", "MS_TOKEN_DOUBLE_STAR_EQUAL" },
+    { "a &= 1", "MS_TOKEN_AMP_EQUAL" },
+    { "a |= 1", "MS_TOKEN_PIPE_EQUAL" },
+    { "a ^= 1", "MS_TOKEN_CARET_EQUAL" },
+    { "a <<= 1", "MS_TOKEN_SHIFT_LEFT_EQUAL" },
+    { "a >>= 1", "MS_TOKEN_SHIFT_RIGHT_EQUAL" },
+  };
+  for (size_t i = 0; i < MS_ARRAY_LEN(cases); ++i) {
+    char expected[512];
+    snprintf(expected, sizeof(expected),
+        "MS_AST_SOURCE_FILE\n"
+        "  MS_AST_AUG_ASSIGN op=%s\n"
+        "    MS_AST_IDENT \"a\"\n"
+        "    MS_AST_INT \"1\"\n", cases[i].op);
+    msTestExpectDump(cases[i].source, expected);
+  }
+}
+
+MS_TEST(parser, badAssignTarget) {
+  static const uint32_t codes[] = { 205 };
+  msTestExpectDiags("1 = 2", codes, 1);
+  msTestExpectDiags("a + b := 1", codes, 1);
+}
+
+MS_TEST(parser, badUnpack) {
+  static const uint32_t codes[] = { 212 };
+  msTestExpectDiags("*a, *b := xs", codes, 1);     // more than one star target
+  msTestExpectDiags("*a = xs", codes, 1);          // star target only in :=/for-in
+}
+
+MS_TEST(parser, exprListWithoutAssign) {
+  static const uint32_t codes[] = { 203 };
+  msTestExpectDiags("a, b", codes, 1);   // expression list with no assignment operator
+}
+
+MS_TEST(parser, blockAsStatement) {
+  msTestExpectDump("{ 1\n2 }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_BLOCK\n"
+      "    MS_AST_EXPR_STMT\n"
+      "      MS_AST_INT \"1\"\n"
+      "    MS_AST_EXPR_STMT\n"
+      "      MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, doubleEmptyStatement) {
+  static const uint32_t codes[] = { 204 };
+  msTestExpectDiags("1;;", codes, 1);   // panic suppression: one error
 }
 
 static const MsTestCase msTests[] = {
@@ -778,5 +883,15 @@ static const MsTestCase msTests[] = {
     {"parser.dictCompMissingFor", testparserdictCompMissingFor},
     {"parser.containerTruncatedEof", testparsercontainerTruncatedEof},
     {"parser.containerTrailingComma", testparsercontainerTrailingComma},
+    {"parser.declAndAssign", testparserdeclAndAssign},
+    {"parser.swapAssign", testparserswapAssign},
+    {"parser.unpackDecl", testparserunpackDecl},
+    {"parser.assignTargetsAttrIndex", testparserassignTargetsAttrIndex},
+    {"parser.augAssignOps", testparseraugAssignOps},
+    {"parser.badAssignTarget", testparserbadAssignTarget},
+    {"parser.badUnpack", testparserbadUnpack},
+    {"parser.exprListWithoutAssign", testparserexprListWithoutAssign},
+    {"parser.blockAsStatement", testparserblockAsStatement},
+    {"parser.doubleEmptyStatement", testparserdoubleEmptyStatement},
 };
 MS_TEST_MAIN(msTests)
