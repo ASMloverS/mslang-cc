@@ -986,8 +986,9 @@ static bool parseSimpleItems(struct MsParser* p, const struct MsToken* start, st
 // exprStmt by the token that follows it. Validation errors (E205/E212) still
 // produce the DECL/ASSIGN node with every parsed child, and the right side is
 // always consumed so the statement boundary is found. The '++'/'--' statement
-// form yields MS_AST_INC_DEC only when p->allowIncDec is set (the three-part
-// for clause); everywhere else it is E206 and falls through to EXPR_STMT.
+// form yields MS_AST_INC_DEC only when p->allowIncDec is set (the post segment
+// of a three-part for clause); everywhere else it is E206 and falls through to
+// EXPR_STMT.
 // Returns NULL only on OOM.
 static struct MsAst* reinterpretAsSimpleStmt(struct MsParser* p, const struct MsToken* start,
     struct MsAstList* targets) {
@@ -1160,7 +1161,8 @@ static struct MsAst* parseIf(struct MsParser* p) {
 // selects the for-in form (targets validated like ':=', unpack allowed);
 // anything else is reinterpreted as the three-part clause's init statement
 // (E203 when no ';' follows, so 'for x { }' is rejected). '++'/'--' is legal
-// in the init and post segments only.
+// in the post segment only; the clause ends exactly at the body's '{' (no
+// semicolon may follow the post segment).
 static struct MsAst* parseFor(struct MsParser* p) {
   struct MsToken keyword = p->current;
   parserAdvance(p);   // 'for'
@@ -1190,28 +1192,25 @@ static struct MsAst* parseFor(struct MsParser* p) {
     }
   } else {
     node->as.forStmt.forKind = MS_FOR_CLAUSE;
-    bool savedAllowIncDec = p->allowIncDec;
-    p->allowIncDec = true;
     node->as.forStmt.init = reinterpretAsSimpleStmt(p, &start, &items);
     if (node->as.forStmt.init == NULL) {
-      p->allowIncDec = savedAllowIncDec;
       return NULL;
     }
     parserConsume(p, MS_TOKEN_SEMICOLON, "expected ';' after for init statement, got %s",
         msTokenTypeName(p->current.type));
     node->as.forStmt.cond = parsePrecedence(p, MS_PREC_EXPR);
     if (node->as.forStmt.cond == NULL) {
-      p->allowIncDec = savedAllowIncDec;
       return NULL;
     }
     parserConsume(p, MS_TOKEN_SEMICOLON, "expected ';' after for condition, got %s",
         msTokenTypeName(p->current.type));
+    bool savedAllowIncDec = p->allowIncDec;
+    p->allowIncDec = true;
     node->as.forStmt.post = parseSimpleStatement(p);
     p->allowIncDec = savedAllowIncDec;
     if (node->as.forStmt.post == NULL) {
       return NULL;
     }
-    parserMatch(p, MS_TOKEN_SEMICOLON);   // optional terminator before the body
   }
   ++p->loopDepth;
   node->as.forStmt.body = parseRequiredBlock(p);

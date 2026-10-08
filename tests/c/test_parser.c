@@ -913,6 +913,19 @@ MS_TEST(parser, incDecOutsideFor) {
   msTestExpectDiags("i++", codes, 1);
 }
 
+MS_TEST(parser, incDecInForInit) {
+  static const uint32_t codes[] = { 206 };
+  // '++'/'--' is legal only in the POST segment of a three-part for clause.
+  msTestExpectDiags("for i++; i < 3; i++ { }", codes, 1);
+}
+
+MS_TEST(parser, forClauseTrailingSemicolon) {
+  static const uint32_t codes[] = { 203 };
+  // The clause ends exactly at the body's '{': no ';' may follow the post
+  // segment.
+  msTestExpectDiags("for i := 0; i < 3; i++; { }", codes, 1);
+}
+
 MS_TEST(parser, whileStmt) {
   msTestExpectDump("while x < 1 { x = 2 }",
       "MS_AST_SOURCE_FILE\n"
@@ -1233,6 +1246,8 @@ static const MsTestCase msTests[] = {
     {"parser.forIn", testparserforIn},
     {"parser.forBare", testparserforBare},
     {"parser.incDecOutsideFor", testparserincDecOutsideFor},
+    {"parser.incDecInForInit", testparserincDecInForInit},
+    {"parser.forClauseTrailingSemicolon", testparserforClauseTrailingSemicolon},
     {"parser.whileStmt", testparserwhileStmt},
     {"parser.tryExceptFinally", testparsertryExceptFinally},
     {"parser.withAs", testparserwithAs},
