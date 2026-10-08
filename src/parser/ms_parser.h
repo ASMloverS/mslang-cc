@@ -25,13 +25,15 @@ struct MsParser {
   int loopDepth;                // break/continue context check
   int funcDepth;                // return context check
   bool funcIsAsync;             // await context check (innermost function)
-  int classDepth;               // self/super context check
-  // Additive beyond the spec struct: true while parsing a class method body,
-  // combined with classDepth for the self/super check.
+  // Maintained around class bodies per the spec struct, but not read by any
+  // check: the self/super context check is based on inMethod alone.
+  int classDepth;
+  // Additive beyond the spec struct: true while parsing a class method body;
+  // the self/super context check (E210) tests this flag alone.
   bool inMethod;
-  // Additive beyond the spec struct: true while parsing the init/post
-  // segment of a three-part for clause, the only place '++'/'--' statements
-  // are legal (elsewhere E206).
+  // Additive beyond the spec struct: true while parsing the post segment of
+  // a three-part for clause, the only place '++'/'--' statements are legal
+  // (elsewhere E206).
   bool allowIncDec;
 };
 
