@@ -858,6 +858,314 @@ MS_TEST(parser, doubleEmptyStatement) {
   msTestExpectDiags("1;;", codes, 1);   // panic suppression: one error
 }
 
+MS_TEST(parser, ifElseIfElse) {
+  msTestExpectDump("if a { 1 } else if b { 2 } else { 3 }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_IF\n"
+      "    MS_AST_IDENT \"a\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_EXPR_STMT\n"
+      "        MS_AST_INT \"1\"\n"
+      "    MS_AST_IF\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "      MS_AST_BLOCK\n"
+      "        MS_AST_EXPR_STMT\n"
+      "          MS_AST_INT \"2\"\n"
+      "      MS_AST_BLOCK\n"
+      "        MS_AST_EXPR_STMT\n"
+      "          MS_AST_INT \"3\"\n");
+}
+
+MS_TEST(parser, forThreePart) {
+  msTestExpectDump("for i := 0; i < 10; i++ { }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FOR kind=MS_FOR_CLAUSE\n"
+      "    MS_AST_DECL\n"
+      "      MS_AST_IDENT \"i\"\n"
+      "      MS_AST_INT \"0\"\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_LT\n"
+      "      MS_AST_IDENT \"i\"\n"
+      "      MS_AST_INT \"10\"\n"
+      "    MS_AST_INC_DEC op=MS_TOKEN_PLUS_PLUS\n"
+      "      MS_AST_IDENT \"i\"\n"
+      "    MS_AST_BLOCK\n");
+}
+
+MS_TEST(parser, forIn) {
+  msTestExpectDump("for k, v in m { }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FOR kind=MS_FOR_IN\n"
+      "    MS_AST_IDENT \"k\"\n"
+      "    MS_AST_IDENT \"v\"\n"
+      "    MS_AST_IDENT \"m\"\n"
+      "    MS_AST_BLOCK\n");
+}
+
+MS_TEST(parser, forBare) {
+  msTestExpectDump("for { }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FOR kind=MS_FOR_BARE\n"
+      "    MS_AST_BLOCK\n");
+}
+
+MS_TEST(parser, incDecOutsideFor) {
+  static const uint32_t codes[] = { 206 };
+  msTestExpectDiags("i++", codes, 1);
+}
+
+MS_TEST(parser, whileStmt) {
+  msTestExpectDump("while x < 1 { x = 2 }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_WHILE\n"
+      "    MS_AST_COMPARE_CHAIN ops=MS_CMP_LT\n"
+      "      MS_AST_IDENT \"x\"\n"
+      "      MS_AST_INT \"1\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_ASSIGN\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "        MS_AST_INT \"2\"\n");
+}
+
+MS_TEST(parser, tryExceptFinally) {
+  msTestExpectDump("try { 1 } except IOError as e { 2 } except { 3 } finally { 4 }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_TRY\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_EXPR_STMT\n"
+      "        MS_AST_INT \"1\"\n"
+      "    MS_AST_EXCEPT_CLAUSE as=\"e\"\n"
+      "      MS_AST_IDENT \"IOError\"\n"
+      "      MS_AST_BLOCK\n"
+      "        MS_AST_EXPR_STMT\n"
+      "          MS_AST_INT \"2\"\n"
+      "    MS_AST_EXCEPT_CLAUSE\n"
+      "      MS_AST_BLOCK\n"
+      "        MS_AST_EXPR_STMT\n"
+      "          MS_AST_INT \"3\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_EXPR_STMT\n"
+      "        MS_AST_INT \"4\"\n");
+}
+
+MS_TEST(parser, withAs) {
+  msTestExpectDump("with open(\"f\") as f { g(f) }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_WITH as=\"f\"\n"
+      "    MS_AST_CALL\n"
+      "      MS_AST_IDENT \"open\"\n"
+      "      MS_AST_STRING \"\\\"f\\\"\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_EXPR_STMT\n"
+      "        MS_AST_CALL\n"
+      "          MS_AST_IDENT \"g\"\n"
+      "          MS_AST_IDENT \"f\"\n");
+}
+
+MS_TEST(parser, selectCases) {
+  msTestExpectDump(
+      "select {\n"
+      "case v := ch.recv():\n"
+      "  use(v)\n"
+      "case ch2.send(x):\n"
+      "  pass\n"
+      "default:\n"
+      "  pass\n"
+      "}",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_SELECT\n"
+      "    MS_AST_SELECT_CASE kind=recv decl\n"
+      "      MS_AST_IDENT \"v\"\n"
+      "      MS_AST_IDENT \"ch\"\n"
+      "      MS_AST_BLOCK\n"
+      "        MS_AST_EXPR_STMT\n"
+      "          MS_AST_CALL\n"
+      "            MS_AST_IDENT \"use\"\n"
+      "            MS_AST_IDENT \"v\"\n"
+      "    MS_AST_SELECT_CASE kind=send\n"
+      "      MS_AST_IDENT \"ch2\"\n"
+      "      MS_AST_IDENT \"x\"\n"
+      "      MS_AST_BLOCK\n"
+      "        MS_AST_PASS\n"
+      "    MS_AST_SELECT_CASE kind=default\n"
+      "      MS_AST_BLOCK\n"
+      "        MS_AST_PASS\n");
+}
+
+MS_TEST(parser, importForms) {
+  msTestExpectDump(
+      "import \"fmt\"\n"
+      "import \"encoding/json\" as encjson\n"
+      "from \"strings\" import toUpper, split\n"
+      "from \"os\" import (getenv,)",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_IMPORT \"\\\"fmt\\\"\"\n"
+      "  MS_AST_IMPORT \"\\\"encoding/json\\\"\" as=\"encjson\"\n"
+      "  MS_AST_FROM_IMPORT \"\\\"strings\\\"\"\n"
+      "    MS_AST_IDENT \"toUpper\"\n"
+      "    MS_AST_IDENT \"split\"\n"
+      "  MS_AST_FROM_IMPORT \"\\\"os\\\"\"\n"
+      "    MS_AST_IDENT \"getenv\"\n");
+}
+
+MS_TEST(parser, importPathMustBeString) {
+  static const uint32_t codes[] = { 203 };
+  msTestExpectDiags("import fmt", codes, 1);
+}
+
+MS_TEST(parser, funcDeclFull) {
+  msTestExpectDump("func f(a, b = 1, *rest, **kw) { return a }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FUNC_DECL \"f\"\n"
+      "    MS_AST_PARAM \"a\" kind=MS_PARAM_NORMAL\n"
+      "    MS_AST_PARAM \"b\" kind=MS_PARAM_NORMAL\n"
+      "      MS_AST_INT \"1\"\n"
+      "    MS_AST_PARAM \"rest\" kind=MS_PARAM_VARARGS\n"
+      "    MS_AST_PARAM \"kw\" kind=MS_PARAM_KWARGS\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_RETURN\n"
+      "        MS_AST_IDENT \"a\"\n");
+}
+
+MS_TEST(parser, asyncFunc) {
+  msTestExpectDump("async func f() { await g() }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FUNC_DECL \"f\" async\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_EXPR_STMT\n"
+      "        MS_AST_AWAIT\n"
+      "          MS_AST_CALL\n"
+      "            MS_AST_IDENT \"g\"\n");
+}
+
+MS_TEST(parser, paramOrderViolation) {
+  static const uint32_t codes[] = { 207 };
+  msTestExpectDiags("func f(*rest, a) { }", codes, 1);       // normal after varargs
+  msTestExpectDiags("func f(a = 1, b) { }", codes, 1);       // non-default after default
+}
+
+MS_TEST(parser, paramDuplicate) {
+  static const uint32_t codes[] = { 208 };
+  msTestExpectDiags("func f(a, a) { }", codes, 1);
+}
+
+MS_TEST(parser, classDecl) {
+  msTestExpectDump(
+      "class Dog < Animal {\n"
+      "  func __init__(self) { }\n"
+      "  static func create() { }\n"
+      "}",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_CLASS_DECL \"Dog\"\n"
+      "    MS_AST_IDENT \"Animal\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_FUNC_DECL \"__init__\"\n"
+      "        MS_AST_PARAM \"self\" kind=MS_PARAM_NORMAL\n"
+      "        MS_AST_BLOCK\n"
+      "      MS_AST_FUNC_DECL \"create\" static\n"
+      "        MS_AST_BLOCK\n");
+}
+
+MS_TEST(parser, staticOutsideClassIsIdent) {
+  msTestExpectDump("static := 1",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_DECL\n"
+      "    MS_AST_IDENT \"static\"\n"
+      "    MS_AST_INT \"1\"\n");
+}
+
+MS_TEST(parser, breakOutsideLoop) {
+  static const uint32_t codes[] = { 209 };
+  msTestExpectDiags("break", codes, 1);
+}
+
+MS_TEST(parser, breakInLoopClosureBarrier) {
+  static const uint32_t codes[] = { 209 };
+  // loopDepth resets on entering a func body: the nested function cannot
+  // break the outer loop.
+  msTestExpectDiags("while true { func g() { break } }", codes, 1);
+}
+
+MS_TEST(parser, breakInsideLoop) {
+  msTestExpectDump("while true { break\ncontinue }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_WHILE\n"
+      "    MS_AST_BOOL true\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_BREAK\n"
+      "      MS_AST_CONTINUE\n");
+}
+
+MS_TEST(parser, returnAtTopLevel) {
+  static const uint32_t codes[] = { 210 };
+  msTestExpectDiags("return 1", codes, 1);
+}
+
+MS_TEST(parser, awaitOutsideAsync) {
+  static const uint32_t codes[] = { 210 };
+  msTestExpectDiags("await f()", codes, 1);
+  msTestExpectDiags("func g() { await f() }", codes, 1);
+}
+
+MS_TEST(parser, selfOutsideMethod) {
+  static const uint32_t codes[] = { 210 };
+  msTestExpectDiags("self.x = 1", codes, 1);
+}
+
+MS_TEST(parser, selfInsideMethod) {
+  msTestExpectDump("class A {\n  func m(self) { self.x = 1\nsuper.m() }\n}",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_CLASS_DECL \"A\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_FUNC_DECL \"m\"\n"
+      "        MS_AST_PARAM \"self\" kind=MS_PARAM_NORMAL\n"
+      "        MS_AST_BLOCK\n"
+      "          MS_AST_ASSIGN\n"
+      "            MS_AST_ATTR \"x\"\n"
+      "              MS_AST_IDENT \"self\"\n"
+      "            MS_AST_INT \"1\"\n"
+      "          MS_AST_EXPR_STMT\n"
+      "            MS_AST_CALL\n"
+      "              MS_AST_ATTR \"m\"\n"
+      "                MS_AST_IDENT \"super\"\n");
+}
+
+MS_TEST(parser, nestedFuncDecl) {
+  // func/class are statements: nested declarations are legal.
+  msTestExpectDump("func outer() { func inner() { return 1 } }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FUNC_DECL \"outer\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_FUNC_DECL \"inner\"\n"
+      "        MS_AST_BLOCK\n"
+      "          MS_AST_RETURN\n"
+      "            MS_AST_INT \"1\"\n");
+}
+
+MS_TEST(parser, returnRaiseDelGlobalPass) {
+  msTestExpectDump(
+      "func f() {\n"
+      "  raise E from cause\n"
+      "}\n"
+      "del a, b[i]\n"
+      "global g1, g2\n"
+      "pass",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FUNC_DECL \"f\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_RAISE\n"
+      "        MS_AST_IDENT \"E\"\n"
+      "        MS_AST_IDENT \"cause\"\n"
+      "  MS_AST_DEL\n"
+      "    MS_AST_IDENT \"a\"\n"
+      "    MS_AST_INDEX\n"
+      "      MS_AST_IDENT \"b\"\n"
+      "      MS_AST_IDENT \"i\"\n"
+      "  MS_AST_GLOBAL\n"
+      "    MS_AST_IDENT \"g1\"\n"
+      "    MS_AST_IDENT \"g2\"\n"
+      "  MS_AST_PASS\n");
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -920,5 +1228,31 @@ static const MsTestCase msTests[] = {
     {"parser.unclosedBlock", testparserunclosedBlock},
     {"parser.incDecOutsideForClause", testparserincDecOutsideForClause},
     {"parser.doubleEmptyStatement", testparserdoubleEmptyStatement},
+    {"parser.ifElseIfElse", testparserifElseIfElse},
+    {"parser.forThreePart", testparserforThreePart},
+    {"parser.forIn", testparserforIn},
+    {"parser.forBare", testparserforBare},
+    {"parser.incDecOutsideFor", testparserincDecOutsideFor},
+    {"parser.whileStmt", testparserwhileStmt},
+    {"parser.tryExceptFinally", testparsertryExceptFinally},
+    {"parser.withAs", testparserwithAs},
+    {"parser.selectCases", testparserselectCases},
+    {"parser.importForms", testparserimportForms},
+    {"parser.importPathMustBeString", testparserimportPathMustBeString},
+    {"parser.funcDeclFull", testparserfuncDeclFull},
+    {"parser.asyncFunc", testparserasyncFunc},
+    {"parser.paramOrderViolation", testparserparamOrderViolation},
+    {"parser.paramDuplicate", testparserparamDuplicate},
+    {"parser.classDecl", testparserclassDecl},
+    {"parser.staticOutsideClassIsIdent", testparserstaticOutsideClassIsIdent},
+    {"parser.breakOutsideLoop", testparserbreakOutsideLoop},
+    {"parser.breakInLoopClosureBarrier", testparserbreakInLoopClosureBarrier},
+    {"parser.breakInsideLoop", testparserbreakInsideLoop},
+    {"parser.returnAtTopLevel", testparserreturnAtTopLevel},
+    {"parser.awaitOutsideAsync", testparserawaitOutsideAsync},
+    {"parser.selfOutsideMethod", testparserselfOutsideMethod},
+    {"parser.selfInsideMethod", testparserselfInsideMethod},
+    {"parser.nestedFuncDecl", testparsernestedFuncDecl},
+    {"parser.returnRaiseDelGlobalPass", testparserreturnRaiseDelGlobalPass},
 };
 MS_TEST_MAIN(msTests)

@@ -29,6 +29,10 @@ struct MsParser {
   // Additive beyond the spec struct: true while parsing a class method body,
   // combined with classDepth for the self/super check.
   bool inMethod;
+  // Additive beyond the spec struct: true while parsing the init/post
+  // segment of a three-part for clause, the only place '++'/'--' statements
+  // are legal (elsewhere E206).
+  bool allowIncDec;
 };
 
 // lexer must be initialized by the caller and outlive the parser; arena and
