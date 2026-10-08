@@ -984,9 +984,14 @@ static struct MsAst* parseSimpleStatement(struct MsParser* p) {
       }
     } while (parserMatch(p, MS_TOKEN_COMMA));
     if (parserIsAugAssign(op)) {
-      // The grammar allows 'targetList augOp exprList', so extra items parse
-      // without an error, but the augAssign branch holds one target/value
-      // pair; only the first of each is stored.
+      // Augmented assignment is strictly single-target/single-value: extra
+      // items still parse (the statement boundary must be found), but they
+      // are E205 and the node is built from the first pair only.
+      if (targets.count > 1) {
+        parserErrorAtNode(p, targets.items[1], 205, "invalid augmented assignment target");
+      } else if (values.count > 1) {
+        parserErrorAtNode(p, values.items[1], 205, "invalid augmented assignment target");
+      }
       struct MsAst* node = parserNewNode(p, MS_AST_AUG_ASSIGN, &start);
       if (node == NULL) {
         return NULL;

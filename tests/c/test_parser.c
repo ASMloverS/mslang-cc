@@ -802,6 +802,13 @@ MS_TEST(parser, augAssignOps) {
   }
 }
 
+MS_TEST(parser, augAssignMultiTarget) {
+  // Augmented assignment is strictly single-target: extra targets are E205
+  // (the node is still built from the first pair, so the tree stays whole).
+  static const uint32_t codes[] = { 205 };
+  msTestExpectDiags("a, b += 1", codes, 1);
+}
+
 MS_TEST(parser, badAssignTarget) {
   static const uint32_t codes[] = { 205 };
   msTestExpectDiags("1 = 2", codes, 1);
@@ -888,6 +895,7 @@ static const MsTestCase msTests[] = {
     {"parser.unpackDecl", testparserunpackDecl},
     {"parser.assignTargetsAttrIndex", testparserassignTargetsAttrIndex},
     {"parser.augAssignOps", testparseraugAssignOps},
+    {"parser.augAssignMultiTarget", testparseraugAssignMultiTarget},
     {"parser.badAssignTarget", testparserbadAssignTarget},
     {"parser.badUnpack", testparserbadUnpack},
     {"parser.exprListWithoutAssign", testparserexprListWithoutAssign},
