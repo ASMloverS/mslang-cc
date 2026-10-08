@@ -834,6 +834,23 @@ MS_TEST(parser, blockAsStatement) {
       "      MS_AST_INT \"1\"\n"
       "    MS_AST_EXPR_STMT\n"
       "      MS_AST_INT \"2\"\n");
+  // A block may be followed by one optional semicolon (explicit or
+  // auto-inserted); the dump matches the bare form.
+  msTestExpectDump("{ 1 };",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_BLOCK\n"
+      "    MS_AST_EXPR_STMT\n"
+      "      MS_AST_INT \"1\"\n");
+}
+
+MS_TEST(parser, unclosedBlock) {
+  static const uint32_t codes[] = { 211 };
+  msTestExpectDiags("{ 1", codes, 1);   // missing '}' is E211, not E203
+}
+
+MS_TEST(parser, incDecOutsideForClause) {
+  static const uint32_t codes[] = { 206 };
+  msTestExpectDiags("a++", codes, 1);   // '++'/'--' only in three-part for post
 }
 
 MS_TEST(parser, doubleEmptyStatement) {
@@ -900,6 +917,8 @@ static const MsTestCase msTests[] = {
     {"parser.badUnpack", testparserbadUnpack},
     {"parser.exprListWithoutAssign", testparserexprListWithoutAssign},
     {"parser.blockAsStatement", testparserblockAsStatement},
+    {"parser.unclosedBlock", testparserunclosedBlock},
+    {"parser.incDecOutsideForClause", testparserincDecOutsideForClause},
     {"parser.doubleEmptyStatement", testparserdoubleEmptyStatement},
 };
 MS_TEST_MAIN(msTests)

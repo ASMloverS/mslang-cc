@@ -1016,6 +1016,8 @@ static struct MsAst* parseSimpleStatement(struct MsParser* p) {
     // three-part for clause (Task 8 permits it there); everywhere else E206.
     parserErrorAt(p, &p->current, 206, "'++'/'--' statement only allowed in a for clause");
     parserAdvance(p);
+    // Fall through to EXPR_STMT on purpose: the E206 above set panic mode,
+    // so any follow-on diagnostic from the shared tail is suppressed.
   }
 
   if (targets.count > 1) {
