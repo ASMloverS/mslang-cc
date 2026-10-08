@@ -1179,6 +1179,73 @@ MS_TEST(parser, returnRaiseDelGlobalPass) {
       "  MS_AST_PASS\n");
 }
 
+MS_TEST(parser, fstringTextOnly) {
+  msTestExpectDump("f\"hello\"",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_FSTRING\n"
+      "      MS_AST_FSTRING_TEXT \"hello\"\n");
+}
+
+MS_TEST(parser, fstringInterpolation) {
+  msTestExpectDump("f\"a{x}b{y:03d}c\"",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_FSTRING\n"
+      "      MS_AST_FSTRING_TEXT \"a\"\n"
+      "      MS_AST_FSTRING_EXPR\n"
+      "        MS_AST_IDENT \"x\"\n"
+      "      MS_AST_FSTRING_TEXT \"b\"\n"
+      "      MS_AST_FSTRING_EXPR fmt=\"03d\"\n"
+      "        MS_AST_IDENT \"y\"\n"
+      "      MS_AST_FSTRING_TEXT \"c\"\n");
+}
+
+MS_TEST(parser, fstringNestedBracesInFormat) {
+  // The format spec slice is stored raw, nested fields not expanded (task 28).
+  msTestExpectDump("f\"{n:{w}d}\"",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_FSTRING\n"
+      "      MS_AST_FSTRING_EXPR fmt=\"{w}d\"\n"
+      "        MS_AST_IDENT \"n\"\n");
+}
+
+MS_TEST(parser, fstringNestedFstring) {
+  // There are no single-quoted f-strings; nesting reuses the same quote (the
+  // lexer's frame stack keeps the inner closing quote from ending the outer).
+  msTestExpectDump("f\"{f\"{x}\"}\"",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_FSTRING\n"
+      "      MS_AST_FSTRING_EXPR\n"
+      "        MS_AST_FSTRING\n"
+      "          MS_AST_FSTRING_EXPR\n"
+      "            MS_AST_IDENT \"x\"\n");
+}
+
+MS_TEST(parser, fstringExprWithCallAndSlice) {
+  msTestExpectDump("f\"{f(a)[1:]}\"",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_FSTRING\n"
+      "      MS_AST_FSTRING_EXPR\n"
+      "        MS_AST_SLICE parts=start\n"
+      "          MS_AST_CALL\n"
+      "            MS_AST_IDENT \"f\"\n"
+      "            MS_AST_IDENT \"a\"\n"
+      "          MS_AST_INT \"1\"\n");
+}
+
+MS_TEST(parser, fstringEmpty) {
+  // f"" lexes as FSTRING_START + FSTRING_END with no text segment, so the
+  // FSTRING node has zero parts.
+  msTestExpectDump("f\"\"",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_EXPR_STMT\n"
+      "    MS_AST_FSTRING\n");
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -1269,5 +1336,11 @@ static const MsTestCase msTests[] = {
     {"parser.selfInsideMethod", testparserselfInsideMethod},
     {"parser.nestedFuncDecl", testparsernestedFuncDecl},
     {"parser.returnRaiseDelGlobalPass", testparserreturnRaiseDelGlobalPass},
+    {"parser.fstringTextOnly", testparserfstringTextOnly},
+    {"parser.fstringInterpolation", testparserfstringInterpolation},
+    {"parser.fstringNestedBracesInFormat", testparserfstringNestedBracesInFormat},
+    {"parser.fstringNestedFstring", testparserfstringNestedFstring},
+    {"parser.fstringExprWithCallAndSlice", testparserfstringExprWithCallAndSlice},
+    {"parser.fstringEmpty", testparserfstringEmpty},
 };
 MS_TEST_MAIN(msTests)

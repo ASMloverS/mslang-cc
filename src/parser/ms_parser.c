@@ -150,6 +150,7 @@ static struct MsAst* parseLambda(struct MsParser* p, bool canAssign);
 static struct MsAst* parseSelfSuper(struct MsParser* p, bool canAssign);
 static struct MsAst* parseListOrComprehension(struct MsParser* p, bool canAssign);
 static struct MsAst* parseBraceLiteral(struct MsParser* p, bool canAssign);
+static struct MsAst* parseFString(struct MsParser* p, bool canAssign);
 static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec);
 static struct MsAst* parseStatement(struct MsParser* p);
 static struct MsAst* parseBlock(struct MsParser* p);
@@ -172,6 +173,7 @@ static const struct MsParseRule msParseRules[MS_TOKEN_ELLIPSIS + 1] = {
     [MS_TOKEN_LEFT_PAREN]    = { parseGrouping, parseCall, MS_PREC_POSTFIX },
     [MS_TOKEN_LEFT_BRACKET]  = { parseListOrComprehension, parseIndexOrSlice, MS_PREC_POSTFIX },
     [MS_TOKEN_LEFT_BRACE]    = { parseBraceLiteral, NULL, MS_PREC_NONE },
+    [MS_TOKEN_FSTRING_START] = { parseFString, NULL, MS_PREC_NONE },
     [MS_TOKEN_DOT]           = { NULL, parseAttr, MS_PREC_POSTFIX },
     [MS_TOKEN_TILDE]         = { parseUnary, NULL, MS_PREC_NONE },
     [MS_TOKEN_KW_NOT]        = { parseUnary, parseCompareChain, MS_PREC_COMPARE },
@@ -859,6 +861,78 @@ static struct MsAst* parseBraceLiteral(struct MsParser* p, bool canAssign) {
   }
   parserConsume(p, MS_TOKEN_RIGHT_BRACE, "expected '}' after literal, got %s",
       msTokenTypeName(p->current.type));
+  return node;
+}
+
+// Prefix: f-string assembly. The lexer expands f"..." into a flat token
+// sequence (FSTRING_START, then alternating text-segment STRINGs and
+// interpolation groups '{' expr [FSTRING_FORMAT] '}', terminated by
+// FSTRING_END); nested f-strings recurse through this same prefix rule.
+// A text segment keeps the token's raw slice; the format spec is stored raw
+// too (nested fields are not expanded here). An unterminated f-string (EOF
+// before FSTRING_END) or a missing '}' after an interpolation is E211, the
+// unclosed-construct code, not the generic E203.
+static struct MsAst* parseFString(struct MsParser* p, bool canAssign) {
+  MS_UNUSED(canAssign);
+  struct MsToken start = p->previous;   // FSTRING_START
+  struct MsAst* node = parserNewNode(p, MS_AST_FSTRING, &start);
+  if (node == NULL) {
+    return NULL;
+  }
+  for (;;) {
+    if (parserMatch(p, MS_TOKEN_FSTRING_END)) {
+      break;
+    }
+    if (parserCheck(p, MS_TOKEN_EOF)) {
+      parserErrorAt(p, &p->current, 211, "unterminated f-string");
+      break;
+    }
+    if (parserCheck(p, MS_TOKEN_STRING)) {
+      struct MsToken text = p->current;
+      parserAdvance(p);
+      struct MsAst* part = parserNewNode(p, MS_AST_FSTRING_TEXT, &text);
+      if (part == NULL) {
+        return NULL;
+      }
+      part->as.literal.start = text.start;
+      part->as.literal.length = text.length;
+      if (!msAstListPush(p->arena, &node->as.fstring.parts, part)) {
+        parserErrorAt(p, &text, 0, "out of memory");
+        return NULL;
+      }
+      continue;
+    }
+    if (parserMatch(p, MS_TOKEN_LEFT_BRACE)) {
+      struct MsToken brace = p->previous;
+      struct MsAst* expr = parsePrecedence(p, MS_PREC_EXPR);
+      if (expr == NULL) {
+        return NULL;
+      }
+      struct MsAst* part = parserNewNode(p, MS_AST_FSTRING_EXPR, &brace);
+      if (part == NULL) {
+        return NULL;
+      }
+      part->as.fstringExpr.expr = expr;
+      if (parserCheck(p, MS_TOKEN_FSTRING_FORMAT)) {
+        part->as.fstringExpr.fmt = p->current.start;
+        part->as.fstringExpr.fmtLen = p->current.length;
+        part->as.fstringExpr.hasFmt = true;
+        parserAdvance(p);
+      }
+      if (!parserMatch(p, MS_TOKEN_RIGHT_BRACE)) {
+        parserErrorAt(p, &p->current, 211, "expected '}' after interpolation, got %s",
+            msTokenTypeName(p->current.type));
+      }
+      if (!msAstListPush(p->arena, &node->as.fstring.parts, part)) {
+        parserErrorAt(p, &brace, 0, "out of memory");
+        return NULL;
+      }
+      continue;
+    }
+    parserErrorAt(p, &p->current, 211, "unexpected %s in f-string",
+        msTokenTypeName(p->current.type));
+    break;
+  }
   return node;
 }
 
