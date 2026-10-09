@@ -1255,11 +1255,46 @@ MS_TEST(parser, recoverAfterBadStatement) {
   msTestParse(&fix, "1 +;\n2\n3");
   MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
   MS_ASSERT_TRUE(fix.root != NULL);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
   char buf[MS_TEST_DUMP_CAP];
   msTestDump(fix.root, buf, sizeof(buf));
   MS_ASSERT_TRUE(strstr(buf, "MS_AST_INVALID") != NULL);
   MS_ASSERT_TRUE(strstr(buf, "MS_AST_INT \"2\"") != NULL);
   MS_ASSERT_TRUE(strstr(buf, "MS_AST_INT \"3\"") != NULL);
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, statementEndErrorRecovers) {
+  // A missing ';' reported by the statement-end consumption (E203) must also
+  // synchronize: the following statement's error is still reported.
+  static const uint32_t codes[] = { 203, 201 };
+  msTestExpectDiags("x := 1 y\n1 +", codes, 2);
+}
+
+MS_TEST(parser, syncKeepsAsyncFuncStart) {
+  // 'async' is a statement start: synchronize must not consume it, and the
+  // following 'async func' declaration still parses.
+  MsTestFixture fix;
+  msTestParse(&fix, "1 +\nasync func f() { }");
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  char buf[MS_TEST_DUMP_CAP];
+  msTestDump(fix.root, buf, sizeof(buf));
+  MS_ASSERT_TRUE(strstr(buf, "MS_AST_FUNC_DECL \"f\" async") != NULL);
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, selectCaseErrorSyncsToNextCase) {
+  // An error inside a select case body synchronizes at the next
+  // 'case'/'default' header instead of swallowing the remaining branches.
+  MsTestFixture fix;
+  msTestParse(&fix, "select {\ncase ch.recv(): 1 +\ncase ch2.send(x):\n  pass\n}");
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  char buf[MS_TEST_DUMP_CAP];
+  msTestDump(fix.root, buf, sizeof(buf));
+  MS_ASSERT_TRUE(strstr(buf, "kind=recv") != NULL);
+  MS_ASSERT_TRUE(strstr(buf, "kind=send") != NULL);
   msTestFixtureDestroy(&fix);
 }
 
@@ -1361,6 +1396,7 @@ MS_TEST(parser, parseOom) {
     len += (size_t)snprintf(source + len, sizeof(source) - len, "x := %d\n", i);
   }
   for (int failAfter = 0; failAfter <= 1; ++failAfter) {
+    msMemResetStats();
     MsTestFixture fix;
     msDiagListInit(&fix.diags, "test.ms");
     msAstArenaInit(&fix.arena);
@@ -1375,6 +1411,9 @@ MS_TEST(parser, parseOom) {
     MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
     MS_ASSERT_EQ(0, (long long)msDiagListAt(&fix.diags, 0)->code);
     msTestFixtureDestroy(&fix);
+    struct MsMemStats stats;
+    msMemGetStats(&stats);
+    MS_ASSERT_EQ(0, (long long)stats.liveBlocks);   // the OOM unwind frees everything
   }
 }
 
@@ -1475,6 +1514,9 @@ static const MsTestCase msTests[] = {
     {"parser.fstringExprWithCallAndSlice", testparserfstringExprWithCallAndSlice},
     {"parser.fstringEmpty", testparserfstringEmpty},
     {"parser.recoverAfterBadStatement", testparserrecoverAfterBadStatement},
+    {"parser.statementEndErrorRecovers", testparserstatementEndErrorRecovers},
+    {"parser.syncKeepsAsyncFuncStart", testparsersyncKeepsAsyncFuncStart},
+    {"parser.selectCaseErrorSyncsToNextCase", testparserselectCaseErrorSyncsToNextCase},
     {"parser.cascadeSuppression", testparsercascadeSuppression},
     {"parser.lexerInvalidNotReportedTwice", testparserlexerInvalidNotReportedTwice},
     {"parser.diagCapStopsParse", testparserdiagCapStopsParse},

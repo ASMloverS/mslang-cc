@@ -103,11 +103,11 @@ static void consumeOptionalStatementEnd(struct MsParser* p) {
   parserMatch(p, MS_TOKEN_SEMICOLON);
 }
 
-// Panic-mode recovery (04-parser-ast, "error recovery and sync points"): clears panicMode,
-// then discards tokens until a statement boundary -- a semicolon (consumed),
-// a statement-start keyword or '{'/'}' (left for the dispatcher / block
-// loop), or EOF. Called from parseStatement when the statement just parsed
-// recorded a diagnostic.
+// Panic-mode recovery (04-parser-ast, "error recovery and sync points"):
+// clears panicMode, then discards tokens until a statement boundary -- a
+// semicolon (consumed), a statement-start keyword, '{'/'}', or a select
+// 'case'/'default' header (left for the dispatcher / loop), or EOF. Called
+// from parseStatement when the statement just parsed recorded a diagnostic.
 static void synchronize(struct MsParser* p) {
   p->panicMode = false;
   while (!parserCheck(p, MS_TOKEN_EOF)) {
@@ -120,9 +120,11 @@ static void synchronize(struct MsParser* p) {
       case MS_TOKEN_KW_WITH: case MS_TOKEN_KW_SELECT: case MS_TOKEN_KW_IMPORT:
       case MS_TOKEN_KW_FROM: case MS_TOKEN_KW_RETURN: case MS_TOKEN_KW_RAISE:
       case MS_TOKEN_KW_DEL: case MS_TOKEN_KW_GLOBAL: case MS_TOKEN_KW_BREAK:
-      case MS_TOKEN_KW_CONTINUE: case MS_TOKEN_KW_PASS:
+      case MS_TOKEN_KW_CONTINUE: case MS_TOKEN_KW_PASS: case MS_TOKEN_KW_ASYNC:
       case MS_TOKEN_LEFT_BRACE:    // a leading '{' is a block statement
       case MS_TOKEN_RIGHT_BRACE:
+      case MS_TOKEN_KW_CASE:       // select case headers bound a case body
+      case MS_TOKEN_KW_DEFAULT:
         return;   // not consumed: the block loop / dispatcher handles it
       default:
         parserAdvance(p);
@@ -1438,7 +1440,8 @@ static struct MsAst* parseSelectCaseBody(struct MsParser* p, const struct MsToke
     return NULL;
   }
   while (!parserCheck(p, MS_TOKEN_KW_CASE) && !parserCheck(p, MS_TOKEN_KW_DEFAULT)
-      && !parserCheck(p, MS_TOKEN_RIGHT_BRACE) && !parserCheck(p, MS_TOKEN_EOF)) {
+      && !parserCheck(p, MS_TOKEN_RIGHT_BRACE) && !parserCheck(p, MS_TOKEN_EOF)
+      && !msDiagListIsFull(p->diags)) {
     struct MsToken start = p->current;
     struct MsAst* stmt = parseStatement(p);
     if (stmt == NULL) {
@@ -1982,10 +1985,10 @@ static struct MsAst* parsePass(struct MsParser* p) {
 // (brace-terminated ones take an optional trailing semicolon, simple ones a
 // mandatory one); anything else is a simple statement. func/class are
 // statements, so nested declarations are legal. When a statement records a
-// diagnostic (panicMode transitions during the dispatch), synchronize()
-// replaces the normal statement-end consumption: it skips to the next
-// statement boundary so parsing can recover per statement. Returns NULL for
-// the empty statement and on OOM; callers tell the two apart by the token
+// diagnostic (panicMode transitions anywhere in the dispatch or in the
+// statement-end consumption), synchronize() skips to the next statement
+// boundary so parsing recovers per statement. Returns NULL for the empty
+// statement and on OOM; callers tell the two apart by the token
 // the statement started with (SEMICOLON == empty), since every other NULL
 // path comes from allocation failure.
 static struct MsAst* parseStatement(struct MsParser* p) {
@@ -2079,12 +2082,18 @@ static struct MsAst* parseStatement(struct MsParser* p) {
   if (stmt == NULL) {
     return NULL;
   }
+  // Statement-end consumption only runs when the statement itself recorded
+  // nothing; a missing ';' reported by consumeStatementEnd (E203) must also
+  // reach synchronize, or panicMode would stay set for the rest of the file.
+  if (!p->panicMode) {
+    if (braceTerminated) {
+      consumeOptionalStatementEnd(p);
+    } else {
+      consumeStatementEnd(p);
+    }
+  }
   if (!wasPanic && p->panicMode) {
     synchronize(p);
-  } else if (braceTerminated) {
-    consumeOptionalStatementEnd(p);
-  } else {
-    consumeStatementEnd(p);
   }
   return stmt;
 }

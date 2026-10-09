@@ -323,7 +323,7 @@ panic 模式（与诊断收集器协同）：
 1. `parserErrorAt` 在 `panicMode == true` 时静默（抑制级联），否则经 `msDiagReport` 记录（文件/行/列/错误码/消息）并置 `panicMode = true`。
 2. 语句级错误传播到 `parseTopLevelStmt`/`parseStatement` 边界的 `synchronize`：`panicMode = false`，然后丢弃 token 直至——
    - `MS_TOKEN_SEMICOLON`：消费后返回；
-   - 语句起始关键字（`func` `class` `if` `for` `while` `try` `with` `select` `import` `from` `return` `raise` `del` `global` `break` `continue` `pass`）：不消费，直接返回；语句起始的 `{`（块语句）同样不消费；
+   - 语句起始关键字（`func` `class` `if` `for` `while` `try` `with` `select` `import` `from` `return` `raise` `del` `global` `break` `continue` `pass` `async`）：不消费，直接返回；语句起始的 `{`（块语句）与 select 的 `case`/`default` 分支头同样不消费；
    - `MS_TOKEN_RIGHT_BRACE`：不消费，交还块解析循环收尾；
    - `MS_TOKEN_EOF`：返回，主循环自然结束。
 3. 表达式级错误产出 `MS_AST_INVALID` 占位节点（位置为出错 token），保证上层树结构完整；panic 期间已记录的 `INVALID` token 不重复报语法错误（其词法诊断已存在）。
