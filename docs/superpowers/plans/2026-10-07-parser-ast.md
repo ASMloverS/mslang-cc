@@ -1288,7 +1288,7 @@ MS_TEST(parser, dictAndSetComprehension) {
 }
 ```
 
-(The dict-comprehension source uses `[k: v for ...]` bracket form only if the grammar allows; 03-syntax section 6.2 shows `{k: v * 2 for k, v in m}` with braces — use the brace form in the test if the bracket form is not in the spec examples. Check 03-syntax while implementing and adjust the test source, not the grammar.)
+(Resolved during implementation: 03-syntax section 6.2 specifies the bracket form `[k: v * 2 for k, v in m]` for dict comprehensions; braces are for set comprehensions. The test above uses the bracket form per spec. The parser additionally accepts the brace form `{k: v for ...}` for tolerance — see commit b5f5d9a.)
 
 - [ ] **Step 2: Run tests to verify they fail** — `[`/`{` prefix missing → E201.
 
