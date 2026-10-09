@@ -103,6 +103,33 @@ static void consumeOptionalStatementEnd(struct MsParser* p) {
   parserMatch(p, MS_TOKEN_SEMICOLON);
 }
 
+// Panic-mode recovery (04-parser-ast, "error recovery and sync points"): clears panicMode,
+// then discards tokens until a statement boundary -- a semicolon (consumed),
+// a statement-start keyword or '{'/'}' (left for the dispatcher / block
+// loop), or EOF. Called from parseStatement when the statement just parsed
+// recorded a diagnostic.
+static void synchronize(struct MsParser* p) {
+  p->panicMode = false;
+  while (!parserCheck(p, MS_TOKEN_EOF)) {
+    if (parserMatch(p, MS_TOKEN_SEMICOLON)) {
+      return;   // consumed: the next token starts a fresh statement
+    }
+    switch (p->current.type) {
+      case MS_TOKEN_KW_FUNC: case MS_TOKEN_KW_CLASS: case MS_TOKEN_KW_IF:
+      case MS_TOKEN_KW_FOR: case MS_TOKEN_KW_WHILE: case MS_TOKEN_KW_TRY:
+      case MS_TOKEN_KW_WITH: case MS_TOKEN_KW_SELECT: case MS_TOKEN_KW_IMPORT:
+      case MS_TOKEN_KW_FROM: case MS_TOKEN_KW_RETURN: case MS_TOKEN_KW_RAISE:
+      case MS_TOKEN_KW_DEL: case MS_TOKEN_KW_GLOBAL: case MS_TOKEN_KW_BREAK:
+      case MS_TOKEN_KW_CONTINUE: case MS_TOKEN_KW_PASS:
+      case MS_TOKEN_LEFT_BRACE:    // a leading '{' is a block statement
+      case MS_TOKEN_RIGHT_BRACE:
+        return;   // not consumed: the block loop / dispatcher handles it
+      default:
+        parserAdvance(p);
+    }
+  }
+}
+
 // Pratt precedence levels: enum order is increasing binding power,
 // matching 03-syntax section 6 from level 15 (lambda) down to 1 (primary).
 typedef enum {
@@ -940,15 +967,17 @@ static struct MsAst* parseFString(struct MsParser* p, bool canAssign) {
 // whose binding power is at least minPrec. 'not' folds as the infix
 // operator of a comparison chain only when 'in' follows (msLexerPeek);
 // otherwise a leading 'not' stays the unary prefix (so 'not a in b' is
-// '(not a) in b', deliberately unlike Python).
+// '(not a) in b', deliberately unlike Python). A prefix miss reports E201
+// WITHOUT consuming the offending token, so the statement-level
+// synchronize() still sees boundary tokens (';', '}') that follow it.
 static struct MsAst* parsePrecedence(struct MsParser* p, MsPrecedence minPrec) {
-  parserAdvance(p);
-  MsParseFn prefix = msParseRules[p->previous.type].prefix;
+  MsParseFn prefix = msParseRules[p->current.type].prefix;
   if (prefix == NULL) {
-    parserErrorAt(p, &p->previous, 201, "expected expression, got %s",
-        msTokenTypeName(p->previous.type));
-    return parserNewNode(p, MS_AST_INVALID, &p->previous);   // tree stays complete
+    parserErrorAt(p, &p->current, 201, "expected expression, got %s",
+        msTokenTypeName(p->current.type));
+    return parserNewNode(p, MS_AST_INVALID, &p->current);   // tree stays complete
   }
+  parserAdvance(p);
   struct MsAst* left = prefix(p, true);
   while (left != NULL && msParseRules[p->current.type].infix != NULL
       && msParseRules[p->current.type].prec >= minPrec
@@ -1166,7 +1195,8 @@ static struct MsAst* parseBlock(struct MsParser* p) {
   if (node == NULL) {
     return NULL;
   }
-  while (!parserCheck(p, MS_TOKEN_RIGHT_BRACE) && !parserCheck(p, MS_TOKEN_EOF)) {
+  while (!parserCheck(p, MS_TOKEN_RIGHT_BRACE) && !parserCheck(p, MS_TOKEN_EOF)
+      && !msDiagListIsFull(p->diags)) {
     struct MsToken start = p->current;
     struct MsAst* stmt = parseStatement(p);
     if (stmt == NULL) {
@@ -1951,102 +1981,107 @@ static struct MsAst* parsePass(struct MsParser* p) {
 // node produced); keyword-led statements parse through their own functions
 // (brace-terminated ones take an optional trailing semicolon, simple ones a
 // mandatory one); anything else is a simple statement. func/class are
-// statements, so nested declarations are legal. Returns NULL for the empty
-// statement and on OOM; callers tell the two apart by the token the
-// statement started with (SEMICOLON == empty), since every other NULL path
-// comes from allocation failure.
+// statements, so nested declarations are legal. When a statement records a
+// diagnostic (panicMode transitions during the dispatch), synchronize()
+// replaces the normal statement-end consumption: it skips to the next
+// statement boundary so parsing can recover per statement. Returns NULL for
+// the empty statement and on OOM; callers tell the two apart by the token
+// the statement started with (SEMICOLON == empty), since every other NULL
+// path comes from allocation failure.
 static struct MsAst* parseStatement(struct MsParser* p) {
+  bool wasPanic = p->panicMode;
   if (parserCheck(p, MS_TOKEN_SEMICOLON)) {
     parserErrorAt(p, &p->current, 204, "empty statement; use 'pass' instead");
     parserAdvance(p);
-    return NULL;
-  }
-  if (parserCheck(p, MS_TOKEN_LEFT_BRACE)) {
-    struct MsAst* block = parseBlock(p);
-    if (block == NULL) {
-      return NULL;
+    if (!wasPanic && p->panicMode) {
+      synchronize(p);
     }
-    consumeOptionalStatementEnd(p);
-    return block;
+    return NULL;
   }
   struct MsAst* stmt = NULL;
   bool braceTerminated = true;
-  switch (p->current.type) {
-    case MS_TOKEN_KW_IF:
-      stmt = parseIf(p);
-      break;
-    case MS_TOKEN_KW_FOR:
-      stmt = parseFor(p);
-      break;
-    case MS_TOKEN_KW_WHILE:
-      stmt = parseWhile(p);
-      break;
-    case MS_TOKEN_KW_TRY:
-      stmt = parseTry(p);
-      break;
-    case MS_TOKEN_KW_WITH:
-      stmt = parseWith(p);
-      break;
-    case MS_TOKEN_KW_SELECT:
-      stmt = parseSelect(p);
-      break;
-    case MS_TOKEN_KW_CLASS:
-      stmt = parseClassDecl(p);
-      break;
-    case MS_TOKEN_KW_FUNC:
-      stmt = parseFuncDecl(p, false, false, false);
-      break;
-    case MS_TOKEN_KW_ASYNC:
-      if (msLexerPeek(p->lexer) == MS_TOKEN_KW_FUNC) {
-        parserAdvance(p);   // 'async'
-        stmt = parseFuncDecl(p, true, false, false);
+  if (parserCheck(p, MS_TOKEN_LEFT_BRACE)) {
+    stmt = parseBlock(p);
+  } else {
+    switch (p->current.type) {
+      case MS_TOKEN_KW_IF:
+        stmt = parseIf(p);
         break;
-      }
-      parserErrorAt(p, &p->current, 202, "expected 'func' after 'async', got %s",
-          msTokenTypeName(msLexerPeek(p->lexer)));
-      parserAdvance(p);   // 'async'; parse the tail as a simple statement
-      stmt = parseSimpleStatement(p);
-      braceTerminated = false;
-      break;
-    case MS_TOKEN_KW_IMPORT:
-    case MS_TOKEN_KW_FROM:
-      stmt = parseImport(p);
-      braceTerminated = false;
-      break;
-    case MS_TOKEN_KW_RETURN:
-      stmt = parseReturn(p);
-      braceTerminated = false;
-      break;
-    case MS_TOKEN_KW_RAISE:
-      stmt = parseRaise(p);
-      braceTerminated = false;
-      break;
-    case MS_TOKEN_KW_DEL:
-      stmt = parseDel(p);
-      braceTerminated = false;
-      break;
-    case MS_TOKEN_KW_GLOBAL:
-      stmt = parseGlobal(p);
-      braceTerminated = false;
-      break;
-    case MS_TOKEN_KW_BREAK:
-    case MS_TOKEN_KW_CONTINUE:
-      stmt = parseBreakContinue(p);
-      braceTerminated = false;
-      break;
-    case MS_TOKEN_KW_PASS:
-      stmt = parsePass(p);
-      braceTerminated = false;
-      break;
-    default:
-      stmt = parseSimpleStatement(p);
-      braceTerminated = false;
-      break;
+      case MS_TOKEN_KW_FOR:
+        stmt = parseFor(p);
+        break;
+      case MS_TOKEN_KW_WHILE:
+        stmt = parseWhile(p);
+        break;
+      case MS_TOKEN_KW_TRY:
+        stmt = parseTry(p);
+        break;
+      case MS_TOKEN_KW_WITH:
+        stmt = parseWith(p);
+        break;
+      case MS_TOKEN_KW_SELECT:
+        stmt = parseSelect(p);
+        break;
+      case MS_TOKEN_KW_CLASS:
+        stmt = parseClassDecl(p);
+        break;
+      case MS_TOKEN_KW_FUNC:
+        stmt = parseFuncDecl(p, false, false, false);
+        break;
+      case MS_TOKEN_KW_ASYNC:
+        if (msLexerPeek(p->lexer) == MS_TOKEN_KW_FUNC) {
+          parserAdvance(p);   // 'async'
+          stmt = parseFuncDecl(p, true, false, false);
+          break;
+        }
+        parserErrorAt(p, &p->current, 202, "expected 'func' after 'async', got %s",
+            msTokenTypeName(msLexerPeek(p->lexer)));
+        parserAdvance(p);   // 'async'; parse the tail as a simple statement
+        stmt = parseSimpleStatement(p);
+        braceTerminated = false;
+        break;
+      case MS_TOKEN_KW_IMPORT:
+      case MS_TOKEN_KW_FROM:
+        stmt = parseImport(p);
+        braceTerminated = false;
+        break;
+      case MS_TOKEN_KW_RETURN:
+        stmt = parseReturn(p);
+        braceTerminated = false;
+        break;
+      case MS_TOKEN_KW_RAISE:
+        stmt = parseRaise(p);
+        braceTerminated = false;
+        break;
+      case MS_TOKEN_KW_DEL:
+        stmt = parseDel(p);
+        braceTerminated = false;
+        break;
+      case MS_TOKEN_KW_GLOBAL:
+        stmt = parseGlobal(p);
+        braceTerminated = false;
+        break;
+      case MS_TOKEN_KW_BREAK:
+      case MS_TOKEN_KW_CONTINUE:
+        stmt = parseBreakContinue(p);
+        braceTerminated = false;
+        break;
+      case MS_TOKEN_KW_PASS:
+        stmt = parsePass(p);
+        braceTerminated = false;
+        break;
+      default:
+        stmt = parseSimpleStatement(p);
+        braceTerminated = false;
+        break;
+    }
   }
   if (stmt == NULL) {
     return NULL;
   }
-  if (braceTerminated) {
+  if (!wasPanic && p->panicMode) {
+    synchronize(p);
+  } else if (braceTerminated) {
     consumeOptionalStatementEnd(p);
   } else {
     consumeStatementEnd(p);
@@ -2065,7 +2100,11 @@ MsResult msParserParse(struct MsParser* p, struct MsAst** out) {
     return MS_ERROR_OOM;
   }
   *out = root;   // partial tree stays inspectable on failure
-  while (!parserCheck(p, MS_TOKEN_EOF)) {
+  // The loop also stops when the diagnostic cap fills: parserAdvance
+  // collapses the lexer's cap state into a permanent EOF, but parser-side
+  // errors alone never trip that path, so guard on the list directly
+  // (belt and braces against pathological no-progress loops).
+  while (!parserCheck(p, MS_TOKEN_EOF) && !msDiagListIsFull(p->diags)) {
     struct MsToken start = p->current;
     struct MsAst* stmt = parseStatement(p);
     if (stmt == NULL) {

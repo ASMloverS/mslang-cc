@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [03 词法分析器（Lexer）](03-lexer.md) |
+| v0.1 | ✅ | [03 词法分析器（Lexer）](03-lexer.md) |
 
 ## 任务目标
 
@@ -323,7 +323,7 @@ panic 模式（与诊断收集器协同）：
 1. `parserErrorAt` 在 `panicMode == true` 时静默（抑制级联），否则经 `msDiagReport` 记录（文件/行/列/错误码/消息）并置 `panicMode = true`。
 2. 语句级错误传播到 `parseTopLevelStmt`/`parseStatement` 边界的 `synchronize`：`panicMode = false`，然后丢弃 token 直至——
    - `MS_TOKEN_SEMICOLON`：消费后返回；
-   - 语句起始关键字（`func` `class` `if` `for` `while` `try` `with` `select` `import` `from` `return` `raise` `del` `global` `break` `continue` `pass`）：不消费，直接返回；
+   - 语句起始关键字（`func` `class` `if` `for` `while` `try` `with` `select` `import` `from` `return` `raise` `del` `global` `break` `continue` `pass`）：不消费，直接返回；语句起始的 `{`（块语句）同样不消费；
    - `MS_TOKEN_RIGHT_BRACE`：不消费，交还块解析循环收尾；
    - `MS_TOKEN_EOF`：返回，主循环自然结束。
 3. 表达式级错误产出 `MS_AST_INVALID` 占位节点（位置为出错 token），保证上层树结构完整；panic 期间已记录的 `INVALID` token 不重复报语法错误（其词法诊断已存在）。
@@ -379,11 +379,11 @@ panic 模式（与诊断收集器协同）：
 
 ## 验收标准
 
-- [ ] `src/parser/ms_ast.{h,c}` 与 `src/parser/ms_parser.{h,c}` 存在，guard 分别为 `MSLANG_SRC_PARSER_MS_AST_H_` / `MSLANG_SRC_PARSER_MS_PARSER_H_`，头文件自包含，代码风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef）。
-- [ ] AST 以类型标签 + 联合表示，覆盖 03-syntax 全量语法与 06-concurrency §3 的 select；字面量与标识符存源码切片不求值；全部节点经 arena 分配，`msAstArenaDestroy` 后任务 02 分配统计归零。
-- [ ] 表达式解析实现 15 级优先级表的全部结合性规则，含 `**` 右结合、链式比较单节点收集、`not in`/`is not` 归一、条件表达式、`lambda`、`await`、切片与调用（含关键字实参）。
-- [ ] f-string 扁平 token 序列按本文约定组装为 `MS_AST_FSTRING`（TEXT/EXPR parts、格式说明切片保留、嵌套 f-string 递归）。
-- [ ] 语句与声明全覆盖，含 `for` 三形态、`try`/`with`/`select`、import 三形式、`async func`、`static func` 上下文关键字、解包目标；`++`/`--` 仅限三分 `for` 子句。
-- [ ] 语法错误经共享诊断收集器记录（E201–E212，文件/行/列），panic 模式同步到分号/语句关键字/`}`，级联抑制，与词法错误合计满 20 条后中止并返回 `MS_ERROR_SYNTAX`。
-- [ ] `tests/c/test_parser.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；与任务 02/03 的接口假定（`struct MsDiagList`、`msDiagReport`、`msLexerPeek` 等）在实现时已对齐。
+- [x] `src/parser/ms_ast.{h,c}` 与 `src/parser/ms_parser.{h,c}` 存在，guard 分别为 `MSLANG_SRC_PARSER_MS_AST_H_` / `MSLANG_SRC_PARSER_MS_PARSER_H_`，头文件自包含，代码风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef）。
+- [x] AST 以类型标签 + 联合表示，覆盖 03-syntax 全量语法与 06-concurrency §3 的 select；字面量与标识符存源码切片不求值；全部节点经 arena 分配，`msAstArenaDestroy` 后任务 02 分配统计归零。
+- [x] 表达式解析实现 15 级优先级表的全部结合性规则，含 `**` 右结合、链式比较单节点收集、`not in`/`is not` 归一、条件表达式、`lambda`、`await`、切片与调用（含关键字实参）。
+- [x] f-string 扁平 token 序列按本文约定组装为 `MS_AST_FSTRING`（TEXT/EXPR parts、格式说明切片保留、嵌套 f-string 递归）。
+- [x] 语句与声明全覆盖，含 `for` 三形态、`try`/`with`/`select`、import 三形式、`async func`、`static func` 上下文关键字、解包目标；`++`/`--` 仅限三分 `for` 子句。
+- [x] 语法错误经共享诊断收集器记录（E201–E212，文件/行/列），panic 模式同步到分号/语句关键字/`}`，级联抑制，与词法错误合计满 20 条后中止并返回 `MS_ERROR_SYNTAX`。
+- [x] `tests/c/test_parser.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；与任务 02/03 的接口假定（`struct MsDiagList`、`msDiagReport`、`msLexerPeek` 等）在实现时已对齐。

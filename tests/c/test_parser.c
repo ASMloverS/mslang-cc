@@ -1246,6 +1246,138 @@ MS_TEST(parser, fstringEmpty) {
       "    MS_AST_FSTRING\n");
 }
 
+MS_TEST(parser, recoverAfterBadStatement) {
+  // The bad first statement keeps an INVALID placeholder and the following
+  // statements parse normally. (The plan's source "1 +\n2\n3" is not actually
+  // erroneous: Go-style insertion continues a trailing operator onto the next
+  // line, so an explicit ';' makes the first statement bad on its own.)
+  MsTestFixture fix;
+  msTestParse(&fix, "1 +;\n2\n3");
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_TRUE(fix.root != NULL);
+  char buf[MS_TEST_DUMP_CAP];
+  msTestDump(fix.root, buf, sizeof(buf));
+  MS_ASSERT_TRUE(strstr(buf, "MS_AST_INVALID") != NULL);
+  MS_ASSERT_TRUE(strstr(buf, "MS_AST_INT \"2\"") != NULL);
+  MS_ASSERT_TRUE(strstr(buf, "MS_AST_INT \"3\"") != NULL);
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, cascadeSuppression) {
+  // One bad statement -> exactly one diagnostic, no cascade. ("x = + + 1" from
+  // the plan is a legal unary-plus chain; "++" is a single PLUS_PLUS token,
+  // which has no prefix rule -> E201.)
+  static const uint32_t codes[] = { 201 };
+  msTestExpectDiags("x = ++ 1", codes, 1);
+}
+
+MS_TEST(parser, lexerInvalidNotReportedTwice) {
+  // Bad character -> lexer E1xx only; the parser skips the INVALID token.
+  // (The INVALID token clears the lexer's semicolon-insertion state, so the
+  // plan's newline separator would surface as an additional E203; an explicit
+  // ';' keeps the statement boundary intact.)
+  MsTestFixture fix;
+  msTestParse(&fix, "x := 1 $;\ny := 2");
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  uint32_t code = msDiagListAt(&fix.diags, 0)->code;
+  MS_ASSERT_TRUE(code >= 100 && code < 200);   // lexical, not syntactic
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, diagCapStopsParse) {
+  // 25 bad statements on separate lines -> exactly 20 diagnostics, parse
+  // aborted early (MS_ERROR_SYNTAX). (Explicit ';' per line for the same
+  // insertion reason as in recoverAfterBadStatement.)
+  char source[256];
+  size_t len = 0;
+  for (int i = 0; i < 25; ++i) {
+    len += (size_t)snprintf(source + len, sizeof(source) - len, "1 +;\n");
+  }
+  MsTestFixture fix;
+  msTestParse(&fix, source);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(20, (long long)msDiagListCount(&fix.diags));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, blockErrorSyncsToRightBrace) {
+  // Error inside a block synchronizes at '}' and the outer statement after
+  // the block still parses at the top level (not inside the block).
+  MsTestFixture fix;
+  msTestParse(&fix, "if a { 1 + }\n2");
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  MS_ASSERT_EQ(2, (long long)fix.root->as.block.count);
+  MS_ASSERT_EQ(MS_AST_IF, fix.root->as.block.items[0]->kind);
+  MS_ASSERT_EQ(MS_AST_EXPR_STMT, fix.root->as.block.items[1]->kind);
+  char buf[MS_TEST_DUMP_CAP];
+  msTestDump(fix.root, buf, sizeof(buf));
+  MS_ASSERT_TRUE(strstr(buf, "MS_AST_INT \"2\"") != NULL);
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, multipleErrorsReported) {
+  // Recovery now works: two bad statements -> two diagnostics.
+  static const uint32_t codes[] = { 201, 201 };
+  msTestExpectDiags("1 +;\n2 +", codes, 2);
+}
+
+MS_TEST(parser, crlfLineColumns) {
+  // CRLF folds into one newline; the second statement sits at line 2,
+  // column 3 (columns count bytes).
+  MsTestFixture fix;
+  msTestParse(&fix, "1\r\n  2");
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(2, (long long)fix.root->as.block.count);
+  struct MsAst* second = fix.root->as.block.items[1];
+  MS_ASSERT_EQ(2, (long long)second->line);
+  MS_ASSERT_EQ(3, (long long)second->column);
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(parser, parseNoLeaks) {
+  // A non-trivial parse returns every allocation (diag list + arena blocks).
+  msMemResetStats();
+  MsTestFixture fix;
+  msTestParse(&fix, "func f(a, b = 1) { return a + b }\n"
+      "class C {\n  func m(self) { }\n}\n"
+      "x := [i * 2 for i in xs if i > 0]");
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  msTestFixtureDestroy(&fix);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(parser, parseOom) {
+  // Allocation failure unwinds to MS_ERROR_OOM and reports exactly once
+  // (code 0): failAfter 0 fails the root node itself; failAfter 1 fails
+  // mid-parse (the source needs more arena blocks than the one the budget
+  // allows).
+  char source[2048];
+  size_t len = 0;
+  for (int i = 0; i < 200; ++i) {
+    len += (size_t)snprintf(source + len, sizeof(source) - len, "x := %d\n", i);
+  }
+  for (int failAfter = 0; failAfter <= 1; ++failAfter) {
+    MsTestFixture fix;
+    msDiagListInit(&fix.diags, "test.ms");
+    msAstArenaInit(&fix.arena);
+    msLexerInit(&fix.lexer, source, strlen(source), "test.ms", &fix.diags);
+    msParserInit(&fix.parser, &fix.lexer, &fix.arena, &fix.diags);
+    fix.root = NULL;
+    msMemSetFailAfter(failAfter);
+    fix.result = msParserParse(&fix.parser, &fix.root);
+    msMemSetFailAfter(-1);
+    msLexerDestroy(&fix.lexer);
+    MS_ASSERT_EQ(MS_ERROR_OOM, fix.result);
+    MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+    MS_ASSERT_EQ(0, (long long)msDiagListAt(&fix.diags, 0)->code);
+    msTestFixtureDestroy(&fix);
+  }
+}
+
 static const MsTestCase msTests[] = {
     {"parser.kindNameTable", testparserkindNameTable},
     {"parser.arenaMultiBlock", testparserarenaMultiBlock},
@@ -1342,5 +1474,14 @@ static const MsTestCase msTests[] = {
     {"parser.fstringNestedFstring", testparserfstringNestedFstring},
     {"parser.fstringExprWithCallAndSlice", testparserfstringExprWithCallAndSlice},
     {"parser.fstringEmpty", testparserfstringEmpty},
+    {"parser.recoverAfterBadStatement", testparserrecoverAfterBadStatement},
+    {"parser.cascadeSuppression", testparsercascadeSuppression},
+    {"parser.lexerInvalidNotReportedTwice", testparserlexerInvalidNotReportedTwice},
+    {"parser.diagCapStopsParse", testparserdiagCapStopsParse},
+    {"parser.blockErrorSyncsToRightBrace", testparserblockErrorSyncsToRightBrace},
+    {"parser.multipleErrorsReported", testparsermultipleErrorsReported},
+    {"parser.crlfLineColumns", testparsercrlfLineColumns},
+    {"parser.parseNoLeaks", testparserparseNoLeaks},
+    {"parser.parseOom", testparserparseOom},
 };
 MS_TEST_MAIN(msTests)
