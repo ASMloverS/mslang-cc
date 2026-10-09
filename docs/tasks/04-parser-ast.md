@@ -32,6 +32,7 @@ AST 覆盖全量语法（含 try/with/select/import/推导式/f-string/class 继
 - `static` 不在 01-lexical §4 的 37 个关键字中，但 03-syntax §5 的 class 示例使用 `static func`。parser 将 `static` 作**上下文关键字**处理：仅在 class 体内、紧邻 `func` 之前时识别为静态方法修饰符，其余位置是普通标识符。
 - 03-syntax 的 EBNF 未给出容器字面量与推导式的产生式，但 §5/§6.2 示例使用 `[]`、`{k: v}`、三种推导式。parser 以示例语义补全：list 字面量 `[expr, ...]`、dict 字面量 `{k: v, ...}`、set 字面量 `{expr, ...}`、空 `{}` 一律为 dict（对齐 Python）；`[`/`{` 后跟 `for` 子句时切换为对应推导式。
 - f-string 格式说明内的嵌套替换字段（`f"{n:{w}d}"`）：lexer 按约定产出单条 `MS_TOKEN_FSTRING_FORMAT` 原文切片，parser **不再展开**，存为原始文本节点；格式说明的二次解析由任务 28（f-string）在编译期复用 lexer/parser 管线完成。
+- `try` 的 except 子句数：03-syntax §3 的 EBNF 要求 `try` 后至少一个 exceptClause（`finally` 单独存在不合文法），但本文「语句解析」行文只说「`finally` 至多一个」。按本文行文裁决：**允许零个 except 直接接 finally**（`try { } finally { }` 合法，MS_OK），与 EBNF 的偏差记录在案。
 
 ## 详细设计
 

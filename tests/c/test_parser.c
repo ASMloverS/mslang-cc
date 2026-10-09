@@ -1154,6 +1154,24 @@ MS_TEST(parser, nestedFuncDecl) {
       "            MS_AST_INT \"1\"\n");
 }
 
+MS_TEST(parser, returnMultiValue) {
+  msTestExpectDump("func f() { return a, b }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FUNC_DECL \"f\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_RETURN\n"
+      "        MS_AST_IDENT \"a\"\n"
+      "        MS_AST_IDENT \"b\"\n");
+}
+
+MS_TEST(parser, returnBare) {
+  msTestExpectDump("func f() { return }",
+      "MS_AST_SOURCE_FILE\n"
+      "  MS_AST_FUNC_DECL \"f\"\n"
+      "    MS_AST_BLOCK\n"
+      "      MS_AST_RETURN\n");
+}
+
 MS_TEST(parser, returnRaiseDelGlobalPass) {
   msTestExpectDump(
       "func f() {\n"
@@ -1506,6 +1524,8 @@ static const MsTestCase msTests[] = {
     {"parser.selfOutsideMethod", testparserselfOutsideMethod},
     {"parser.selfInsideMethod", testparserselfInsideMethod},
     {"parser.nestedFuncDecl", testparsernestedFuncDecl},
+    {"parser.returnMultiValue", testparserreturnMultiValue},
+    {"parser.returnBare", testparserreturnBare},
     {"parser.returnRaiseDelGlobalPass", testparserreturnRaiseDelGlobalPass},
     {"parser.fstringTextOnly", testparserfstringTextOnly},
     {"parser.fstringInterpolation", testparserfstringInterpolation},
