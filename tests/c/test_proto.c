@@ -5,6 +5,11 @@
 #include "vm/ms_proto.h"
 #include "ms_test.h"
 
+// Stand-ins for struct MsObject until task 06 lands; never dereferenced.
+static char msTestFakeConstA;
+static char msTestFakeConstB;
+static char msTestFakeConstC;
+
 MS_TEST(proto, builderInitZeroed) {
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
@@ -247,6 +252,52 @@ MS_TEST(proto, patchSAxNegativeBoundary) {
   msProtoBuilderDestroy(&b);
 }
 
+MS_TEST(proto, addConstPointerDedup) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  MS_ASSERT_EQ(1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstB));
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));   // dedup
+  MS_ASSERT_EQ(2, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstC));
+  MS_ASSERT_EQ(3, b.proto.constsLen);
+  MS_ASSERT_TRUE(b.proto.consts[0] == (struct MsObject*)&msTestFakeConstA);
+  MS_ASSERT_TRUE(b.proto.consts[1] == (struct MsObject*)&msTestFakeConstB);
+  MS_ASSERT_TRUE(b.proto.consts[2] == (struct MsObject*)&msTestFakeConstC);
+  msProtoBuilderDestroy(&b);
+}
+
+MS_TEST(proto, addConstCap65536) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  // Simulate a full pool by writing the public builder field directly (the
+  // compiler writes b.proto metadata the same way). The cap check runs
+  // BEFORE the dedup scan, so no backing array is needed and the test is
+  // O(1) -- filling 65536 real entries through the API would be O(n^2).
+  b.proto.constsLen = 65536;
+  MS_ASSERT_EQ(-1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, b.error);
+  b.proto.constsLen = 0;   // restore before destroy
+  msProtoBuilderDestroy(&b);
+}
+
+MS_TEST(proto, addTryBlockFieldsPreserved) {
+  MS_ASSERT_EQ(0xFFFFFFFFu, (long long)MS_PROTO_PC_NONE);   // UINT32_MAX sentinel
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(MS_OK, msProtoAddTryBlock(&b, 0, 10, 5, MS_PROTO_PC_NONE));
+  MS_ASSERT_EQ(MS_OK, msProtoAddTryBlock(&b, 20, 30, MS_PROTO_PC_NONE, 25));
+  MS_ASSERT_EQ(2, b.proto.tryBlocksLen);
+  MS_ASSERT_EQ(0, (long long)b.proto.tryBlocks[0].pcStart);
+  MS_ASSERT_EQ(10, (long long)b.proto.tryBlocks[0].pcEnd);
+  MS_ASSERT_EQ(5, (long long)b.proto.tryBlocks[0].handlerPc);
+  MS_ASSERT_EQ(0xFFFFFFFFu, (long long)b.proto.tryBlocks[0].finallyPc);
+  MS_ASSERT_EQ(20, (long long)b.proto.tryBlocks[1].pcStart);
+  MS_ASSERT_EQ(30, (long long)b.proto.tryBlocks[1].pcEnd);
+  MS_ASSERT_EQ(0xFFFFFFFFu, (long long)b.proto.tryBlocks[1].handlerPc);
+  MS_ASSERT_EQ(25, (long long)b.proto.tryBlocks[1].finallyPc);
+  msProtoBuilderDestroy(&b);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -263,7 +314,10 @@ static const MsTestCase msTestCases[] = {
   {"Proto.PatchRejectsBadPcAndRange", testprotopatchRejectsBadPcAndRange},
   {"Proto.PatchSAxLastInstruction", testprotopatchSAxLastInstruction},
   {"Proto.PatchStickyShortCircuit", testprotopatchStickyShortCircuit},
-  {"Proto.PatchSAxNegativeBoundary", testprotopatchSAxNegativeBoundary}
+  {"Proto.PatchSAxNegativeBoundary", testprotopatchSAxNegativeBoundary},
+  {"Proto.AddConstPointerDedup", testprotoaddConstPointerDedup},
+  {"Proto.AddConstCap65536", testprotoaddConstCap65536},
+  {"Proto.AddTryBlockFieldsPreserved", testprotoaddTryBlockFieldsPreserved}
 };
 
 MS_TEST_MAIN(msTestCases)
