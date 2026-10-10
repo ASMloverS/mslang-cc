@@ -1,4 +1,6 @@
+#include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "core/ms_common.h"
 #include "vm/ms_opcode.h"
@@ -61,11 +63,41 @@ MS_TEST(opcode, subsetCounts) {
   MS_ASSERT_EQ(63, MS_OP_COUNT - (long long)MS_ARRAY_LEN(excluded));
 }
 
+MS_TEST(opcode, nameTableCompleteAndDistinct) {
+  // Table length == MS_OP_COUNT is enforced by the array declaration itself;
+  // here every entry must have a non-NULL, correctly prefixed, unique name.
+  for (int op = 0; op < MS_OP_COUNT; ++op) {
+    const char* name = msOpName((MsOpCode)op);
+    MS_ASSERT_TRUE(name != NULL);
+    MS_ASSERT_TRUE(strncmp(name, "MS_OP_", 6) == 0);
+    for (int other = op + 1; other < MS_OP_COUNT; ++other) {
+      MS_ASSERT_TRUE(strcmp(name, msOpName((MsOpCode)other)) != 0);
+    }
+  }
+  MS_ASSERT_EQ(0, strcmp(msOpName(MS_OP_LOAD_CONST), "MS_OP_LOAD_CONST"));
+  MS_ASSERT_EQ(0, strcmp(msOpName(MS_OP_ITER_NEXT), "MS_OP_ITER_NEXT"));
+  MS_ASSERT_EQ(0, strcmp(msOpName(MS_OP_SELECT_EXEC), "MS_OP_SELECT_EXEC"));
+  MS_ASSERT_EQ(0, strcmp(msOpName(MS_OP_NOP), "MS_OP_NOP"));
+}
+
+MS_TEST(opcode, formatOfSaxOps) {
+  // Exactly five ops are sAx format; everything else is ABC.
+  for (int op = 0; op < MS_OP_COUNT; ++op) {
+    bool expectSAx = op == MS_OP_JUMP || op == MS_OP_JUMP_IF_FALSE
+        || op == MS_OP_JUMP_IF_TRUE || op == MS_OP_JUMP_IF_NIL
+        || op == MS_OP_ITER_NEXT;
+    MS_ASSERT_EQ(expectSAx ? MS_OPFMT_SAX : MS_OPFMT_ABC,
+        msOpFormatOf((MsOpCode)op));
+  }
+}
+
 static const MsTestCase msTestCases[] = {
   {"Opcode.EncodeDecodeABCRoundTrip", testopcodeencodeDecodeABCRoundTrip},
   {"Opcode.EncodeDecodeSAxRoundTrip", testopcodeencodeDecodeSAxRoundTrip},
   {"Opcode.BitLayout", testopcodebitLayout},
-  {"Opcode.SubsetCounts", testopcodesubsetCounts}
+  {"Opcode.SubsetCounts", testopcodesubsetCounts},
+  {"Opcode.NameTableCompleteAndDistinct", testopcodenameTableCompleteAndDistinct},
+  {"Opcode.FormatOfSaxOps", testopcodeformatOfSaxOps}
 };
 
 MS_TEST_MAIN(msTestCases)

@@ -45,7 +45,8 @@ add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/core/ms_diag.c
     src/lexer/ms_lexer.c
     src/parser/ms_ast.c
-    src/parser/ms_parser.c)
+    src/parser/ms_parser.c
+    src/vm/ms_opcode.c)
 set_target_properties(mslang PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(mslang
     PUBLIC
