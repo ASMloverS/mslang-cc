@@ -9,6 +9,7 @@
 static char msTestFakeConstA;
 static char msTestFakeConstB;
 static char msTestFakeConstC;
+static char msTestFakeConstPool[16];
 
 MS_TEST(proto, builderInitZeroed) {
   struct MsProtoBuilder b;
@@ -298,6 +299,42 @@ MS_TEST(proto, addTryBlockFieldsPreserved) {
   msProtoBuilderDestroy(&b);
 }
 
+MS_TEST(proto, addConstGrowthAndDedupAfterRegrow) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  for (int i = 0; i < 16; ++i) {
+    MS_ASSERT_EQ(i, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstPool[i]));
+  }
+  MS_ASSERT_EQ(16, b.proto.constsLen);
+  MS_ASSERT_EQ(16, b.constsCap);   // doubling from 8: 8 -> 16
+  // The dedup scan must still hit entries written before the reallocation.
+  MS_ASSERT_EQ(3, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstPool[3]));
+  MS_ASSERT_EQ(16, b.proto.constsLen);
+  msProtoBuilderDestroy(&b);
+}
+
+MS_TEST(proto, addConstAndTryBlockOomSticky) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  msMemSetFailAfter(0);   // the consts grow fails
+  MS_ASSERT_EQ(-1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  MS_ASSERT_EQ(MS_ERROR_OOM, b.error);
+  msMemSetFailAfter(-1);
+  // Sticky: even with a healthy allocator the builder stays failed.
+  MS_ASSERT_EQ(-1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstB));
+  MS_ASSERT_EQ(MS_ERROR_OOM, b.error);
+  msProtoBuilderDestroy(&b);
+  msProtoBuilderInit(&b);
+  msMemSetFailAfter(0);   // the tryBlocks grow fails
+  MS_ASSERT_EQ(MS_ERROR_OOM,
+      msProtoAddTryBlock(&b, 0, 1, MS_PROTO_PC_NONE, MS_PROTO_PC_NONE));
+  MS_ASSERT_EQ(MS_ERROR_OOM, b.error);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_EQ(MS_ERROR_OOM,
+      msProtoAddTryBlock(&b, 0, 1, MS_PROTO_PC_NONE, MS_PROTO_PC_NONE));
+  msProtoBuilderDestroy(&b);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -317,7 +354,9 @@ static const MsTestCase msTestCases[] = {
   {"Proto.PatchSAxNegativeBoundary", testprotopatchSAxNegativeBoundary},
   {"Proto.AddConstPointerDedup", testprotoaddConstPointerDedup},
   {"Proto.AddConstCap65536", testprotoaddConstCap65536},
-  {"Proto.AddTryBlockFieldsPreserved", testprotoaddTryBlockFieldsPreserved}
+  {"Proto.AddTryBlockFieldsPreserved", testprotoaddTryBlockFieldsPreserved},
+  {"Proto.AddConstGrowthAndDedupAfterRegrow", testprotoaddConstGrowthAndDedupAfterRegrow},
+  {"Proto.AddConstAndTryBlockOomSticky", testprotoaddConstAndTryBlockOomSticky}
 };
 
 MS_TEST_MAIN(msTestCases)
