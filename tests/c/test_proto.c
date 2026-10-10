@@ -135,6 +135,41 @@ MS_TEST(proto, lineRunEncoding) {
   msProtoBuilderDestroy(&b);
 }
 
+MS_TEST(proto, emitOomAfterGrowthDestroyNoLeaks) {
+  msMemResetStats();
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  for (int i = 0; i < 16; ++i) {
+    // Fills code exactly to capacity (8 -> 16), so the next emit must grow.
+    MS_ASSERT_EQ(i, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  }
+  msMemSetFailAfter(0);   // the next grow (code array re-alloc) fails
+  MS_ASSERT_EQ(-1, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  MS_ASSERT_EQ(MS_ERROR_OOM, b.error);
+  msMemSetFailAfter(-1);
+  // Destroy must free the live arrays even with the sticky OOM set.
+  msProtoBuilderDestroy(&b);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, lineTableGrowthPreservesRuns) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  for (int i = 0; i < 20; ++i) {
+    msProtoSetLine(&b, (uint32_t)(i + 1));
+    MS_ASSERT_EQ(i, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  }
+  MS_ASSERT_EQ(20, b.proto.linesLen);
+  MS_ASSERT_EQ(32, b.linesCap);   // doubling from 8: 8 -> 16 -> 32
+  MS_ASSERT_EQ(0, (long long)b.proto.lines[0].pc);
+  MS_ASSERT_EQ(1, (long long)b.proto.lines[0].line);
+  MS_ASSERT_EQ(19, (long long)b.proto.lines[19].pc);
+  MS_ASSERT_EQ(20, (long long)b.proto.lines[19].line);
+  msProtoBuilderDestroy(&b);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -143,7 +178,9 @@ static const MsTestCase msTestCases[] = {
   {"Proto.EmitSAxBoundariesOk", testprotoemitSAxBoundariesOk},
   {"Proto.EmitSAxOutOfRangeSticky", testprotoemitSAxOutOfRangeSticky},
   {"Proto.EmitOomSticky", testprotoemitOomSticky},
-  {"Proto.LineRunEncoding", testprotolineRunEncoding}
+  {"Proto.LineRunEncoding", testprotolineRunEncoding},
+  {"Proto.EmitOomAfterGrowthDestroyNoLeaks", testprotoemitOomAfterGrowthDestroyNoLeaks},
+  {"Proto.LineTableGrowthPreservesRuns", testprotolineTableGrowthPreservesRuns}
 };
 
 MS_TEST_MAIN(msTestCases)
