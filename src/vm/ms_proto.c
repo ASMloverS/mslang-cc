@@ -74,6 +74,20 @@ void msProtoSetLine(struct MsProtoBuilder* b, uint32_t line) {
   b->hasPendingLine = true;
 }
 
+MsResult msProtoPatchSAx(struct MsProtoBuilder* b, int pc, int32_t sax) {
+  if (b->error != MS_OK) {
+    return b->error;
+  }
+  if (pc < 0 || pc >= b->proto.codeLen
+      || msOpFormatOf(msOpDecodeOp(b->proto.code[pc])) != MS_OPFMT_SAX
+      || sax < -8388608 || sax > 8388607) {
+    b->error = MS_ERROR_SYNTAX;
+    return MS_ERROR_SYNTAX;
+  }
+  b->proto.code[pc] = msOpEncodeSAx(msOpDecodeOp(b->proto.code[pc]), sax);
+  return MS_OK;
+}
+
 void msProtoBuilderInit(struct MsProtoBuilder* b) {
   memset(b, 0, sizeof(*b));
 }

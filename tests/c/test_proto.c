@@ -170,6 +170,48 @@ MS_TEST(proto, lineTableGrowthPreservesRuns) {
   msProtoBuilderDestroy(&b);
 }
 
+MS_TEST(proto, patchSAxJump) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  int jumpPc = msProtoEmitSAx(&b, MS_OP_JUMP, 0);   // placeholder offset
+  MS_ASSERT_EQ(0, jumpPc);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&b, MS_OP_RETURN, 0, 0));
+  // target = pc + 1 + sAx = 0 + 1 + 1 = 2 -> the RETURN.
+  MS_ASSERT_EQ(MS_OK, msProtoPatchSAx(&b, jumpPc, 1));
+  MS_ASSERT_EQ(MS_OP_JUMP, msOpDecodeOp(b.proto.code[0]));   // opcode preserved
+  MS_ASSERT_EQ(1, msOpDecodeSAx(b.proto.code[0]));
+  msProtoBuilderDestroy(&b);
+}
+
+MS_TEST(proto, patchRejectsAbcInstruction) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_LOAD_NIL, 0, 0));
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoPatchSAx(&b, 0, 0));
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, b.error);   // sticky (pin 5)
+  msProtoBuilderDestroy(&b);
+}
+
+MS_TEST(proto, patchRejectsBadPcAndRange) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoPatchSAx(&b, 0, 0));   // empty code
+  msProtoBuilderDestroy(&b);
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitSAx(&b, MS_OP_JUMP, 0));
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoPatchSAx(&b, 5, 0));    // pc out of range
+  msProtoBuilderDestroy(&b);
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitSAx(&b, MS_OP_JUMP, 0));
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoPatchSAx(&b, -1, 0));   // negative pc
+  msProtoBuilderDestroy(&b);
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitSAx(&b, MS_OP_JUMP, 0));
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoPatchSAx(&b, 0, 8388608));   // sAx out of range
+  msProtoBuilderDestroy(&b);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -180,7 +222,10 @@ static const MsTestCase msTestCases[] = {
   {"Proto.EmitOomSticky", testprotoemitOomSticky},
   {"Proto.LineRunEncoding", testprotolineRunEncoding},
   {"Proto.EmitOomAfterGrowthDestroyNoLeaks", testprotoemitOomAfterGrowthDestroyNoLeaks},
-  {"Proto.LineTableGrowthPreservesRuns", testprotolineTableGrowthPreservesRuns}
+  {"Proto.LineTableGrowthPreservesRuns", testprotolineTableGrowthPreservesRuns},
+  {"Proto.PatchSAxJump", testprotopatchSAxJump},
+  {"Proto.PatchRejectsAbcInstruction", testprotopatchRejectsAbcInstruction},
+  {"Proto.PatchRejectsBadPcAndRange", testprotopatchRejectsBadPcAndRange}
 };
 
 MS_TEST_MAIN(msTestCases)
