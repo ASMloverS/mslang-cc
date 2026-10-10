@@ -509,6 +509,81 @@ MS_TEST(proto, buildFreeNoLeaks) {
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
+MS_TEST(proto, buildOomRecoverableByDestroy) {
+  msMemResetStats();
+  struct MsProtoBuilder b;
+  struct MsProto* proto = NULL;
+  // Case A: the code-array shrink realloc fails mid-build.
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));   // code at cap 8; rest len 0
+  msMemSetFailAfter(0);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msProtoBuild(&b, &proto));
+  MS_ASSERT_TRUE(proto == NULL);
+  msMemSetFailAfter(-1);
+  msProtoBuilderDestroy(&b);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+  // Case B: the shrink succeeds, the final proto allocation fails.
+  // msRealloc on a live block consumes the failAfter budget exactly once,
+  // same as msAlloc, so failAfter(1) lets the shrink pass and fails the alloc.
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  msMemSetFailAfter(1);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msProtoBuild(&b, &proto));
+  MS_ASSERT_TRUE(proto == NULL);
+  msMemSetFailAfter(-1);
+  msProtoBuilderDestroy(&b);
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, lineAtClampsBeforeFirstEntry) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));   // pc 0 records no line entry
+  msProtoSetLine(&b, 7);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));   // first entry: pc 1 -> line 7
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  MS_ASSERT_EQ(1, proto->linesLen);
+  MS_ASSERT_EQ(7, (long long)msProtoLineAt(proto, 0));   // clamped to the first run
+  MS_ASSERT_EQ(7, (long long)msProtoLineAt(proto, 1));
+  msProtoFree(proto);
+}
+
+MS_TEST(proto, dumpFlagsAndNamedProto) {
+  msProtoFree(NULL);   // no-op, must not crash
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_RETURN, 0, 0));
+  b.proto.isAsync = true;
+  b.proto.hasVarArgs = true;
+  b.proto.hasKwArgs = true;
+  // Fake pointers, never dereferenced: dump prints fixed placeholders.
+  b.proto.name = (struct MsString*)&msTestFakeConstA;
+  b.proto.sourceFile = (struct MsString*)&msTestFakeConstB;
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  char buf[4096];
+  msTestDumpProto(proto, buf, sizeof(buf));
+  const char* expected =
+      "== proto ==\n"
+      "name=#name\n"
+      "sourceFile=#file\n"
+      "params=0 locals=0 stack=0 flags=async,varargs,kwargs\n"
+      "code[1]:\n"
+      "0000 MS_OP_RETURN A=0 Bx=0\n"
+      "consts[0]:\n"
+      "tryBlocks[0]:\n"
+      "lines[0]:\n";
+  if (strcmp(buf, expected) != 0) {
+    printf("--- expected ---\n%s--- actual ---\n%s---\n", expected, buf);
+    MS_ASSERT_TRUE(false);
+  }
+  msProtoFree(proto);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -537,7 +612,10 @@ static const MsTestCase msTestCases[] = {
   {"Proto.BuildWithStickyErrorFails", testprotobuildWithStickyErrorFails},
   {"Proto.LineAtBinarySearch", testprotolineAtBinarySearch},
   {"Proto.DumpGolden", testprotodumpGolden},
-  {"Proto.BuildFreeNoLeaks", testprotobuildFreeNoLeaks}
+  {"Proto.BuildFreeNoLeaks", testprotobuildFreeNoLeaks},
+  {"Proto.BuildOomRecoverableByDestroy", testprotobuildOomRecoverableByDestroy},
+  {"Proto.LineAtClampsBeforeFirstEntry", testprotolineAtClampsBeforeFirstEntry},
+  {"Proto.DumpFlagsAndNamedProto", testprotodumpFlagsAndNamedProto}
 };
 
 MS_TEST_MAIN(msTestCases)
