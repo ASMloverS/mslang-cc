@@ -496,7 +496,11 @@ static MsCompareOp compareOpForToken(MsTokenType type) {
     default:
       // Unreachable: the rule table routes only the tokens above here.
       MS_UNREACHABLE();
+#ifndef NDEBUG
+      // Debug MS_UNREACHABLE is a plain assert: MSVC still needs a return here
+      // (C4715). In release __assume(0) makes it unreachable code (C4702).
       return MS_CMP_EQ;
+#endif
   }
 }
 
