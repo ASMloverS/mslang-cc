@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [02 核心基础设施](02-core-infrastructure.md) |
+| v0.1 | ✅ | [02 核心基础设施](02-core-infrastructure.md) |
 
 ## 任务目标
 
@@ -325,11 +325,11 @@ void msProtoDump(const struct MsProto* proto, FILE* out);
 
 ## 验收标准
 
-- [ ] `src/vm/ms_opcode.{h,c}` 与 `src/vm/ms_proto.{h,c}` 存在，guard 分别为 `MSLANG_SRC_VM_MS_OPCODE_H_` / `MSLANG_SRC_VM_MS_PROTO_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef）。
-- [ ] 指令定长 4 字节、两种格式位布局与本文一致；编码/解码内联函数对全操作码与边界操作数往返正确；`sAx` 有符号 24 位、跳转偏移相对下一条指令。
-- [ ] `MsOpCode` 全集 82 条 + `MS_OP_COUNT`，v0.1 子集 63 条；元数据表与枚举同序完备，`msOpName`/`msOpFormatOf` 行为符合测试方案。
-- [ ] `struct MsProto` 字段与本文一致（含补充的 `tryBlocksLen`/`linesLen`，不含留待任务 06 的 GC 头）；常量池上限 65536、去重与所有权约定落实。
-- [ ] 构建器 API 完整（发射/行号/回填/常量/异常表/定稿/释放），粘性错误模型与所有权移交语义如文所述；全部堆分配经 `msAlloc/msRealloc/msFree`，分配统计无泄漏。
-- [ ] 行号表游程编码 + 二分查询、异常表布局（含 `MS_PROTO_PC_NONE`）与本文一致。
-- [ ] `tests/c/test_opcode.c` 与 `tests/c/test_proto.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；对任务 02/06 的接口假定（`msAlloc`、`MsResult`、`struct MsObject`、`msObjectValueEquals` 等）在实现时已按对应任务文档对齐。
+- [x] `src/vm/ms_opcode.{h,c}` 与 `src/vm/ms_proto.{h,c}` 存在，guard 分别为 `MSLANG_SRC_VM_MS_OPCODE_H_` / `MSLANG_SRC_VM_MS_PROTO_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef）。
+- [x] 指令定长 4 字节、两种格式位布局与本文一致；编码/解码内联函数对全操作码与边界操作数往返正确；`sAx` 有符号 24 位、跳转偏移相对下一条指令。
+- [x] `MsOpCode` 全集 82 条 + `MS_OP_COUNT`，v0.1 子集 63 条；元数据表与枚举同序完备，`msOpName`/`msOpFormatOf` 行为符合测试方案。
+- [x] `struct MsProto` 字段与本文一致（含补充的 `tryBlocksLen`/`linesLen`，不含留待任务 06 的 GC 头）；常量池上限 65536、去重与所有权约定落实。
+- [x] 构建器 API 完整（发射/行号/回填/常量/异常表/定稿/释放），粘性错误模型与所有权移交语义如文所述；全部堆分配经 `msAlloc/msRealloc/msFree`，分配统计无泄漏。
+- [x] 行号表游程编码 + 二分查询、异常表布局（含 `MS_PROTO_PC_NONE`）与本文一致。
+- [x] `tests/c/test_opcode.c` 与 `tests/c/test_proto.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；对任务 02/06 的接口假定（`msAlloc`、`MsResult`、`struct MsObject`、`msObjectValueEquals` 等）在实现时已按对应任务文档对齐。
