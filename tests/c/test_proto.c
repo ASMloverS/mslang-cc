@@ -212,6 +212,41 @@ MS_TEST(proto, patchRejectsBadPcAndRange) {
   msProtoBuilderDestroy(&b);
 }
 
+MS_TEST(proto, patchSAxLastInstruction) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  int jumpPc = msProtoEmitSAx(&b, MS_OP_JUMP, 0);   // placeholder as the last instruction
+  MS_ASSERT_EQ(1, jumpPc);
+  MS_ASSERT_EQ(jumpPc, b.proto.codeLen - 1);   // patching the final pc must be accepted
+  // target = pc + 1 + sAx = 1 + 1 - 1 = 1 (self); only the decode matters here.
+  MS_ASSERT_EQ(MS_OK, msProtoPatchSAx(&b, jumpPc, -1));
+  MS_ASSERT_EQ(MS_OP_JUMP, msOpDecodeOp(b.proto.code[1]));
+  MS_ASSERT_EQ(-1, msOpDecodeSAx(b.proto.code[1]));
+  msProtoBuilderDestroy(&b);
+}
+
+MS_TEST(proto, patchStickyShortCircuit) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(-1, msProtoEmitSAx(&b, MS_OP_JUMP, 8388608));   // force sticky failure
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, b.error);
+  // Patch returns the sticky error without validating anything.
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoPatchSAx(&b, 0, 0));
+  MS_ASSERT_EQ(0, b.proto.codeLen);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, b.error);
+  msProtoBuilderDestroy(&b);
+}
+
+MS_TEST(proto, patchSAxNegativeBoundary) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitSAx(&b, MS_OP_JUMP, 0));   // placeholder offset
+  MS_ASSERT_EQ(MS_OK, msProtoPatchSAx(&b, 0, -8388608));   // min 24-bit sAx accepted
+  MS_ASSERT_EQ(-8388608, msOpDecodeSAx(b.proto.code[0]));
+  msProtoBuilderDestroy(&b);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -225,7 +260,10 @@ static const MsTestCase msTestCases[] = {
   {"Proto.LineTableGrowthPreservesRuns", testprotolineTableGrowthPreservesRuns},
   {"Proto.PatchSAxJump", testprotopatchSAxJump},
   {"Proto.PatchRejectsAbcInstruction", testprotopatchRejectsAbcInstruction},
-  {"Proto.PatchRejectsBadPcAndRange", testprotopatchRejectsBadPcAndRange}
+  {"Proto.PatchRejectsBadPcAndRange", testprotopatchRejectsBadPcAndRange},
+  {"Proto.PatchSAxLastInstruction", testprotopatchSAxLastInstruction},
+  {"Proto.PatchStickyShortCircuit", testprotopatchStickyShortCircuit},
+  {"Proto.PatchSAxNegativeBoundary", testprotopatchSAxNegativeBoundary}
 };
 
 MS_TEST_MAIN(msTestCases)
