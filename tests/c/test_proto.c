@@ -1,4 +1,6 @@
 #include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "core/ms_memory.h"
 #include "vm/ms_opcode.h"
@@ -10,6 +12,17 @@ static char msTestFakeConstA;
 static char msTestFakeConstB;
 static char msTestFakeConstC;
 static char msTestFakeConstPool[16];
+
+// Dumps proto into buf (NUL-terminated) via a tmpfile.
+static void msTestDumpProto(const struct MsProto* proto, char* buf, size_t bufSize) {
+  FILE* out = tmpfile();
+  MS_ASSERT_TRUE(out != NULL);
+  msProtoDump(proto, out);
+  rewind(out);
+  size_t n = fread(buf, 1, bufSize - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+}
 
 MS_TEST(proto, builderInitZeroed) {
   struct MsProtoBuilder b;
@@ -335,6 +348,167 @@ MS_TEST(proto, addConstAndTryBlockOomSticky) {
   msProtoBuilderDestroy(&b);
 }
 
+MS_TEST(proto, buildShrinksToExactLen) {
+  msMemResetStats();
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  msProtoSetLine(&b, 1);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&b, MS_OP_RETURN, 0, 0));
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  MS_ASSERT_TRUE(proto != NULL);
+  MS_ASSERT_EQ(2, proto->codeLen);
+  MS_ASSERT_EQ(1, proto->constsLen);
+  MS_ASSERT_EQ(1, proto->linesLen);
+  MS_ASSERT_EQ(0, proto->tryBlocksLen);
+  MS_ASSERT_TRUE(proto->tryBlocks == NULL);
+  // len == cap after shrink: live bytes equal the exact sizes, no slack.
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ((long long)(sizeof(struct MsProto) + 2 * sizeof(uint32_t)
+      + sizeof(struct MsObject*) + sizeof(struct MsLineEntry)), (long long)stats.currentBytes);
+  // Builder left empty (pin 11); a second destroy is a safe no-op.
+  MS_ASSERT_TRUE(b.proto.code == NULL);
+  MS_ASSERT_EQ(0, b.proto.codeLen);
+  MS_ASSERT_EQ(0, b.codeCap);
+  MS_ASSERT_EQ(MS_OK, b.error);
+  msProtoBuilderDestroy(&b);
+  msProtoFree(proto);
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, buildZeroLengthArraysNull) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_RETURN, 0, 0));   // no SetLine, no consts
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  MS_ASSERT_TRUE(proto->consts == NULL);
+  MS_ASSERT_EQ(0, proto->constsLen);
+  MS_ASSERT_TRUE(proto->tryBlocks == NULL);
+  MS_ASSERT_TRUE(proto->lines == NULL);
+  MS_ASSERT_EQ(0, (long long)msProtoLineAt(proto, 0));   // empty line table reads as 0
+  msProtoFree(proto);
+}
+
+MS_TEST(proto, buildEmptyCodeFails) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoBuild(&b, &proto));
+  MS_ASSERT_TRUE(proto == NULL);            // out untouched
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, b.error);   // recorded sticky
+  msProtoBuilderDestroy(&b);                // caller still owns the builder
+}
+
+MS_TEST(proto, buildWithStickyErrorFails) {
+  msMemResetStats();
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  MS_ASSERT_EQ(-1, msProtoEmitSAx(&b, MS_OP_JUMP, 8388608));   // sticky SYNTAX
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, msProtoBuild(&b, &proto));
+  MS_ASSERT_TRUE(proto == NULL);
+  MS_ASSERT_TRUE(b.proto.code != NULL);   // ownership retained by the caller
+  msProtoBuilderDestroy(&b);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, lineAtBinarySearch) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  msProtoSetLine(&b, 1);
+  msProtoEmitABC(&b, MS_OP_NOP, 0, 0);   // pc 0 -> line 1
+  msProtoEmitABC(&b, MS_OP_NOP, 0, 0);   // pc 1 -> line 1
+  msProtoSetLine(&b, 5);
+  msProtoEmitABC(&b, MS_OP_NOP, 0, 0);   // pc 2 -> line 5
+  msProtoEmitABC(&b, MS_OP_NOP, 0, 0);   // pc 3 -> line 5
+  msProtoEmitABC(&b, MS_OP_NOP, 0, 0);   // pc 4 -> line 5
+  msProtoSetLine(&b, 9);
+  msProtoEmitABC(&b, MS_OP_NOP, 0, 0);   // pc 5 -> line 9
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  MS_ASSERT_EQ(3, proto->linesLen);
+  MS_ASSERT_EQ(1, (long long)msProtoLineAt(proto, 0));    // first entry
+  MS_ASSERT_EQ(1, (long long)msProtoLineAt(proto, 1));    // inside first run
+  MS_ASSERT_EQ(5, (long long)msProtoLineAt(proto, 2));    // middle entry
+  MS_ASSERT_EQ(5, (long long)msProtoLineAt(proto, 4));    // end of middle run
+  MS_ASSERT_EQ(9, (long long)msProtoLineAt(proto, 5));    // last entry
+  MS_ASSERT_EQ(9, (long long)msProtoLineAt(proto, 100));  // beyond last run: clamp
+  msProtoFree(proto);
+}
+
+MS_TEST(proto, dumpGolden) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  msProtoSetLine(&b, 1);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_LOAD_CONST, 0, 0));
+  msProtoSetLine(&b, 3);
+  int jumpPc = msProtoEmitSAx(&b, MS_OP_JUMP, 0);
+  MS_ASSERT_EQ(1, jumpPc);
+  MS_ASSERT_EQ(2, msProtoEmitABC(&b, MS_OP_NOP, 0, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&b, MS_OP_RETURN, 0, 0));
+  MS_ASSERT_EQ(MS_OK, msProtoPatchSAx(&b, jumpPc, 1));   // target = 1 + 1 + 1 = 3
+  MS_ASSERT_EQ(MS_OK, msProtoAddTryBlock(&b, 0, 2, MS_PROTO_PC_NONE, 3));
+  // Metadata fields are written directly by the compiler before build.
+  b.proto.paramCount = 2;
+  b.proto.localCount = 4;
+  b.proto.stackSize = 8;
+  b.proto.hasVarArgs = true;
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  char buf[4096];
+  msTestDumpProto(proto, buf, sizeof(buf));
+  const char* expected =
+      "== proto ==\n"
+      "name=-\n"
+      "sourceFile=-\n"
+      "params=2 locals=4 stack=8 flags=varargs\n"
+      "code[4]:\n"
+      "0000 MS_OP_LOAD_CONST A=0 Bx=0\n"
+      "0001 MS_OP_JUMP sAx=1\n"
+      "0002 MS_OP_NOP A=0 Bx=0\n"
+      "0003 MS_OP_RETURN A=0 Bx=0\n"
+      "consts[1]:\n"
+      "#k0\n"
+      "tryBlocks[1]:\n"
+      "[0, 2) handler=- finally=3\n"
+      "lines[2]:\n"
+      "pc=0 line=1\n"
+      "pc=1 line=3\n";
+  if (strcmp(buf, expected) != 0) {
+    printf("--- expected ---\n%s--- actual ---\n%s---\n", expected, buf);
+    MS_ASSERT_TRUE(false);
+  }
+  msProtoFree(proto);
+}
+
+MS_TEST(proto, buildFreeNoLeaks) {
+  msMemResetStats();
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA);
+  msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstB);
+  msProtoSetLine(&b, 1);
+  msProtoEmitABC(&b, MS_OP_LOAD_CONST, 0, 0);
+  msProtoSetLine(&b, 2);
+  msProtoEmitABC(&b, MS_OP_RETURN, 0, 0);
+  msProtoAddTryBlock(&b, 0, 1, 1, MS_PROTO_PC_NONE);
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  msProtoFree(proto);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -356,7 +530,14 @@ static const MsTestCase msTestCases[] = {
   {"Proto.AddConstCap65536", testprotoaddConstCap65536},
   {"Proto.AddTryBlockFieldsPreserved", testprotoaddTryBlockFieldsPreserved},
   {"Proto.AddConstGrowthAndDedupAfterRegrow", testprotoaddConstGrowthAndDedupAfterRegrow},
-  {"Proto.AddConstAndTryBlockOomSticky", testprotoaddConstAndTryBlockOomSticky}
+  {"Proto.AddConstAndTryBlockOomSticky", testprotoaddConstAndTryBlockOomSticky},
+  {"Proto.BuildShrinksToExactLen", testprotobuildShrinksToExactLen},
+  {"Proto.BuildZeroLengthArraysNull", testprotobuildZeroLengthArraysNull},
+  {"Proto.BuildEmptyCodeFails", testprotobuildEmptyCodeFails},
+  {"Proto.BuildWithStickyErrorFails", testprotobuildWithStickyErrorFails},
+  {"Proto.LineAtBinarySearch", testprotolineAtBinarySearch},
+  {"Proto.DumpGolden", testprotodumpGolden},
+  {"Proto.BuildFreeNoLeaks", testprotobuildFreeNoLeaks}
 };
 
 MS_TEST_MAIN(msTestCases)

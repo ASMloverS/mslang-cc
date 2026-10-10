@@ -143,3 +143,141 @@ void msProtoBuilderDestroy(struct MsProtoBuilder* b) {
   msFree(b->proto.lines);
   msProtoBuilderInit(b);
 }
+
+// Shrinks one array to exact length; len == 0 frees it and stores NULL.
+// On OOM the original block is left untouched (still owned by the builder).
+static bool msProtoShrinkArray(void** items, int len, size_t itemSize) {
+  if (len == 0) {
+    msFree(*items);
+    *items = NULL;
+    return true;
+  }
+  void* shrunk = msRealloc(*items, (size_t)len * itemSize);
+  if (shrunk == NULL) {
+    return false;
+  }
+  *items = shrunk;
+  return true;
+}
+
+MsResult msProtoBuild(struct MsProtoBuilder* b, struct MsProto** out) {
+  if (b->error != MS_OK) {
+    return b->error;
+  }
+  if (b->proto.codeLen == 0) {
+    b->error = MS_ERROR_SYNTAX;
+    return MS_ERROR_SYNTAX;
+  }
+  if (!msProtoShrinkArray((void**)&b->proto.code, b->proto.codeLen, sizeof(uint32_t))
+      || !msProtoShrinkArray((void**)&b->proto.consts, b->proto.constsLen, sizeof(struct MsObject*))
+      || !msProtoShrinkArray((void**)&b->proto.tryBlocks, b->proto.tryBlocksLen, sizeof(struct MsTryBlock))
+      || !msProtoShrinkArray((void**)&b->proto.lines, b->proto.linesLen, sizeof(struct MsLineEntry))) {
+    b->error = MS_ERROR_OOM;
+    return MS_ERROR_OOM;
+  }
+  struct MsProto* proto = msAlloc(sizeof(struct MsProto));
+  if (proto == NULL) {
+    b->error = MS_ERROR_OOM;
+    return MS_ERROR_OOM;
+  }
+  *proto = b->proto;
+  memset(b, 0, sizeof(*b));   // builder left empty; destroy is a no-op
+  *out = proto;
+  return MS_OK;
+}
+
+void msProtoFree(struct MsProto* proto) {
+  if (proto == NULL) {
+    return;
+  }
+  msFree(proto->code);
+  msFree(proto->consts);   // pool entries belong to the object model, not freed here
+  msFree(proto->tryBlocks);
+  msFree(proto->lines);
+  msFree(proto);
+}
+
+uint32_t msProtoLineAt(const struct MsProto* proto, int pc) {
+  if (proto->linesLen == 0) {
+    return 0;
+  }
+  // Last entry with entry.pc <= pc, clamped to the first/last run.
+  int lo = 0;
+  int hi = proto->linesLen - 1;
+  if (pc < (int)proto->lines[lo].pc) {
+    return proto->lines[lo].line;
+  }
+  while (lo < hi) {
+    int mid = (lo + hi + 1) / 2;
+    if ((int)proto->lines[mid].pc <= pc) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return proto->lines[lo].line;
+}
+
+// Prints handlerPc/finallyPc as "-" for MS_PROTO_PC_NONE, else the number.
+static void msProtoDumpPc(uint32_t pc, char* buf, size_t bufSize) {
+  if (pc == MS_PROTO_PC_NONE) {
+    snprintf(buf, bufSize, "-");
+  } else {
+    snprintf(buf, bufSize, "%u", (unsigned)pc);
+  }
+}
+
+void msProtoDump(const struct MsProto* proto, FILE* out) {
+  fprintf(out, "== proto ==\n");
+  fprintf(out, "name=%s\n", proto->name != NULL ? "#name" : "-");
+  fprintf(out, "sourceFile=%s\n", proto->sourceFile != NULL ? "#file" : "-");
+  fprintf(out, "params=%d locals=%d stack=%d flags=",
+      proto->paramCount, proto->localCount, proto->stackSize);
+  bool anyFlag = false;
+  if (proto->isAsync) {
+    fprintf(out, "async");
+    anyFlag = true;
+  }
+  if (proto->hasVarArgs) {
+    fprintf(out, "%svarargs", anyFlag ? "," : "");
+    anyFlag = true;
+  }
+  if (proto->hasKwArgs) {
+    fprintf(out, "%skwargs", anyFlag ? "," : "");
+    anyFlag = true;
+  }
+  if (!anyFlag) {
+    fprintf(out, "-");
+  }
+  fprintf(out, "\n");
+  fprintf(out, "code[%d]:\n", proto->codeLen);
+  for (int pc = 0; pc < proto->codeLen; ++pc) {
+    uint32_t instr = proto->code[pc];
+    MsOpCode op = msOpDecodeOp(instr);
+    if (msOpFormatOf(op) == MS_OPFMT_SAX) {
+      fprintf(out, "%04d %s sAx=%d\n", pc, msOpName(op), msOpDecodeSAx(instr));
+    } else {
+      fprintf(out, "%04d %s A=%u Bx=%u\n", pc, msOpName(op),
+          (unsigned)msOpDecodeA(instr), (unsigned)msOpDecodeBx(instr));
+    }
+  }
+  fprintf(out, "consts[%d]:\n", proto->constsLen);
+  for (int i = 0; i < proto->constsLen; ++i) {
+    fprintf(out, "#k%d\n", i);   // placeholder until the object model lands
+  }
+  fprintf(out, "tryBlocks[%d]:\n", proto->tryBlocksLen);
+  for (int i = 0; i < proto->tryBlocksLen; ++i) {
+    const struct MsTryBlock* block = &proto->tryBlocks[i];
+    char handler[16];
+    char finally[16];
+    msProtoDumpPc(block->handlerPc, handler, sizeof(handler));
+    msProtoDumpPc(block->finallyPc, finally, sizeof(finally));
+    fprintf(out, "[%u, %u) handler=%s finally=%s\n",
+        (unsigned)block->pcStart, (unsigned)block->pcEnd, handler, finally);
+  }
+  fprintf(out, "lines[%d]:\n", proto->linesLen);
+  for (int i = 0; i < proto->linesLen; ++i) {
+    fprintf(out, "pc=%u line=%u\n",
+        (unsigned)proto->lines[i].pc, (unsigned)proto->lines[i].line);
+  }
+}
