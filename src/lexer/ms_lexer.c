@@ -1481,6 +1481,7 @@ static size_t msLexerEncodeUtf8(uint32_t value, char* out) {
 // malformed a caller bug (MS_ASSERT).
 static size_t msLexerDecodeEscape(const char* raw, size_t rawLen, size_t* pos, char* out) {
   MS_ASSERT(*pos + 1 < rawLen && raw[*pos] == '\\');
+  MS_UNUSED(rawLen);   // only the assert above reads it (compiled out under NDEBUG)
   char kind = raw[*pos + 1];
   switch (kind) {
     case 'n':
