@@ -61,7 +61,7 @@ MS_TEST(object, freeUnlinksHeadMidTail) {
   struct MsObject* b = msObjectAlloc(&heap, MS_TYPE_INT, sizeof(struct MsInt));
   struct MsObject* c = msObjectAlloc(&heap, MS_TYPE_INT, sizeof(struct MsInt));
   struct MsObject* d = msObjectAlloc(&heap, MS_TYPE_INT, sizeof(struct MsInt));
-  MS_ASSERT_TRUE(d != NULL);                     // list: d -> c -> b -> a
+  MS_ASSERT_TRUE(a != NULL && b != NULL && c != NULL && d != NULL);  // list: d -> c -> b -> a
   MS_ASSERT_EQ(4, (long long)heap.objectCount);
   msObjectFree(&heap, d);                        // head
   MS_ASSERT_TRUE(heap.allObjects == c);
@@ -92,15 +92,28 @@ MS_TEST(object, allocOomReturnsNull) {
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_EQ(0, (long long)heap.objectCount);
   msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
 MS_TEST(object, heapDestroyNullAndZeroedSafe) {
+  msMemResetStats();
   msHeapDestroy(NULL);
   struct MsHeap heap;
   memset(&heap, 0, sizeof(heap));
   msHeapDestroy(&heap);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_EQ(0, (long long)heap.objectCount);
+  struct MsObject* obj = msObjectAlloc(&heap, MS_TYPE_NIL, sizeof(struct MsObject));
+  MS_ASSERT_TRUE(obj != NULL);
+  msHeapDestroy(&heap);
+  msHeapDestroy(&heap);                          // double destroy is a no-op
+  MS_ASSERT_TRUE(heap.allObjects == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.objectCount);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
 MS_TEST(object, allocMinimumSizeIsBaseObject) {
@@ -116,11 +129,31 @@ MS_TEST(object, allocMinimumSizeIsBaseObject) {
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
+MS_TEST(object, freeUnlinkedObjectIsIgnored) {
+  msMemResetStats();
+  struct MsHeap heap;
+  memset(&heap, 0, sizeof(heap));
+  struct MsObject* a = msObjectAlloc(&heap, MS_TYPE_INT, sizeof(struct MsInt));
+  MS_ASSERT_TRUE(a != NULL);
+  struct MsObject stranger;
+  memset(&stranger, 0, sizeof(stranger));        // never linked
+#ifdef NDEBUG
+  msObjectFree(&heap, &stranger);                // must not touch list, count, or the stranger
+#endif
+  MS_ASSERT_TRUE(heap.allObjects == a);
+  MS_ASSERT_EQ(1, (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
 static const MsTestCase msTestCases[] = {
   {"object.typeTagCountIs20", testobjecttypeTagCountIs20},
   {"object.typeTagNamesCompleteDistinctOrdered", testobjecttypeTagNamesCompleteDistinctOrdered},
   {"object.allocLinksIntoAllObjectsList", testobjectallocLinksIntoAllObjectsList},
   {"object.freeUnlinksHeadMidTail", testobjectfreeUnlinksHeadMidTail},
+  {"object.freeUnlinkedObjectIsIgnored", testobjectfreeUnlinkedObjectIsIgnored},
   {"object.allocOomReturnsNull", testobjectallocOomReturnsNull},
   {"object.heapDestroyNullAndZeroedSafe", testobjectheapDestroyNullAndZeroedSafe},
   {"object.allocMinimumSizeIsBaseObject", testobjectallocMinimumSizeIsBaseObject},

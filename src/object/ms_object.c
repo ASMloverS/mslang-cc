@@ -51,11 +51,10 @@ void msObjectFree(struct MsHeap* heap, struct MsObject* obj) {
   while (*link != NULL && *link != obj) {
     link = &(*link)->header.gcNext;
   }
-  // Only linked objects may be freed; MS_ASSERT guards debug, this guards release.
+  MS_ASSERT(*link != NULL);  // freeing an unlinked object is a programming error
   if (*link == NULL) {
-    return;
+    return;                  // release guard
   }
-  MS_ASSERT(*link == obj);
   *link = obj->header.gcNext;
   --heap->objectCount;
   msFree(obj);
