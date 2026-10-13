@@ -4,6 +4,7 @@
 
 #include "core/ms_common.h"
 #include "core/ms_memory.h"
+#include "object/ms_object.h"
 
 #define MS_PROTO_INITIAL_CAP 8
 #define MS_PROTO_CONSTS_MAX 65536   // Bx-indexed pool: 2^16 entries per proto
@@ -98,9 +99,9 @@ int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value) {
     b->error = MS_ERROR_SYNTAX;
     return -1;
   }
-  // Pointer-identity dedup until task 06 lands msObjectValueEquals.
+  // Value dedup per the constant-pool contract (msObjectValueEquals, task 06).
   for (int i = 0; i < b->proto.constsLen; ++i) {
-    if (b->proto.consts[i] == value) {
+    if (msObjectValueEquals(b->proto.consts[i], value)) {
       return i;
     }
   }
@@ -263,7 +264,7 @@ void msProtoDump(const struct MsProto* proto, FILE* out) {
   }
   fprintf(out, "consts[%d]:\n", proto->constsLen);
   for (int i = 0; i < proto->constsLen; ++i) {
-    fprintf(out, "#k%d\n", i);   // placeholder until the object model lands
+    fprintf(out, "#k%d\n", i);   // placeholder; value rendering is a later task
   }
   fprintf(out, "tryBlocks[%d]:\n", proto->tryBlocksLen);
   for (int i = 0; i < proto->tryBlocksLen; ++i) {

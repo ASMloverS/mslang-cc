@@ -3,15 +3,10 @@
 #include <string.h>
 
 #include "core/ms_memory.h"
+#include "object/ms_object.h"
 #include "vm/ms_opcode.h"
 #include "vm/ms_proto.h"
 #include "ms_test.h"
-
-// Stand-ins for struct MsObject until task 06 lands; never dereferenced.
-static char msTestFakeConstA;
-static char msTestFakeConstB;
-static char msTestFakeConstC;
-static char msTestFakeConstPool[16];
 
 // Dumps proto into buf (NUL-terminated) via a tmpfile.
 static void msTestDumpProto(const struct MsProto* proto, char* buf, size_t bufSize) {
@@ -266,21 +261,41 @@ MS_TEST(proto, patchSAxNegativeBoundary) {
   msProtoBuilderDestroy(&b);
 }
 
-MS_TEST(proto, addConstPointerDedup) {
+MS_TEST(proto, addConstValueDedup) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  // Values >= 4096 are outside the int cache: every msIntNew returns a
+  // distinct object, so equal values below always come from distinct pointers.
+  struct MsObject* kA = (struct MsObject*)msIntNew(&heap, 5000);
+  struct MsObject* kA2 = (struct MsObject*)msIntNew(&heap, 5000);
+  struct MsObject* kB = (struct MsObject*)msIntNew(&heap, 5001);
+  struct MsObject* kC = (struct MsObject*)msIntNew(&heap, 5002);
+  MS_ASSERT_TRUE(kA != kA2);   // distinct pointers, equal value
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
-  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
-  MS_ASSERT_EQ(1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstB));
-  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));   // dedup
-  MS_ASSERT_EQ(2, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstC));
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, kA));
+  MS_ASSERT_EQ(1, msProtoAddConst(&b, kB));
+  // Value dedup: kA2 equals kA by value, so it reuses slot 0.
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, kA2));
+  MS_ASSERT_EQ(2, msProtoAddConst(&b, kC));
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, kA));   // identity fast path also dedups
   MS_ASSERT_EQ(3, b.proto.constsLen);
-  MS_ASSERT_TRUE(b.proto.consts[0] == (struct MsObject*)&msTestFakeConstA);
-  MS_ASSERT_TRUE(b.proto.consts[1] == (struct MsObject*)&msTestFakeConstB);
-  MS_ASSERT_TRUE(b.proto.consts[2] == (struct MsObject*)&msTestFakeConstC);
+  MS_ASSERT_TRUE(b.proto.consts[0] == kA);
+  MS_ASSERT_TRUE(b.proto.consts[1] == kB);
+  MS_ASSERT_TRUE(b.proto.consts[2] == kC);
   msProtoBuilderDestroy(&b);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
 MS_TEST(proto, addConstCap65536) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsObject* kA = (struct MsObject*)msIntNew(&heap, 5000);
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
   // Simulate a full pool by writing the public builder field directly (the
@@ -288,10 +303,14 @@ MS_TEST(proto, addConstCap65536) {
   // BEFORE the dedup scan, so no backing array is needed and the test is
   // O(1) -- filling 65536 real entries through the API would be O(n^2).
   b.proto.constsLen = 65536;
-  MS_ASSERT_EQ(-1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  MS_ASSERT_EQ(-1, msProtoAddConst(&b, kA));
   MS_ASSERT_EQ(MS_ERROR_SYNTAX, b.error);
   b.proto.constsLen = 0;   // restore before destroy
   msProtoBuilderDestroy(&b);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
 MS_TEST(proto, addTryBlockFieldsPreserved) {
@@ -313,28 +332,45 @@ MS_TEST(proto, addTryBlockFieldsPreserved) {
 }
 
 MS_TEST(proto, addConstGrowthAndDedupAfterRegrow) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
   for (int i = 0; i < 16; ++i) {
-    MS_ASSERT_EQ(i, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstPool[i]));
+    // Each value is unique and outside the int cache: 16 distinct objects.
+    struct MsObject* k = (struct MsObject*)msIntNew(&heap, 5000 + i);
+    MS_ASSERT_EQ(i, msProtoAddConst(&b, k));
   }
   MS_ASSERT_EQ(16, b.proto.constsLen);
   MS_ASSERT_EQ(16, b.constsCap);   // doubling from 8: 8 -> 16
-  // The dedup scan must still hit entries written before the reallocation.
-  MS_ASSERT_EQ(3, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstPool[3]));
+  // The value-dedup scan must still hit entries written before the
+  // reallocation, even when the match arrives as a fresh pointer.
+  struct MsObject* k3 = (struct MsObject*)msIntNew(&heap, 5003);
+  MS_ASSERT_TRUE(k3 != b.proto.consts[3]);
+  MS_ASSERT_EQ(3, msProtoAddConst(&b, k3));
   MS_ASSERT_EQ(16, b.proto.constsLen);
   msProtoBuilderDestroy(&b);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
 MS_TEST(proto, addConstAndTryBlockOomSticky) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsObject* kA = (struct MsObject*)msIntNew(&heap, 5000);
+  struct MsObject* kB = (struct MsObject*)msIntNew(&heap, 5001);
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
   msMemSetFailAfter(0);   // the consts grow fails
-  MS_ASSERT_EQ(-1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  MS_ASSERT_EQ(-1, msProtoAddConst(&b, kA));
   MS_ASSERT_EQ(MS_ERROR_OOM, b.error);
   msMemSetFailAfter(-1);
   // Sticky: even with a healthy allocator the builder stays failed.
-  MS_ASSERT_EQ(-1, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstB));
+  MS_ASSERT_EQ(-1, msProtoAddConst(&b, kB));
   MS_ASSERT_EQ(MS_ERROR_OOM, b.error);
   msProtoBuilderDestroy(&b);
   msProtoBuilderInit(&b);
@@ -346,13 +382,24 @@ MS_TEST(proto, addConstAndTryBlockOomSticky) {
   MS_ASSERT_EQ(MS_ERROR_OOM,
       msProtoAddTryBlock(&b, 0, 1, MS_PROTO_PC_NONE, MS_PROTO_PC_NONE));
   msProtoBuilderDestroy(&b);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
 MS_TEST(proto, buildShrinksToExactLen) {
   msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsObject* kA = (struct MsObject*)msIntNew(&heap, 5000);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  // Baseline: the byte-exact check below counts proto allocations only.
+  const long long heapBytes = (long long)stats.currentBytes;
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
-  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, kA));
   msProtoSetLine(&b, 1);
   MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_LOAD_CONST, 0, 0));
   MS_ASSERT_EQ(1, msProtoEmitABC(&b, MS_OP_RETURN, 0, 0));
@@ -365,10 +412,10 @@ MS_TEST(proto, buildShrinksToExactLen) {
   MS_ASSERT_EQ(0, proto->tryBlocksLen);
   MS_ASSERT_TRUE(proto->tryBlocks == NULL);
   // len == cap after shrink: live bytes equal the exact sizes, no slack.
-  struct MsMemStats stats;
   msMemGetStats(&stats);
   MS_ASSERT_EQ((long long)(sizeof(struct MsProto) + 2 * sizeof(uint32_t)
-      + sizeof(struct MsObject*) + sizeof(struct MsLineEntry)), (long long)stats.currentBytes);
+      + sizeof(struct MsObject*) + sizeof(struct MsLineEntry)),
+      (long long)stats.currentBytes - heapBytes);
   // Builder left empty (pin 11); a second destroy is a safe no-op.
   MS_ASSERT_TRUE(b.proto.code == NULL);
   MS_ASSERT_EQ(0, b.proto.codeLen);
@@ -376,6 +423,7 @@ MS_TEST(proto, buildShrinksToExactLen) {
   MS_ASSERT_EQ(MS_OK, b.error);
   msProtoBuilderDestroy(&b);
   msProtoFree(proto);
+  msHeapDestroy(&heap);
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
@@ -445,9 +493,13 @@ MS_TEST(proto, lineAtBinarySearch) {
 }
 
 MS_TEST(proto, dumpGolden) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsObject* kA = (struct MsObject*)msIntNew(&heap, 5000);
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
-  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA));
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, kA));
   msProtoSetLine(&b, 1);
   MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_LOAD_CONST, 0, 0));
   msProtoSetLine(&b, 3);
@@ -488,14 +540,22 @@ MS_TEST(proto, dumpGolden) {
     MS_ASSERT_TRUE(false);
   }
   msProtoFree(proto);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
 MS_TEST(proto, buildFreeNoLeaks) {
   msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsObject* kA = (struct MsObject*)msIntNew(&heap, 5000);
+  struct MsObject* kB = (struct MsObject*)msIntNew(&heap, 5001);
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
-  msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstA);
-  msProtoAddConst(&b, (struct MsObject*)&msTestFakeConstB);
+  msProtoAddConst(&b, kA);
+  msProtoAddConst(&b, kB);
   msProtoSetLine(&b, 1);
   msProtoEmitABC(&b, MS_OP_LOAD_CONST, 0, 0);
   msProtoSetLine(&b, 2);
@@ -504,6 +564,7 @@ MS_TEST(proto, buildFreeNoLeaks) {
   struct MsProto* proto = NULL;
   MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
   msProtoFree(proto);
+  msHeapDestroy(&heap);
   struct MsMemStats stats;
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
@@ -560,9 +621,11 @@ MS_TEST(proto, dumpFlagsAndNamedProto) {
   b.proto.isAsync = true;
   b.proto.hasVarArgs = true;
   b.proto.hasKwArgs = true;
-  // Fake pointers, never dereferenced: dump prints fixed placeholders.
-  b.proto.name = (struct MsString*)&msTestFakeConstA;
-  b.proto.sourceFile = (struct MsString*)&msTestFakeConstB;
+  // Non-NULL stand-ins, never dereferenced: dump prints fixed placeholders.
+  char fakeName;
+  char fakeFile;
+  b.proto.name = (struct MsString*)&fakeName;
+  b.proto.sourceFile = (struct MsString*)&fakeFile;
   struct MsProto* proto = NULL;
   MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
   char buf[4096];
@@ -601,7 +664,7 @@ static const MsTestCase msTestCases[] = {
   {"Proto.PatchSAxLastInstruction", testprotopatchSAxLastInstruction},
   {"Proto.PatchStickyShortCircuit", testprotopatchStickyShortCircuit},
   {"Proto.PatchSAxNegativeBoundary", testprotopatchSAxNegativeBoundary},
-  {"Proto.AddConstPointerDedup", testprotoaddConstPointerDedup},
+  {"Proto.AddConstValueDedup", testprotoaddConstValueDedup},
   {"Proto.AddConstCap65536", testprotoaddConstCap65536},
   {"Proto.AddTryBlockFieldsPreserved", testprotoaddTryBlockFieldsPreserved},
   {"Proto.AddConstGrowthAndDedupAfterRegrow", testprotoaddConstGrowthAndDedupAfterRegrow},
