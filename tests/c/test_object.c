@@ -1,5 +1,7 @@
 #include "object/ms_object.h"
 
+#include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "core/ms_memory.h"
@@ -182,6 +184,16 @@ MS_TEST(object, heapInitOomLeavesHeapZeroed) {
   msMemSetFailAfter(-1);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_TRUE(heap.internSlots == NULL);
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+  // Mid-loop rollback: buckets + 9 names succeed, the 10th name fails; the
+  // partially populated name set must be freed and *heap re-zeroed.
+  msMemResetStats();
+  msMemSetFailAfter(10);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msHeapInit(&heap));
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(heap.allObjects == NULL);
+  MS_ASSERT_TRUE(heap.internSlots == NULL);
   MS_ASSERT_EQ(0, (long long)heap.internCap);
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
@@ -261,6 +273,138 @@ MS_TEST(object, permanentObjectsNotLinked) {
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
+static uint64_t msTestDoubleBits(double v) {
+  uint64_t bits;
+  memcpy(&bits, &v, sizeof(bits));
+  return bits;
+}
+
+MS_TEST(object, singletonAccessorsIdentity) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  MS_ASSERT_TRUE(msHeapNil(&heap) == msHeapNil(&heap));
+  MS_ASSERT_TRUE(msHeapNil(&heap) == &heap.nilObject);
+  MS_ASSERT_TRUE(msHeapBool(&heap, true) == msHeapBool(&heap, true));
+  MS_ASSERT_TRUE(msHeapBool(&heap, false) == msHeapBool(&heap, false));
+  MS_ASSERT_TRUE(msHeapBool(&heap, true) != msHeapBool(&heap, false));
+  MS_ASSERT_TRUE(msHeapBool(&heap, true) != msHeapNil(&heap));
+  size_t countBefore = heap.objectCount;
+  msHeapNil(&heap);
+  msHeapBool(&heap, true);
+  MS_ASSERT_EQ((long long)countBefore, (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, intCacheIdentityAtBoundaries) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  int64_t cached[] = {-256, 0, 4095};
+  for (size_t i = 0; i < sizeof(cached) / sizeof(cached[0]); ++i) {
+    struct MsInt* a = msIntNew(&heap, cached[i]);
+    struct MsInt* b = msIntNew(&heap, cached[i]);
+    MS_ASSERT_TRUE(a == b);                      // resident: same pointer
+    MS_ASSERT_EQ(cached[i], (long long)a->value);
+    MS_ASSERT_EQ(MS_TYPE_INT, a->header.tag);
+    MS_ASSERT_EQ(MS_MARK_BLACK, a->header.markColor);
+  }
+  MS_ASSERT_EQ(20, (long long)heap.objectCount); // cache hits never allocate
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, intUncachedAllocates) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  int64_t uncached[] = {-257, 4096, INT64_MIN, INT64_MAX};
+  size_t countBefore = heap.objectCount;
+  for (size_t i = 0; i < sizeof(uncached) / sizeof(uncached[0]); ++i) {
+    struct MsInt* a = msIntNew(&heap, uncached[i]);
+    struct MsInt* b = msIntNew(&heap, uncached[i]);
+    MS_ASSERT_TRUE(a != NULL && b != NULL);
+    MS_ASSERT_TRUE(a != b);                      // fresh allocation each time
+    MS_ASSERT_EQ(uncached[i], (long long)a->value);
+    MS_ASSERT_EQ(MS_MARK_WHITE, a->header.markColor);
+  }
+  MS_ASSERT_EQ((long long)(countBefore + 8), (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, intAccessorsRoundtrip) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsInt* cached = msIntNew(&heap, 42);
+  struct MsInt* fresh = msIntNew(&heap, 5000);
+  MS_ASSERT_TRUE(fresh != NULL);
+  MS_ASSERT_TRUE(msIntIsWord((struct MsObject*)cached));
+  MS_ASSERT_TRUE(msIntIsWord((struct MsObject*)fresh));
+  MS_ASSERT_EQ(42, (long long)msIntWordValue((struct MsObject*)cached));
+  MS_ASSERT_EQ(5000, (long long)msIntWordValue((struct MsObject*)fresh));
+  MS_ASSERT_EQ(MS_TYPE_INT, msObjectTag((struct MsObject*)cached));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, intNewOomReturnsNull) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  size_t countBefore = heap.objectCount;
+  msMemSetFailAfter(0);
+  struct MsInt* obj = msIntNew(&heap, 5000);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(obj == NULL);
+  MS_ASSERT_EQ((long long)countBefore, (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, floatRoundtripPreservesBits) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  double values[] = {0.0, -0.0, 3.14, -2.5e300, INFINITY, -INFINITY, NAN};
+  for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    struct MsFloat* f = msFloatNew(&heap, values[i]);
+    MS_ASSERT_TRUE(f != NULL);
+    MS_ASSERT_EQ(MS_TYPE_FLOAT, f->header.tag);
+    MS_ASSERT_TRUE(f->header.type == &heap.types[MS_TYPE_FLOAT]);
+    MS_ASSERT_EQ((long long)msTestDoubleBits(values[i]),
+                 (long long)msTestDoubleBits(msFloatValue((struct MsObject*)f)));
+  }
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, boolValueAccessor) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  MS_ASSERT_TRUE(msBoolValue(msHeapBool(&heap, true)));
+  MS_ASSERT_TRUE(!msBoolValue(msHeapBool(&heap, false)));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
 static const MsTestCase msTestCases[] = {
   {"object.typeTagCountIs20", testobjecttypeTagCountIs20},
   {"object.typeTagNamesCompleteDistinctOrdered", testobjecttypeTagNamesCompleteDistinctOrdered},
@@ -274,6 +418,13 @@ static const MsTestCase msTestCases[] = {
   {"object.heapInitOomLeavesHeapZeroed", testobjectheapInitOomLeavesHeapZeroed},
   {"object.typeObjectsCompleteAndSelfReferential", testobjecttypeObjectsCompleteAndSelfReferential},
   {"object.permanentObjectsNotLinked", testobjectpermanentObjectsNotLinked},
+  {"object.singletonAccessorsIdentity", testobjectsingletonAccessorsIdentity},
+  {"object.intCacheIdentityAtBoundaries", testobjectintCacheIdentityAtBoundaries},
+  {"object.intUncachedAllocates", testobjectintUncachedAllocates},
+  {"object.intAccessorsRoundtrip", testobjectintAccessorsRoundtrip},
+  {"object.intNewOomReturnsNull", testobjectintNewOomReturnsNull},
+  {"object.floatRoundtripPreservesBits", testobjectfloatRoundtripPreservesBits},
+  {"object.boolValueAccessor", testobjectboolValueAccessor},
 };
 
 MS_TEST_MAIN(msTestCases)

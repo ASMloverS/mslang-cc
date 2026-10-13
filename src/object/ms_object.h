@@ -83,6 +83,7 @@ _Static_assert(sizeof(struct MsObjectHeader) == 24,
                "the cached tag must not grow the 24-byte header on 64-bit");
 #endif
 
+// Call once on an uninitialized (or destroyed) heap; double-init leaks.
 // MS_ERROR_OOM leaves *heap zeroed.
 MsResult msHeapInit(struct MsHeap* heap);
 

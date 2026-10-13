@@ -132,3 +132,61 @@ MsResult msHeapInit(struct MsHeap* heap) {
   }
   return MS_OK;
 }
+
+struct MsObject* msHeapNil(struct MsHeap* heap) {
+  MS_ASSERT(heap != NULL);
+  return &heap->nilObject;
+}
+
+struct MsObject* msHeapBool(struct MsHeap* heap, bool value) {
+  MS_ASSERT(heap != NULL);
+  return value ? (struct MsObject*)&heap->trueObject : (struct MsObject*)&heap->falseObject;
+}
+
+struct MsInt* msIntNew(struct MsHeap* heap, int64_t value) {
+  MS_ASSERT(heap != NULL);
+  // Residency is an implementation detail (02-types section 6); the cache-hit
+  // decision lives here and nowhere else.
+  if (value >= MS_INT_CACHE_MIN && value <= MS_INT_CACHE_MAX) {
+    return &heap->intCache[value - MS_INT_CACHE_MIN];
+  }
+  struct MsInt* obj = (struct MsInt*)msObjectAlloc(heap, MS_TYPE_INT, sizeof(struct MsInt));
+  if (obj == NULL) {
+    return NULL;
+  }
+  obj->value = value;
+  return obj;
+}
+
+struct MsFloat* msFloatNew(struct MsHeap* heap, double value) {
+  MS_ASSERT(heap != NULL);
+  struct MsFloat* obj =
+      (struct MsFloat*)msObjectAlloc(heap, MS_TYPE_FLOAT, sizeof(struct MsFloat));
+  if (obj == NULL) {
+    return NULL;
+  }
+  obj->value = value;
+  return obj;
+}
+
+bool msIntIsWord(const struct MsObject* obj) {
+  MS_ASSERT(obj != NULL && obj->header.tag == MS_TYPE_INT);
+  MS_UNUSED(obj);                // Release (NDEBUG): the assert compiles out
+  return true;                   // v0.1 ints are always machine-word; task 31 changes this
+}
+
+int64_t msIntWordValue(const struct MsObject* obj) {
+  MS_ASSERT(obj != NULL && obj->header.tag == MS_TYPE_INT);
+  MS_ASSERT(msIntIsWord(obj));
+  return ((const struct MsInt*)obj)->value;
+}
+
+double msFloatValue(const struct MsObject* obj) {
+  MS_ASSERT(obj != NULL && obj->header.tag == MS_TYPE_FLOAT);
+  return ((const struct MsFloat*)obj)->value;
+}
+
+bool msBoolValue(const struct MsObject* obj) {
+  MS_ASSERT(obj != NULL && obj->header.tag == MS_TYPE_BOOL);
+  return ((const struct MsBool*)obj)->value;
+}
