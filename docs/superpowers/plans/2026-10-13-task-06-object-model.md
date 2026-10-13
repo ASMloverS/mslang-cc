@@ -1526,9 +1526,36 @@ MS_TEST(object, truthinessTable) {
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
+
+MS_TEST(object, valueEqualsLargeIntPrecision) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  // 2^53+1 rounds to 2^53 as double: must be UNEQUAL (exact int64 compare),
+  // or equals/hash would diverge and dict numeric keys (task 16) would break.
+  struct MsInt* big = msIntNew(&heap, 9007199254740993LL);        // 2^53 + 1
+  struct MsFloat* bigF = msFloatNew(&heap, 9007199254740992.0);   // 2^53
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)big, (struct MsObject*)bigF));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)bigF, (struct MsObject*)big));
+  // Exactly representable large pair: equal, and hashes must agree.
+  struct MsInt* e60 = msIntNew(&heap, 1152921504606846976LL);     // 2^60
+  struct MsFloat* e60F = msFloatNew(&heap, 1152921504606846976.0);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)e60, (struct MsObject*)e60F));
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)e60),
+               (long long)msObjectHash((struct MsObject*)e60F));
+  // Integral float outside int64 range never equals any int.
+  struct MsFloat* huge = msFloatNew(&heap, 9223372036854775808.0); // 2^63
+  struct MsInt* iMax = msIntNew(&heap, INT64_MAX);
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)huge, (struct MsObject*)iMax));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)iMax, (struct MsObject*)huge));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
 ```
 
-注册 5 个用例进 `msTestCases`。
+注册 6 个用例进 `msTestCases`。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -1561,17 +1588,29 @@ bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b) {
     return false;
   }
   if (a->header.tag != b->header.tag) {
-    // Cross-tag numeric compare: 42 == 42.0 (02-types section 3.2). NaN falls
-    // out naturally: da == db is false when either side is NaN.
-    if ((a->header.tag == MS_TYPE_INT || a->header.tag == MS_TYPE_FLOAT)
-        && (b->header.tag == MS_TYPE_INT || b->header.tag == MS_TYPE_FLOAT)) {
-      double da = a->header.tag == MS_TYPE_INT
-                      ? (double)((const struct MsInt*)a)->value
-                      : ((const struct MsFloat*)a)->value;
-      double db = b->header.tag == MS_TYPE_INT
-                      ? (double)((const struct MsInt*)b)->value
-                      : ((const struct MsFloat*)b)->value;
-      return da == db;
+    // Cross-tag numeric compare (02-types section 6). (double)X is always an
+    // integral double, so equality can only hold when the float side is
+    // integral-valued and in int64 range; compare exactly as int64 so that
+    // msObjectValueEquals and msObjectHash agree by construction (e.g. int
+    // 2^53+1 must NOT equal float 2^53, or their hashes would diverge).
+    // Bigint promotion (task 31) must keep this discipline.
+    const struct MsInt* intSide;
+    const struct MsFloat* floatSide;
+    if (a->header.tag == MS_TYPE_INT && b->header.tag == MS_TYPE_FLOAT) {
+      intSide = (const struct MsInt*)a;
+      floatSide = (const struct MsFloat*)b;
+    } else if (a->header.tag == MS_TYPE_FLOAT && b->header.tag == MS_TYPE_INT) {
+      intSide = (const struct MsInt*)b;
+      floatSide = (const struct MsFloat*)a;
+    } else {
+      return false;
+    }
+    double dv = floatSide->value;
+    if (dv >= -9223372036854775808.0 && dv < 9223372036854775808.0) {
+      int64_t fiv = (int64_t)dv;
+      if ((double)fiv == dv) {
+        return fiv == intSide->value;
+      }
     }
     return false;
   }
@@ -1651,7 +1690,7 @@ bool msObjectIsTruthy(const struct MsObject* obj) {
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-预期：全绿，`test_object` 23/23、`test_string` 11/11、其余既有测试不受影响。
+预期：全绿，`test_object` 26/26、`test_string` 11/11、其余既有测试不受影响。
 
 - [ ] **Step 5: 提交**
 

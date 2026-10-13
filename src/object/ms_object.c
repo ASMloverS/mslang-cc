@@ -209,17 +209,29 @@ bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b) {
     return false;
   }
   if (a->header.tag != b->header.tag) {
-    // Cross-tag numeric compare: 42 == 42.0 (02-types section 3.2). NaN falls
-    // out naturally: da == db is false when either side is NaN.
-    if ((a->header.tag == MS_TYPE_INT || a->header.tag == MS_TYPE_FLOAT)
-        && (b->header.tag == MS_TYPE_INT || b->header.tag == MS_TYPE_FLOAT)) {
-      double da = a->header.tag == MS_TYPE_INT
-                      ? (double)((const struct MsInt*)a)->value
-                      : ((const struct MsFloat*)a)->value;
-      double db = b->header.tag == MS_TYPE_INT
-                      ? (double)((const struct MsInt*)b)->value
-                      : ((const struct MsFloat*)b)->value;
-      return da == db;
+    // Cross-tag numeric compare (02-types section 6). (double)X is always an
+    // integral double, so equality can only hold when the float side is
+    // integral-valued and in int64 range; compare exactly as int64 so that
+    // msObjectValueEquals and msObjectHash agree by construction (e.g. int
+    // 2^53+1 must NOT equal float 2^53, or their hashes would diverge).
+    // Bigint promotion (task 31) must keep this discipline.
+    const struct MsInt* intSide;
+    const struct MsFloat* floatSide;
+    if (a->header.tag == MS_TYPE_INT && b->header.tag == MS_TYPE_FLOAT) {
+      intSide = (const struct MsInt*)a;
+      floatSide = (const struct MsFloat*)b;
+    } else if (a->header.tag == MS_TYPE_FLOAT && b->header.tag == MS_TYPE_INT) {
+      intSide = (const struct MsInt*)b;
+      floatSide = (const struct MsFloat*)a;
+    } else {
+      return false;
+    }
+    double dv = floatSide->value;
+    if (dv >= -9223372036854775808.0 && dv < 9223372036854775808.0) {
+      int64_t fiv = (int64_t)dv;
+      if ((double)fiv == dv) {
+        return fiv == intSide->value;
+      }
     }
     return false;
   }

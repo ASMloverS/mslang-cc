@@ -441,6 +441,9 @@ MS_TEST(object, valueEqualsScalars) {
   MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)f42, (struct MsObject*)i42a));
   struct MsFloat* fHalf = msFloatNew(&heap, 5000.5);
   MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)i42a, (struct MsObject*)fHalf));
+  // bool is not part of the numeric cross-tag rule (02-types section 6).
+  MS_ASSERT_TRUE(!msObjectValueEquals(msHeapBool(&heap, true), (struct MsObject*)msIntNew(&heap, 1)));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)msIntNew(&heap, 1), msHeapBool(&heap, true)));
   msHeapDestroy(&heap);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -516,6 +519,39 @@ MS_TEST(object, hashConsistentWithEquals) {
   struct MsFloat* fHalfB = msFloatNew(&heap, 0.5);
   MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)fHalfA),
                (long long)msObjectHash((struct MsObject*)fHalfB));
+  // -0.0 == 0 and the integral-float hash path unifies their bit patterns.
+  struct MsInt* iZero = msIntNew(&heap, 0);
+  struct MsFloat* fNegZero2 = msFloatNew(&heap, -0.0);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)iZero, (struct MsObject*)fNegZero2));
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)iZero),
+               (long long)msObjectHash((struct MsObject*)fNegZero2));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, valueEqualsLargeIntPrecision) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  // 2^53+1 rounds to 2^53 as double: must be UNEQUAL (exact int64 compare),
+  // or equals/hash would diverge and dict numeric keys (task 16) would break.
+  struct MsInt* big = msIntNew(&heap, 9007199254740993LL);        // 2^53 + 1
+  struct MsFloat* bigF = msFloatNew(&heap, 9007199254740992.0);   // 2^53
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)big, (struct MsObject*)bigF));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)bigF, (struct MsObject*)big));
+  // Exactly representable large pair: equal, and hashes must agree.
+  struct MsInt* e60 = msIntNew(&heap, 1152921504606846976LL);     // 2^60
+  struct MsFloat* e60F = msFloatNew(&heap, 1152921504606846976.0);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)e60, (struct MsObject*)e60F));
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)e60),
+               (long long)msObjectHash((struct MsObject*)e60F));
+  // Integral float outside int64 range never equals any int.
+  struct MsFloat* huge = msFloatNew(&heap, 9223372036854775808.0); // 2^63
+  struct MsInt* iMax = msIntNew(&heap, INT64_MAX);
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)huge, (struct MsObject*)iMax));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)iMax, (struct MsObject*)huge));
   msHeapDestroy(&heap);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -573,6 +609,7 @@ static const MsTestCase msTestCases[] = {
   {"object.valueEqualsNaNAndIdentity", testobjectvalueEqualsNaNAndIdentity},
   {"object.valueEqualsStringAndCrossTag", testobjectvalueEqualsStringAndCrossTag},
   {"object.hashConsistentWithEquals", testobjecthashConsistentWithEquals},
+  {"object.valueEqualsLargeIntPrecision", testobjectvalueEqualsLargeIntPrecision},
   {"object.truthinessTable", testobjecttruthinessTable},
 };
 
