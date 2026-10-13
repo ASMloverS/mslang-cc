@@ -85,12 +85,12 @@ MsResult msHeapInit(struct MsHeap* heap) {
   MS_ASSERT(heap != NULL);
   memset(heap, 0, sizeof(*heap));
   // Keep in sync with msTestHeapBootstrap in tests/c/test_string.c.
-  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
-  heap->internSlots =
-      (struct MsString**)msAlloc(heap->internCap * sizeof(*heap->internSlots));
+  heap->internSlots = (struct MsString**)msAlloc(MS_STRING_INTERN_INITIAL_CAP
+                                                 * sizeof(*heap->internSlots));
   if (heap->internSlots == NULL) {
     return MS_ERROR_OOM;
   }
+  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
   memset(heap->internSlots, 0, heap->internCap * sizeof(*heap->internSlots));
   // Type objects: permanent (black), unlinked, self-referential type pointer.
   for (int i = 0; i < (int)MS_TYPE_COUNT; ++i) {

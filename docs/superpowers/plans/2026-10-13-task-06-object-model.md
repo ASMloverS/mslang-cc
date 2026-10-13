@@ -561,10 +561,10 @@ bool msStringEquals(const struct MsString* a, const struct MsString* b);
 // model tasks land heap init in Task 4, and these tests must not depend on it.
 static void msTestHeapBootstrap(struct MsHeap* heap) {
   memset(heap, 0, sizeof(*heap));
-  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
-  heap->internSlots =
-      (struct MsString**)msAlloc(heap->internCap * sizeof(*heap->internSlots));
+  heap->internSlots = (struct MsString**)msAlloc(MS_STRING_INTERN_INITIAL_CAP
+                                                 * sizeof(*heap->internSlots));
   MS_ASSERT_TRUE(heap->internSlots != NULL);
+  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
   memset(heap->internSlots, 0, heap->internCap * sizeof(*heap->internSlots));
 }
 
@@ -964,6 +964,7 @@ MS_TEST(object, heapInitOomLeavesHeapZeroed) {
   msMemSetFailAfter(-1);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_TRUE(heap.internSlots == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.internCap);
   MS_ASSERT_EQ(0, (long long)heap.objectCount);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -975,6 +976,7 @@ MS_TEST(object, heapInitOomLeavesHeapZeroed) {
   msMemSetFailAfter(-1);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_TRUE(heap.internSlots == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.internCap);
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
@@ -1078,12 +1080,13 @@ struct MsType* msHeapType(struct MsHeap* heap, MsTypeTag tag) {
 MsResult msHeapInit(struct MsHeap* heap) {
   MS_ASSERT(heap != NULL);
   memset(heap, 0, sizeof(*heap));
-  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
-  heap->internSlots =
-      (struct MsString**)msAlloc(heap->internCap * sizeof(*heap->internSlots));
+  // Keep in sync with msTestHeapBootstrap in tests/c/test_string.c.
+  heap->internSlots = (struct MsString**)msAlloc(MS_STRING_INTERN_INITIAL_CAP
+                                                 * sizeof(*heap->internSlots));
   if (heap->internSlots == NULL) {
     return MS_ERROR_OOM;
   }
+  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
   memset(heap->internSlots, 0, heap->internCap * sizeof(*heap->internSlots));
   // Type objects: permanent (black), unlinked, self-referential type pointer.
   for (int i = 0; i < (int)MS_TYPE_COUNT; ++i) {

@@ -10,10 +10,10 @@
 // model tasks land heap init in Task 4, and these tests must not depend on it.
 static void msTestHeapBootstrap(struct MsHeap* heap) {
   memset(heap, 0, sizeof(*heap));
-  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
-  heap->internSlots =
-      (struct MsString**)msAlloc(heap->internCap * sizeof(*heap->internSlots));
+  heap->internSlots = (struct MsString**)msAlloc(MS_STRING_INTERN_INITIAL_CAP
+                                                 * sizeof(*heap->internSlots));
   MS_ASSERT_TRUE(heap->internSlots != NULL);
+  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
   memset(heap->internSlots, 0, heap->internCap * sizeof(*heap->internSlots));
 }
 

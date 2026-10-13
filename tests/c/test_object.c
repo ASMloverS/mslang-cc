@@ -170,6 +170,7 @@ MS_TEST(object, heapInitOomLeavesHeapZeroed) {
   msMemSetFailAfter(-1);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_TRUE(heap.internSlots == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.internCap);
   MS_ASSERT_EQ(0, (long long)heap.objectCount);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -181,6 +182,7 @@ MS_TEST(object, heapInitOomLeavesHeapZeroed) {
   msMemSetFailAfter(-1);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_TRUE(heap.internSlots == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.internCap);
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
