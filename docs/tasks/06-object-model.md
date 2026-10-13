@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [02 核心基础设施](02-core-infrastructure.md) |
+| v0.1 | ✅ | [02 核心基础设施](02-core-infrastructure.md) |
 
 ## 任务目标
 
