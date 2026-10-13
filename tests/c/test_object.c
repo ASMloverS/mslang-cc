@@ -303,6 +303,7 @@ MS_TEST(object, intCacheIdentityAtBoundaries) {
   msMemResetStats();
   struct MsHeap heap;
   MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  size_t countBefore = heap.objectCount;
   int64_t cached[] = {-256, 0, 4095};
   for (size_t i = 0; i < sizeof(cached) / sizeof(cached[0]); ++i) {
     struct MsInt* a = msIntNew(&heap, cached[i]);
@@ -312,7 +313,7 @@ MS_TEST(object, intCacheIdentityAtBoundaries) {
     MS_ASSERT_EQ(MS_TYPE_INT, a->header.tag);
     MS_ASSERT_EQ(MS_MARK_BLACK, a->header.markColor);
   }
-  MS_ASSERT_EQ(20, (long long)heap.objectCount); // cache hits never allocate
+  MS_ASSERT_EQ((long long)countBefore, (long long)heap.objectCount);  // cache hits never allocate
   msHeapDestroy(&heap);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -405,6 +406,148 @@ MS_TEST(object, boolValueAccessor) {
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
+MS_TEST(object, floatNewOomReturnsNull) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  size_t countBefore = heap.objectCount;
+  msMemSetFailAfter(0);
+  struct MsFloat* obj = msFloatNew(&heap, 1.5);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(obj == NULL);
+  MS_ASSERT_EQ((long long)countBefore, (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, valueEqualsScalars) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsObject* nilA = msHeapNil(&heap);
+  MS_ASSERT_TRUE(msObjectValueEquals(nilA, nilA));
+  MS_ASSERT_TRUE(msObjectValueEquals(msHeapBool(&heap, true), msHeapBool(&heap, true)));
+  MS_ASSERT_TRUE(!msObjectValueEquals(msHeapBool(&heap, true), msHeapBool(&heap, false)));
+  struct MsInt* i42a = msIntNew(&heap, 5000);    // uncached: distinct objects, equal value
+  struct MsInt* i42b = msIntNew(&heap, 5000);
+  struct MsInt* i43 = msIntNew(&heap, 5001);
+  struct MsFloat* f42 = msFloatNew(&heap, 5000.0);
+  MS_ASSERT_TRUE(i42a != i42b);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)i42a, (struct MsObject*)i42b));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)i42a, (struct MsObject*)i43));
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)i42a, (struct MsObject*)f42));
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)f42, (struct MsObject*)i42a));
+  struct MsFloat* fHalf = msFloatNew(&heap, 5000.5);
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)i42a, (struct MsObject*)fHalf));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, valueEqualsNaNAndIdentity) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsFloat* nanA = msFloatNew(&heap, NAN);
+  struct MsFloat* nanB = msFloatNew(&heap, NAN);
+  MS_ASSERT_TRUE(nanA != nanB);
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanB));
+  // Identity fast path runs first: an object always equals itself.
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanA));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, valueEqualsStringAndCrossTag) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  char buf[41];
+  memset(buf, 'z', 40);
+  buf[40] = '\0';
+  struct MsString* s1 = msStringNew(&heap, buf, 40);   // long: not interned
+  struct MsString* s2 = msStringNew(&heap, buf, 40);
+  MS_ASSERT_TRUE(s1 != s2);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)s1, (struct MsObject*)s2));
+  struct MsString* other = msStringFromCStr(&heap, "short-str");
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)s1, (struct MsObject*)other));
+  struct MsInt* i1 = msIntNew(&heap, 1);
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)i1, (struct MsObject*)other));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)other, (struct MsObject*)i1));
+  MS_ASSERT_TRUE(!msObjectValueEquals(NULL, (struct MsObject*)i1));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)i1, NULL));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, hashConsistentWithEquals) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsInt* i42 = msIntNew(&heap, 5000);
+  struct MsFloat* f42 = msFloatNew(&heap, 5000.0);
+  struct MsFloat* fNeg7 = msFloatNew(&heap, -7.0);
+  struct MsInt* iNeg7 = msIntNew(&heap, -7);
+  // Equal values must hash equal (dict keys, task 16).
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)i42),
+               (long long)msObjectHash((struct MsObject*)f42));
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)iNeg7),
+               (long long)msObjectHash((struct MsObject*)fNeg7));
+  char buf[41];
+  memset(buf, 'q', 40);
+  buf[40] = '\0';
+  struct MsString* s1 = msStringNew(&heap, buf, 40);
+  struct MsString* s2 = msStringNew(&heap, buf, 40);
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)s1),
+               (long long)msObjectHash((struct MsObject*)s2));
+  MS_ASSERT_EQ((long long)msObjectHash(msHeapBool(&heap, true)),
+               (long long)msObjectHash(msHeapBool(&heap, true)));
+  MS_ASSERT_EQ((long long)msObjectHash(msHeapNil(&heap)),
+               (long long)msObjectHash(msHeapNil(&heap)));
+  // Non-integral floats hash by bits; determinism check only.
+  struct MsFloat* fHalfA = msFloatNew(&heap, 0.5);
+  struct MsFloat* fHalfB = msFloatNew(&heap, 0.5);
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)fHalfA),
+               (long long)msObjectHash((struct MsObject*)fHalfB));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, truthinessTable) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  MS_ASSERT_TRUE(!msObjectIsTruthy(msHeapNil(&heap)));
+  MS_ASSERT_TRUE(!msObjectIsTruthy(msHeapBool(&heap, false)));
+  MS_ASSERT_TRUE(msObjectIsTruthy(msHeapBool(&heap, true)));
+  MS_ASSERT_TRUE(!msObjectIsTruthy((struct MsObject*)msIntNew(&heap, 0)));
+  MS_ASSERT_TRUE(msObjectIsTruthy((struct MsObject*)msIntNew(&heap, 1)));
+  MS_ASSERT_TRUE(msObjectIsTruthy((struct MsObject*)msIntNew(&heap, -1)));
+  struct MsFloat* fZero = msFloatNew(&heap, 0.0);
+  struct MsFloat* fNegZero = msFloatNew(&heap, -0.0);
+  struct MsFloat* fHalf = msFloatNew(&heap, 0.5);
+  MS_ASSERT_TRUE(!msObjectIsTruthy((struct MsObject*)fZero));
+  MS_ASSERT_TRUE(!msObjectIsTruthy((struct MsObject*)fNegZero));
+  MS_ASSERT_TRUE(msObjectIsTruthy((struct MsObject*)fHalf));
+  MS_ASSERT_TRUE(!msObjectIsTruthy((struct MsObject*)msStringFromCStr(&heap, "")));
+  MS_ASSERT_TRUE(msObjectIsTruthy((struct MsObject*)msStringFromCStr(&heap, "x")));
+  // Heap objects of other tags are truthy (type object as the specimen).
+  MS_ASSERT_TRUE(msObjectIsTruthy((struct MsObject*)msHeapType(&heap, MS_TYPE_CLASS)));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
 static const MsTestCase msTestCases[] = {
   {"object.typeTagCountIs20", testobjecttypeTagCountIs20},
   {"object.typeTagNamesCompleteDistinctOrdered", testobjecttypeTagNamesCompleteDistinctOrdered},
@@ -425,6 +568,12 @@ static const MsTestCase msTestCases[] = {
   {"object.intNewOomReturnsNull", testobjectintNewOomReturnsNull},
   {"object.floatRoundtripPreservesBits", testobjectfloatRoundtripPreservesBits},
   {"object.boolValueAccessor", testobjectboolValueAccessor},
+  {"object.floatNewOomReturnsNull", testobjectfloatNewOomReturnsNull},
+  {"object.valueEqualsScalars", testobjectvalueEqualsScalars},
+  {"object.valueEqualsNaNAndIdentity", testobjectvalueEqualsNaNAndIdentity},
+  {"object.valueEqualsStringAndCrossTag", testobjectvalueEqualsStringAndCrossTag},
+  {"object.hashConsistentWithEquals", testobjecthashConsistentWithEquals},
+  {"object.truthinessTable", testobjecttruthinessTable},
 };
 
 MS_TEST_MAIN(msTestCases)

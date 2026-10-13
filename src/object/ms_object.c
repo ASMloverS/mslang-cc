@@ -190,3 +190,104 @@ bool msBoolValue(const struct MsObject* obj) {
   MS_ASSERT(obj != NULL && obj->header.tag == MS_TYPE_BOOL);
   return ((const struct MsBool*)obj)->value;
 }
+
+// splitmix64 finalizer: well-mixed 64 -> 32 bit reduction.
+static uint32_t msHashMix64(uint64_t x) {
+  x ^= x >> 30;
+  x *= 0xbf58476d1ce4e5b9ULL;
+  x ^= x >> 27;
+  x *= 0x94d049bb133111ebULL;
+  x ^= x >> 31;
+  return (uint32_t)x;
+}
+
+bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b) {
+  if (a == b) {
+    return true;                 // identity fast path (interning residency)
+  }
+  if (a == NULL || b == NULL) {
+    return false;
+  }
+  if (a->header.tag != b->header.tag) {
+    // Cross-tag numeric compare: 42 == 42.0 (02-types section 3.2). NaN falls
+    // out naturally: da == db is false when either side is NaN.
+    if ((a->header.tag == MS_TYPE_INT || a->header.tag == MS_TYPE_FLOAT)
+        && (b->header.tag == MS_TYPE_INT || b->header.tag == MS_TYPE_FLOAT)) {
+      double da = a->header.tag == MS_TYPE_INT
+                      ? (double)((const struct MsInt*)a)->value
+                      : ((const struct MsFloat*)a)->value;
+      double db = b->header.tag == MS_TYPE_INT
+                      ? (double)((const struct MsInt*)b)->value
+                      : ((const struct MsFloat*)b)->value;
+      return da == db;
+    }
+    return false;
+  }
+  switch (a->header.tag) {
+    case MS_TYPE_NIL:
+      return true;
+    case MS_TYPE_BOOL:
+      return ((const struct MsBool*)a)->value == ((const struct MsBool*)b)->value;
+    case MS_TYPE_INT:
+      return ((const struct MsInt*)a)->value == ((const struct MsInt*)b)->value;
+    case MS_TYPE_FLOAT:
+      return ((const struct MsFloat*)a)->value == ((const struct MsFloat*)b)->value;
+    case MS_TYPE_STRING:
+      return msStringEquals((const struct MsString*)a, (const struct MsString*)b);
+    default:
+      // Value semantics for containers/instances land in tasks 16/25 inside
+      // this function; callers see no change.
+      return false;
+  }
+}
+
+uint32_t msObjectHash(const struct MsObject* obj) {
+  MS_ASSERT(obj != NULL);
+  switch (obj->header.tag) {
+    case MS_TYPE_NIL:
+      return 0x27d4eb2fu;        // fixed constant; any stable value works
+    case MS_TYPE_BOOL:
+      return ((const struct MsBool*)obj)->value ? 0x9e3779b9u : 0x85ebca6bu;
+    case MS_TYPE_INT:
+      return msHashMix64((uint64_t)((const struct MsInt*)obj)->value);
+    case MS_TYPE_FLOAT: {
+      double v = ((const struct MsFloat*)obj)->value;
+      // Integral doubles hash as ints so hash(42) == hash(42.0); required for
+      // numeric dict keys (task 16). Bounds guard the int64 conversion.
+      if (v >= -9223372036854775808.0 && v < 9223372036854775808.0) {
+        int64_t iv = (int64_t)v;
+        if ((double)iv == v) {
+          return msHashMix64((uint64_t)iv);
+        }
+      }
+      uint64_t bits;
+      memcpy(&bits, &v, sizeof(bits));
+      return msHashMix64(bits);
+    }
+    case MS_TYPE_STRING:
+      return ((const struct MsString*)obj)->hash;
+    default:
+      // Identity hashing for instances/containers is a later task.
+      MS_ASSERT(!"msObjectHash: tag not hashable in this task");
+      return 0;
+  }
+}
+
+bool msObjectIsTruthy(const struct MsObject* obj) {
+  MS_ASSERT(obj != NULL);
+  switch (obj->header.tag) {
+    case MS_TYPE_NIL:
+      return false;
+    case MS_TYPE_BOOL:
+      return ((const struct MsBool*)obj)->value;
+    case MS_TYPE_INT:
+      return ((const struct MsInt*)obj)->value != 0;
+    case MS_TYPE_FLOAT:
+      return ((const struct MsFloat*)obj)->value != 0.0;
+    case MS_TYPE_STRING:
+      return ((const struct MsString*)obj)->byteLen != 0;
+    default:
+      // Container emptiness joins in task 16; other heap objects are truthy.
+      return true;
+  }
+}
