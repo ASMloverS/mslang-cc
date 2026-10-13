@@ -199,6 +199,22 @@ MS_TEST(string, internGrowOomReturnsNull) {
   msTestAssertNoLeaks();
 }
 
+MS_TEST(string, longStringNewOomReturnsNull) {
+  msMemResetStats();
+  struct MsHeap heap;
+  msTestHeapBootstrap(&heap);
+  char buf[41];
+  memset(buf, 'x', 40);
+  buf[40] = '\0';
+  msMemSetFailAfter(0);
+  struct MsString* s = msStringNew(&heap, buf, 40);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(s == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  msTestAssertNoLeaks();
+}
+
 static const MsTestCase msTestCases[] = {
   {"string.newRoundtrip", teststringnewRoundtrip},
   {"string.fromCStrMatchesNew", teststringfromCStrMatchesNew},
@@ -211,6 +227,7 @@ static const MsTestCase msTestCases[] = {
   {"string.internGrowthKeepsHits", teststringinternGrowthKeepsHits},
   {"string.newOomReturnsNull", teststringnewOomReturnsNull},
   {"string.internGrowOomReturnsNull", teststringinternGrowOomReturnsNull},
+  {"string.longStringNewOomReturnsNull", teststringlongStringNewOomReturnsNull},
 };
 
 MS_TEST_MAIN(msTestCases)

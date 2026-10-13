@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "core/ms_memory.h"
+#include "object/ms_string.h"
 
 static const char* const msTypeTagNames[MS_TYPE_COUNT] = {
   "MS_TYPE_NIL", "MS_TYPE_BOOL", "MS_TYPE_INT", "MS_TYPE_FLOAT",
@@ -13,7 +14,7 @@ static const char* const msTypeTagNames[MS_TYPE_COUNT] = {
   "MS_TYPE_C_TYPE"
 };
 
-// Script-visible names per 02-types section 1. Used by msHeapInit (task: heap init).
+// Script-visible names per 02-types section 1. Used by msHeapInit.
 static const char* const msTypeScriptNames[MS_TYPE_COUNT] = {
   "NilType", "bool", "int", "float", "str", "bytes", "list", "tuple",
   "dict", "set", "function", "type", "instance", "module", "chan",
@@ -72,4 +73,62 @@ void msHeapDestroy(struct MsHeap* heap) {
   }
   msFree(heap->internSlots);
   memset(heap, 0, sizeof(*heap));
+}
+
+struct MsType* msHeapType(struct MsHeap* heap, MsTypeTag tag) {
+  MS_ASSERT(heap != NULL);
+  MS_ASSERT(tag >= 0 && tag < MS_TYPE_COUNT);
+  return &heap->types[tag];
+}
+
+MsResult msHeapInit(struct MsHeap* heap) {
+  MS_ASSERT(heap != NULL);
+  memset(heap, 0, sizeof(*heap));
+  // Keep in sync with msTestHeapBootstrap in tests/c/test_string.c.
+  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
+  heap->internSlots =
+      (struct MsString**)msAlloc(heap->internCap * sizeof(*heap->internSlots));
+  if (heap->internSlots == NULL) {
+    return MS_ERROR_OOM;
+  }
+  memset(heap->internSlots, 0, heap->internCap * sizeof(*heap->internSlots));
+  // Type objects: permanent (black), unlinked, self-referential type pointer.
+  for (int i = 0; i < (int)MS_TYPE_COUNT; ++i) {
+    heap->types[i].header.type = &heap->types[MS_TYPE_CLASS];
+    heap->types[i].header.tag = MS_TYPE_CLASS;
+    heap->types[i].header.markColor = MS_MARK_BLACK;
+    heap->types[i].header.gcNext = NULL;
+    heap->types[i].name = NULL;
+  }
+  // Type names come from the intern table; on OOM roll back in reverse
+  // acquisition order via msHeapDestroy (which also re-zeroes *heap).
+  for (int i = 0; i < (int)MS_TYPE_COUNT; ++i) {
+    heap->types[i].name = msStringFromCStr(heap, msTypeScriptNames[i]);
+    if (heap->types[i].name == NULL) {
+      msHeapDestroy(heap);
+      return MS_ERROR_OOM;
+    }
+  }
+  heap->nilObject.header.type = &heap->types[MS_TYPE_NIL];
+  heap->nilObject.header.tag = MS_TYPE_NIL;
+  heap->nilObject.header.markColor = MS_MARK_BLACK;
+  heap->nilObject.header.gcNext = NULL;
+  heap->trueObject.header.type = &heap->types[MS_TYPE_BOOL];
+  heap->trueObject.header.tag = MS_TYPE_BOOL;
+  heap->trueObject.header.markColor = MS_MARK_BLACK;
+  heap->trueObject.header.gcNext = NULL;
+  heap->trueObject.value = true;
+  heap->falseObject.header.type = &heap->types[MS_TYPE_BOOL];
+  heap->falseObject.header.tag = MS_TYPE_BOOL;
+  heap->falseObject.header.markColor = MS_MARK_BLACK;
+  heap->falseObject.header.gcNext = NULL;
+  heap->falseObject.value = false;
+  for (size_t i = 0; i < MS_INT_CACHE_SIZE; ++i) {
+    heap->intCache[i].header.type = &heap->types[MS_TYPE_INT];
+    heap->intCache[i].header.tag = MS_TYPE_INT;
+    heap->intCache[i].header.markColor = MS_MARK_BLACK;
+    heap->intCache[i].header.gcNext = NULL;
+    heap->intCache[i].value = (int64_t)MS_INT_CACHE_MIN + (int64_t)i;
+  }
+  return MS_OK;
 }

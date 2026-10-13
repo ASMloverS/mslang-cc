@@ -4,6 +4,7 @@
 
 #include "core/ms_memory.h"
 #include "ms_test.h"
+#include "object/ms_string.h"
 
 MS_TEST(object, typeTagCountIs20) {
   MS_ASSERT_EQ(20, MS_TYPE_COUNT);
@@ -148,6 +149,116 @@ MS_TEST(object, freeUnlinkedObjectIsIgnored) {
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
 
+MS_TEST(object, heapInitDestroyNoLeaks) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+  MS_ASSERT_TRUE(heap.allObjects == NULL);       // destroy re-zeroes
+  MS_ASSERT_TRUE(heap.internSlots == NULL);
+}
+
+MS_TEST(object, heapInitOomLeavesHeapZeroed) {
+  // Failure on the intern bucket allocation.
+  msMemResetStats();
+  msMemSetFailAfter(0);
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_ERROR_OOM, msHeapInit(&heap));
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(heap.allObjects == NULL);
+  MS_ASSERT_TRUE(heap.internSlots == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.objectCount);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+  // Failure on the first type-name string: buckets freed by rollback.
+  msMemResetStats();
+  msMemSetFailAfter(1);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msHeapInit(&heap));
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(heap.allObjects == NULL);
+  MS_ASSERT_TRUE(heap.internSlots == NULL);
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, typeObjectsCompleteAndSelfReferential) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  for (int i = 0; i < (int)MS_TYPE_COUNT; ++i) {
+    struct MsType* t = msHeapType(&heap, (MsTypeTag)i);
+    MS_ASSERT_TRUE(t == &heap.types[i]);
+    MS_ASSERT_EQ(MS_TYPE_CLASS, t->header.tag);
+    MS_ASSERT_TRUE(t->header.type == &heap.types[MS_TYPE_CLASS]);
+    MS_ASSERT_EQ(MS_MARK_BLACK, t->header.markColor);
+    MS_ASSERT_TRUE(t->header.gcNext == NULL);    // not on the all-objects list
+    MS_ASSERT_TRUE(t->name != NULL);
+    MS_ASSERT_EQ(MS_TYPE_STRING, t->name->header.tag);
+    for (int j = i + 1; j < (int)MS_TYPE_COUNT; ++j) {
+      MS_ASSERT_TRUE(t != &heap.types[j]);       // 20 distinct type objects
+    }
+  }
+  // Name spot checks per 02-types section 1.
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_NIL].name), "NilType") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_BOOL].name), "bool") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_INT].name), "int") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_FLOAT].name), "float") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_STRING].name), "str") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_BYTES].name), "bytes") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_LIST].name), "list") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_TUPLE].name), "tuple") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_DICT].name), "dict") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_SET].name), "set") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_FUNCTION].name), "function") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_CLASS].name), "type") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_INSTANCE].name), "instance") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_MODULE].name), "module") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_CHANNEL].name), "chan") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_COROUTINE].name), "coroutine") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_ITERATOR].name), "iterator") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_BOUND_METHOD].name), "bound method") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_C_FUNCTION].name), "cfunction") == 0);
+  MS_ASSERT_TRUE(strcmp(msStringData(heap.types[MS_TYPE_C_TYPE].name), "ctype") == 0);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(object, permanentObjectsNotLinked) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  // Exactly the 20 interned type names are linked heap objects after init.
+  MS_ASSERT_EQ(20, (long long)heap.objectCount);
+  MS_ASSERT_EQ(20, (long long)heap.internLen);
+  // Singletons and cache entries: black, unlinked, do not change objectCount.
+  MS_ASSERT_EQ(MS_MARK_BLACK, heap.nilObject.header.markColor);
+  MS_ASSERT_TRUE(heap.nilObject.header.gcNext == NULL);
+  MS_ASSERT_EQ(MS_TYPE_NIL, heap.nilObject.header.tag);
+  MS_ASSERT_TRUE(heap.nilObject.header.type == &heap.types[MS_TYPE_NIL]);
+  MS_ASSERT_EQ(MS_MARK_BLACK, heap.trueObject.header.markColor);
+  MS_ASSERT_EQ(MS_MARK_BLACK, heap.falseObject.header.markColor);
+  MS_ASSERT_TRUE(heap.trueObject.header.gcNext == NULL);
+  MS_ASSERT_TRUE(heap.trueObject.value);
+  MS_ASSERT_TRUE(!heap.falseObject.value);
+  MS_ASSERT_EQ(MS_MARK_BLACK, heap.intCache[0].header.markColor);
+  MS_ASSERT_EQ(MS_MARK_BLACK, heap.intCache[MS_INT_CACHE_SIZE - 1].header.markColor);
+  MS_ASSERT_EQ(-256, (long long)heap.intCache[0].value);
+  MS_ASSERT_EQ(4095, (long long)heap.intCache[MS_INT_CACHE_SIZE - 1].value);
+  MS_ASSERT_TRUE(heap.intCache[0].header.gcNext == NULL);
+  MS_ASSERT_TRUE(heap.intCache[0].header.type == &heap.types[MS_TYPE_INT]);
+  MS_ASSERT_EQ(20, (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
 static const MsTestCase msTestCases[] = {
   {"object.typeTagCountIs20", testobjecttypeTagCountIs20},
   {"object.typeTagNamesCompleteDistinctOrdered", testobjecttypeTagNamesCompleteDistinctOrdered},
@@ -157,6 +268,10 @@ static const MsTestCase msTestCases[] = {
   {"object.allocOomReturnsNull", testobjectallocOomReturnsNull},
   {"object.heapDestroyNullAndZeroedSafe", testobjectheapDestroyNullAndZeroedSafe},
   {"object.allocMinimumSizeIsBaseObject", testobjectallocMinimumSizeIsBaseObject},
+  {"object.heapInitDestroyNoLeaks", testobjectheapInitDestroyNoLeaks},
+  {"object.heapInitOomLeavesHeapZeroed", testobjectheapInitOomLeavesHeapZeroed},
+  {"object.typeObjectsCompleteAndSelfReferential", testobjecttypeObjectsCompleteAndSelfReferential},
+  {"object.permanentObjectsNotLinked", testobjectpermanentObjectsNotLinked},
 };
 
 MS_TEST_MAIN(msTestCases)
