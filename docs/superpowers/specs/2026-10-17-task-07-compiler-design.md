@@ -36,8 +36,8 @@ builder 负责清理尚未定稿的子 Proto。该方案保持现有 `msProtoBui
 `MS_TYPE_PROTO` 是内部常量标签，不代表脚本可见类型：
 
 - `MS_TYPE_COUNT` 保持 20，`heap->types` 不增加 Proto 类型项，`msHeapInit` 行为不变。
-- `MS_TYPE_PROTO` 位于有效堆对象标签范围之外；`msObjectAlloc` 仍只接受普通的
-  20 个堆对象标签。
+- `MS_TYPE_PROTO` 枚举项放在 `MS_TYPE_COUNT` 之后，位于有效堆对象标签范围之外；
+  `msObjectAlloc` 仍只接受普通的 20 个堆对象标签，既有标签和 `MS_TYPE_COUNT` 数值不变。
 - `MsProto` 的对象头以其为标签，`header.type == NULL`、`gcNext == NULL`。对象头注释
   明确：非空的 `header.type` 不变量只适用于挂入堆的对象。
 - `msTypeTagName` 能识别该内部标签；普通堆对象的标签数量及既有测试语义不变。
