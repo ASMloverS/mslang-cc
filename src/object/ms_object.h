@@ -12,7 +12,7 @@
 struct MsString;
 
 // Type tags: order and names match 08-vm-internals section 3. MS_TYPE_COUNT
-// is a sentinel, not a tag (20 tags total).
+// is a sentinel, not a tag (20 heap tags total).
 typedef enum {
   MS_TYPE_NIL, MS_TYPE_BOOL, MS_TYPE_INT, MS_TYPE_FLOAT,
   MS_TYPE_STRING, MS_TYPE_BYTES, MS_TYPE_LIST, MS_TYPE_TUPLE,
@@ -20,7 +20,8 @@ typedef enum {
   MS_TYPE_INSTANCE, MS_TYPE_MODULE, MS_TYPE_CHANNEL, MS_TYPE_COROUTINE,
   MS_TYPE_ITERATOR, MS_TYPE_BOUND_METHOD, MS_TYPE_C_FUNCTION,
   MS_TYPE_C_TYPE,
-  MS_TYPE_COUNT              // sentinel: number of type tags (20)
+  MS_TYPE_COUNT,
+  MS_TYPE_PROTO
 } MsTypeTag;
 
 typedef enum {
@@ -29,7 +30,7 @@ typedef enum {
 } MsMarkColor;
 
 struct MsObjectHeader {
-  struct MsType* type;       // the type object; never NULL after construction
+  struct MsType* type;       // heap objects: never NULL; internal protos: NULL
   uint8_t tag;               // MsTypeTag, cached for O(1) dispatch
   uint8_t markColor;         // MsMarkColor
   struct MsObject* gcNext;   // next node in the heap's all-objects list

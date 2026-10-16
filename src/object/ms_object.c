@@ -22,6 +22,9 @@ static const char* const msTypeScriptNames[MS_TYPE_COUNT] = {
 };
 
 const char* msTypeTagName(MsTypeTag tag) {
+  if (tag == MS_TYPE_PROTO) {
+    return "MS_TYPE_PROTO";
+  }
   if (tag < 0 || tag >= MS_TYPE_COUNT) {
     return "MS_TYPE_INVALID";
   }

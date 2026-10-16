@@ -34,6 +34,13 @@ MS_TEST(object, typeTagNamesCompleteDistinctOrdered) {
   MS_ASSERT_TRUE(strcmp(msTypeTagName((MsTypeTag)-1), "MS_TYPE_INVALID") == 0);
 }
 
+MS_TEST(object, internalProtoTagIsOutsideHeapTypes) {
+  MS_ASSERT_EQ(20, MS_TYPE_COUNT);
+  MS_ASSERT_TRUE(MS_TYPE_PROTO > MS_TYPE_COUNT);
+  MS_ASSERT_TRUE(strcmp(msTypeTagName(MS_TYPE_PROTO), "MS_TYPE_PROTO") == 0);
+  MS_ASSERT_TRUE(strcmp(msTypeTagName(MS_TYPE_COUNT), "MS_TYPE_INVALID") == 0);
+}
+
 MS_TEST(object, allocLinksIntoAllObjectsList) {
   msMemResetStats();
   struct MsHeap heap;
@@ -590,6 +597,7 @@ MS_TEST(object, truthinessTable) {
 static const MsTestCase msTestCases[] = {
   {"object.typeTagCountIs20", testobjecttypeTagCountIs20},
   {"object.typeTagNamesCompleteDistinctOrdered", testobjecttypeTagNamesCompleteDistinctOrdered},
+  {"object.internalProtoTagIsOutsideHeapTypes", testobjectinternalProtoTagIsOutsideHeapTypes},
   {"object.allocLinksIntoAllObjectsList", testobjectallocLinksIntoAllObjectsList},
   {"object.freeUnlinksHeadMidTail", testobjectfreeUnlinksHeadMidTail},
   {"object.freeUnlinkedObjectIsIgnored", testobjectfreeUnlinkedObjectIsIgnored},
