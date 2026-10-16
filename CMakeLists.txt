@@ -40,6 +40,8 @@ endfunction()
 
 add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/ms_version.c
+    src/object/ms_object.c
+    src/object/ms_string.c
     src/core/ms_common.c
     src/core/ms_memory.c
     src/core/ms_diag.c
@@ -85,6 +87,8 @@ if(MSLANG_BUILD_TESTS)
     add_test(NAME ${name} COMMAND ${name})
   endfunction()
   mslang_add_c_test(test_ms_test)
+  mslang_add_c_test(test_object)
+  mslang_add_c_test(test_string)
   mslang_add_c_test(test_common)
   mslang_add_c_test(test_memory)
   mslang_add_c_test(test_diag)

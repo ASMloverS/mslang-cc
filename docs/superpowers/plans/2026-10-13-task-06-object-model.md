@@ -561,10 +561,10 @@ bool msStringEquals(const struct MsString* a, const struct MsString* b);
 // model tasks land heap init in Task 4, and these tests must not depend on it.
 static void msTestHeapBootstrap(struct MsHeap* heap) {
   memset(heap, 0, sizeof(*heap));
-  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
-  heap->internSlots =
-      (struct MsString**)msAlloc(heap->internCap * sizeof(*heap->internSlots));
+  heap->internSlots = (struct MsString**)msAlloc(MS_STRING_INTERN_INITIAL_CAP
+                                                 * sizeof(*heap->internSlots));
   MS_ASSERT_TRUE(heap->internSlots != NULL);
+  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
   memset(heap->internSlots, 0, heap->internCap * sizeof(*heap->internSlots));
 }
 
@@ -919,7 +919,7 @@ bool msStringEquals(const struct MsString* a, const struct MsString* b) {
 cmake --build build && ctest --test-dir build -R test_string --output-on-failure
 ```
 
-预期：`11 of 11 tests passed`。全量 ctest 10/10 绿。
+预期：`12 of 12 tests passed`。全量 ctest 10/10 绿。
 
 - [ ] **Step 6: 提交**
 
@@ -964,6 +964,7 @@ MS_TEST(object, heapInitOomLeavesHeapZeroed) {
   msMemSetFailAfter(-1);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_TRUE(heap.internSlots == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.internCap);
   MS_ASSERT_EQ(0, (long long)heap.objectCount);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -975,6 +976,7 @@ MS_TEST(object, heapInitOomLeavesHeapZeroed) {
   msMemSetFailAfter(-1);
   MS_ASSERT_TRUE(heap.allObjects == NULL);
   MS_ASSERT_TRUE(heap.internSlots == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.internCap);
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
@@ -1078,12 +1080,13 @@ struct MsType* msHeapType(struct MsHeap* heap, MsTypeTag tag) {
 MsResult msHeapInit(struct MsHeap* heap) {
   MS_ASSERT(heap != NULL);
   memset(heap, 0, sizeof(*heap));
-  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
-  heap->internSlots =
-      (struct MsString**)msAlloc(heap->internCap * sizeof(*heap->internSlots));
+  // Keep in sync with msTestHeapBootstrap in tests/c/test_string.c.
+  heap->internSlots = (struct MsString**)msAlloc(MS_STRING_INTERN_INITIAL_CAP
+                                                 * sizeof(*heap->internSlots));
   if (heap->internSlots == NULL) {
     return MS_ERROR_OOM;
   }
+  heap->internCap = MS_STRING_INTERN_INITIAL_CAP;
   memset(heap->internSlots, 0, heap->internCap * sizeof(*heap->internSlots));
   // Type objects: permanent (black), unlinked, self-referential type pointer.
   for (int i = 0; i < (int)MS_TYPE_COUNT; ++i) {
@@ -1393,7 +1396,7 @@ git commit -m "✨ feat(object): add scalar constructors and accessors"
 - Modify: `src/object/ms_object.c`
 - Modify: `tests/c/test_object.c`
 
-语义（规格定死）：指针相同即真（驻留快路径，**先于** NaN 判定——同一 NaN 对象与自身相等）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签按 double 数值比较；`str` 按内容；其余标签按指针（容器/实例值语义属任务 16/25）。哈希一致性：整数值的 float 按 int 路径求哈希，保证 `hash(42) == hash(42.0)`。
+语义（规格定死）：指针相同即真（驻留快路径；float NaN 除外——与自身也不等，02-types §3.2）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签按 double 数值比较；`str` 按内容；其余标签按指针（容器/实例值语义属任务 16/25）。哈希一致性：整数值的 float 按 int 路径求哈希，保证 `hash(42) == hash(42.0)`。
 
 - [ ] **Step 1: 追加失败测试**
 
@@ -1431,8 +1434,11 @@ MS_TEST(object, valueEqualsNaNAndIdentity) {
   struct MsFloat* nanB = msFloatNew(&heap, NAN);
   MS_ASSERT_TRUE(nanA != nanB);
   MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanB));
-  // Identity fast path runs first: an object always equals itself.
-  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanA));
+  // NaN is unequal even to itself (02-types section 3.2); the identity fast
+  // path must not override that, but still works for ordinary floats.
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanA));
+  struct MsFloat* ordinary = msFloatNew(&heap, 1.5);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)ordinary, (struct MsObject*)ordinary));
   msHeapDestroy(&heap);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -1523,9 +1529,36 @@ MS_TEST(object, truthinessTable) {
   msMemGetStats(&stats);
   MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
 }
+
+MS_TEST(object, valueEqualsLargeIntPrecision) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  // 2^53+1 rounds to 2^53 as double: must be UNEQUAL (exact int64 compare),
+  // or equals/hash would diverge and dict numeric keys (task 16) would break.
+  struct MsInt* big = msIntNew(&heap, 9007199254740993LL);        // 2^53 + 1
+  struct MsFloat* bigF = msFloatNew(&heap, 9007199254740992.0);   // 2^53
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)big, (struct MsObject*)bigF));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)bigF, (struct MsObject*)big));
+  // Exactly representable large pair: equal, and hashes must agree.
+  struct MsInt* e60 = msIntNew(&heap, 1152921504606846976LL);     // 2^60
+  struct MsFloat* e60F = msFloatNew(&heap, 1152921504606846976.0);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)e60, (struct MsObject*)e60F));
+  MS_ASSERT_EQ((long long)msObjectHash((struct MsObject*)e60),
+               (long long)msObjectHash((struct MsObject*)e60F));
+  // Integral float outside int64 range never equals any int.
+  struct MsFloat* huge = msFloatNew(&heap, 9223372036854775808.0); // 2^63
+  struct MsInt* iMax = msIntNew(&heap, INT64_MAX);
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)huge, (struct MsObject*)iMax));
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)iMax, (struct MsObject*)huge));
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
 ```
 
-注册 5 个用例进 `msTestCases`。
+注册 6 个用例进 `msTestCases`。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -1552,23 +1585,41 @@ static uint32_t msHashMix64(uint64_t x) {
 
 bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b) {
   if (a == b) {
-    return true;                 // identity fast path (interning residency)
+    // Identity fast path (interning residency) -- but NaN is unequal even to
+    // itself (02-types section 3.2), so floats take the value compare here.
+    if (a != NULL && a->header.tag == MS_TYPE_FLOAT) {
+      double v = ((const struct MsFloat*)a)->value;
+      return v == v;
+    }
+    return true;
   }
   if (a == NULL || b == NULL) {
     return false;
   }
   if (a->header.tag != b->header.tag) {
-    // Cross-tag numeric compare: 42 == 42.0 (02-types section 3.2). NaN falls
-    // out naturally: da == db is false when either side is NaN.
-    if ((a->header.tag == MS_TYPE_INT || a->header.tag == MS_TYPE_FLOAT)
-        && (b->header.tag == MS_TYPE_INT || b->header.tag == MS_TYPE_FLOAT)) {
-      double da = a->header.tag == MS_TYPE_INT
-                      ? (double)((const struct MsInt*)a)->value
-                      : ((const struct MsFloat*)a)->value;
-      double db = b->header.tag == MS_TYPE_INT
-                      ? (double)((const struct MsInt*)b)->value
-                      : ((const struct MsFloat*)b)->value;
-      return da == db;
+    // Cross-tag numeric compare (02-types section 6). (double)X is always an
+    // integral double, so equality can only hold when the float side is
+    // integral-valued and in int64 range; compare exactly as int64 so that
+    // msObjectValueEquals and msObjectHash agree by construction (e.g. int
+    // 2^53+1 must NOT equal float 2^53, or their hashes would diverge).
+    // Bigint promotion (task 31) must keep this discipline.
+    const struct MsInt* intSide;
+    const struct MsFloat* floatSide;
+    if (a->header.tag == MS_TYPE_INT && b->header.tag == MS_TYPE_FLOAT) {
+      intSide = (const struct MsInt*)a;
+      floatSide = (const struct MsFloat*)b;
+    } else if (a->header.tag == MS_TYPE_FLOAT && b->header.tag == MS_TYPE_INT) {
+      intSide = (const struct MsInt*)b;
+      floatSide = (const struct MsFloat*)a;
+    } else {
+      return false;
+    }
+    double dv = floatSide->value;
+    if (dv >= -9223372036854775808.0 && dv < 9223372036854775808.0) {
+      int64_t fiv = (int64_t)dv;
+      if ((double)fiv == dv) {
+        return fiv == intSide->value;
+      }
     }
     return false;
   }
@@ -1648,7 +1699,7 @@ bool msObjectIsTruthy(const struct MsObject* obj) {
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-预期：全绿，`test_object` 23/23、`test_string` 11/11、其余既有测试不受影响。
+预期：全绿，`test_object` 26/26、`test_string` 13/13、其余既有测试不受影响。
 
 - [ ] **Step 5: 提交**
 
@@ -1674,9 +1725,12 @@ git commit -m "✨ feat(object): add value equality, hash and truthiness"
 include 区追加 `#include "object/ms_object.h"`。`msProtoAddConst` 中的去重循环改为：
 
 ```c
-  // Value dedup per the constant-pool contract (msObjectValueEquals, task 06).
+  // Value dedup per the constant-pool contract (msObjectValueEquals, task 06),
+  // gated on the tag: 05-bytecode-proto shares slots only for same-type
+  // constants, so int 1 and float 1.0 never merge (their runtime types differ).
   for (int i = 0; i < b->proto.constsLen; ++i) {
-    if (msObjectValueEquals(b->proto.consts[i], value)) {
+    if (b->proto.consts[i]->header.tag == value->header.tag
+        && msObjectValueEquals(b->proto.consts[i], value)) {
       return i;
     }
   }

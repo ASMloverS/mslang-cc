@@ -29,7 +29,7 @@
 - 任务 05 提供：`struct MsProto`（含 `paramCount`/`localCount`/`stackSize`/`lines`）、`MsOpCode` 全集与 v0.1 子集、`msOpDecodeOp/A/Bx/SAx` 译码内联函数、`msProtoLineAt` 行号查询。其文档已定名，本文直接引用。
 - 任务 02（文档尚未落定）提供：`msAlloc/msRealloc/msFree`、`MS_ASSERT`、分配统计接口（用于泄漏断言）。本文假定其接口名；若任务 02 文档定名不同，以实现时对齐为准。
 - 任务 06（对象模型基础，文档尚未落定）按 [08-vm-internals.md](../language/08-vm-internals.md) §3 与 [09-c-api.md](../language/09-c-api.md) §5 假定提供以下接口，**实现时以任务 06 文档定名为准**：
-  - 类型判定与取值：`MsTypeTag msTypeOf(const struct MsObject* obj)`；
+  - 类型判定与取值：`MsTypeTag msObjectTag(const struct MsObject* obj)`（任务 06 已定名）；
     `bool msIntIsWord(const struct MsObject* obj)`（机器字直存表示）；
     `int64_t msIntWordValue(const struct MsObject* obj)`、`double msFloatValue(const struct MsObject* obj)`；
   - 构造：`struct MsObject* msNewInt(MsState* L, int64_t v)` / `msNewFloat` / `msNewBool` / `msNewNil`（09-c-api §5 已定名）；
@@ -37,7 +37,7 @@
   - 值相等：`bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b)`（沿用任务 05 的同名假定）；
   - 函数对象访问：`struct MsProto* msFunctionProto(const struct MsObject* fn)`、`MsCFunction msAsCFunction(const struct MsObject* fn)`；
   - 全局命名空间：`struct MsObject* msStateGetGlobal(MsState* L, const struct MsString* name)`（未定义返回 `NULL`）、`MsResult msStateSetGlobal(MsState* L, const struct MsString* name, struct MsObject* value)`；
-  - 最小 `MsState` 的创建/销毁（`msNewState` / `msCloseState`，供 C 单元测试构造环境；任务 06 负责对象模型所需的最小形态，[09 最小可运行解释器](09-minimal-interpreter.md) 再扩展全局命名空间挂接与错误槽）。
+  - 最小 `MsState` 的创建/销毁（`msNewState` / `msCloseState`，供 C 单元测试构造环境；本任务负责对象模型所需的最小形态（`MsState` 内嵌任务 06 的 `MsHeap`），[09 最小可运行解释器](09-minimal-interpreter.md) 再扩展全局命名空间挂接与错误槽）。
   - 错误报告沿用 [09-c-api.md](../language/09-c-api.md) §8 已定名的 `void msRaiseRuntimeError(MsState* L, const char* fmt, ...)`。
 
 对规范的三处显式处理（实现与评审时以此为据）：
@@ -171,7 +171,7 @@ loop:
 
 ### 比较、真值与链式比较约定
 
-- **数值比较**（`EQ/NE/LT/LE/GT/GE`）：双机器字 int 直接比较；int/float 混合提升 double 比较（`nan != nan` 自然成立）；其余类型 `EQ`/`NE` 先走指针相等捷径、再走 `msObjectValueEquals`；`LT` 等序比较对非数值类型移交慢路径（字符串按内容、未来 `__lt__`），不支持则类型错误。
+- **数值比较**（`EQ/NE/LT/LE/GT/GE`）：双机器字 int 直接比较；int/float 混合：`EQ`/`NE` 按任务 06 `msObjectValueEquals` 的精确语义比较（float 为整数值且在 int64 值域内时按 int64 精确比较，否则不等；`nan != nan` 自然成立）；`LT`/`LE`/`GT`/`GE` 同样须按精确数值语义实现，不得因 double 提升让 `2^53+1` 与 `2^53` 的序关系失真；其余类型 `EQ`/`NE` 先走指针相等捷径、再走 `msObjectValueEquals`；`LT` 等序比较对非数值类型移交慢路径（字符串按内容、未来 `__lt__`），不支持则类型错误。
 - **`IS`**：身份比较——指针相等；nil/true/false 为驻留单例（任务 06 保证），小整数驻留属实现细节，脚本不得依赖（02-types §6），VM 不做额外处理。
 - **真值判定**（条件跳转、`NOT`）按 02-types §2：`nil`、`false`、数值零、空字符串/字节串、空容器为假；容器长度经任务 06 的长度接口查询（假定 `msLen` 形态，以任务 06 为准）；`__bool__`/`__len__` 魔术方法回落随任务 25 接入真值入口，VM 侧以单一 `static bool vmIsTruthy(...)` 承载，届时只改一处。
 - **条件跳转**：`JUMP_IF_FALSE/JUMP_IF_TRUE/JUMP_IF_NIL` 弹栈顶判定，`JUMP` 无条件；目标 = `pc + 1 + sAx`（任务 05 约定，本任务的 `pc` 在取指后已自增，故目标即 `pc + sAx`）。

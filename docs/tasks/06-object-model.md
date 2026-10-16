@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [02 核心基础设施](02-core-infrastructure.md) |
+| v0.1 | ✅ | [02 核心基础设施](02-core-infrastructure.md) |
 
 ## 任务目标
 
@@ -227,7 +227,7 @@ uint32_t msObjectHash(const struct MsObject* obj);
 bool msObjectIsTruthy(const struct MsObject* obj);
 ```
 
-- `msObjectValueEquals` 语义：指针相同即真（驻留快路径）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签数值比较（`42 == 42.0` 为真），float 比较含 `nan != nan`（02-types §3.2）；`str` 按内容；其余标签本任务按指针相等（容器/实例的值语义属任务 16/25，在此函数内扩展，调用方无感）。
+- `msObjectValueEquals` 语义：指针相同即真（驻留快路径；float NaN 除外——与自身也不等，02-types §3.2）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签数值比较（`42 == 42.0` 为真），float 比较含 `nan != nan`（02-types §3.2）；`str` 按内容；其余标签本任务按指针相等（容器/实例的值语义属任务 16/25，在此函数内扩展，调用方无感）。
 - `msObjectHash` 一致性约束：整数先经 64 位混合（如 splitmix64 终态混合的低 32 位）；**整数值的 float（如 `42.0`）按 int 路径求哈希**，保证 `hash(42) == hash(42.0)`——这是 dict 键查找（任务 16）在数值键上不出错的必要条件；字符串直接用缓存的 `hash`；`bool`/`nil` 取定值。
 - 两个函数均不取 `MsHeap*`：字符串按内容比较/哈希无需驻留表，与任务 05 假定签名一致。
 
@@ -268,12 +268,12 @@ bool msObjectIsTruthy(const struct MsObject* obj);
 
 ## 验收标准
 
-- [ ] `src/object/ms_object.{h,c}` 与 `src/object/ms_string.{h,c}` 存在，guard 分别为 `MSLANG_SRC_OBJECT_MS_OBJECT_H_` / `MSLANG_SRC_OBJECT_MS_STRING_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef、枚举值 `MS_` 大写蛇形）。
-- [ ] `MsTypeTag` 与 08-vm-internals §3 同序同名（20 标签 + `MS_TYPE_COUNT` 哨兵并有 `_Static_assert`）；`struct MsObjectHeader` 为 `{type, tag, markColor, gcNext}`（`tag` 为对规范的显式补充，理由见「设计依据」），64 位下头部长度仍为 24 字节。
-- [ ] 一切值经 `MsObject*` 装箱表示（无 NaN-boxing）；全部对象分配收口于 `msObjectAlloc` 且经 `msAlloc`/`msFree`，分配统计无泄漏；单例/int 缓存/类型对象永久存活且不链入全对象链表。
-- [ ] 小整数 -256..4095 驻留（同值同指针）、范围外正常分配；`int` 机器字（int64）直存，大整数留任务 31 的扩展点说明落实。
-- [ ] `MsString` 为「长度 + 缓存哈希 + NUL 结尾 UTF-8 字节」布局；短字符串（≤ 32 字节）驻留同内容同指针、长字符串不驻留；驻留表倍增 rehash 后命中正确。
-- [ ] 20 个内建类型对象随 `msHeapInit` 建成、名称对齐 02-types §1、`header.type` 恒非空；`MsType` 最小定义与任务 15/25 的扩展衔接在文中声明。
-- [ ] `msObjectValueEquals`（签名与任务 05 的假定一致）、`msObjectHash`、`msObjectIsTruthy` 语义符合 02-types §2/§3/§6，含 int/float 跨标签相等与哈希一致性、`nan != nan`。
-- [ ] `tests/c/test_object.c` 与 `tests/c/test_string.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；任务 02 接口（`msAlloc` 族、`MsResult` 于 `"mslang/error.h"`、分配统计）按其已成文文档使用；任务 08 的接口假定（`msIntIsWord`/`msIntWordValue`/`msFloatValue`/`msObjectValueEquals`、`MsState` 内嵌 `MsHeap`）与本文定名一致。
+- [x] `src/object/ms_object.{h,c}` 与 `src/object/ms_string.{h,c}` 存在，guard 分别为 `MSLANG_SRC_OBJECT_MS_OBJECT_H_` / `MSLANG_SRC_OBJECT_MS_STRING_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef、枚举值 `MS_` 大写蛇形）。
+- [x] `MsTypeTag` 与 08-vm-internals §3 同序同名（20 标签 + `MS_TYPE_COUNT` 哨兵并有 `_Static_assert`）；`struct MsObjectHeader` 为 `{type, tag, markColor, gcNext}`（`tag` 为对规范的显式补充，理由见「设计依据」），64 位下头部长度仍为 24 字节。
+- [x] 一切值经 `MsObject*` 装箱表示（无 NaN-boxing）；全部对象分配收口于 `msObjectAlloc` 且经 `msAlloc`/`msFree`，分配统计无泄漏；单例/int 缓存/类型对象永久存活且不链入全对象链表。
+- [x] 小整数 -256..4095 驻留（同值同指针）、范围外正常分配；`int` 机器字（int64）直存，大整数留任务 31 的扩展点说明落实。
+- [x] `MsString` 为「长度 + 缓存哈希 + NUL 结尾 UTF-8 字节」布局；短字符串（≤ 32 字节）驻留同内容同指针、长字符串不驻留；驻留表倍增 rehash 后命中正确。
+- [x] 20 个内建类型对象随 `msHeapInit` 建成、名称对齐 02-types §1、`header.type` 恒非空；`MsType` 最小定义与任务 15/25 的扩展衔接在文中声明。
+- [x] `msObjectValueEquals`（签名与任务 05 的假定一致）、`msObjectHash`、`msObjectIsTruthy` 语义符合 02-types §2/§3/§6，含 int/float 跨标签相等与哈希一致性、`nan != nan`。
+- [x] `tests/c/test_object.c` 与 `tests/c/test_string.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；任务 02 接口（`msAlloc` 族、`MsResult` 于 `"mslang/error.h"`、分配统计）按其已成文文档使用；任务 08 的接口假定（`msIntIsWord`/`msIntWordValue`/`msFloatValue`/`msObjectValueEquals`、`MsState` 内嵌 `MsHeap`）与本文定名一致。

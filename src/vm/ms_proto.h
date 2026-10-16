@@ -9,8 +9,8 @@
 
 #include "vm/ms_opcode.h"
 
-// Incomplete until task 06 (object model); the pool and name fields are
-// pointers only, so forward declarations suffice here.
+// struct MsObject / struct MsString live in the object model (src/object/);
+// the pool and name fields are pointers only, so forward declarations suffice.
 struct MsObject;
 struct MsString;
 
@@ -77,9 +77,10 @@ void msProtoSetLine(struct MsProtoBuilder* b, uint32_t line);
 // pc must address an MS_OPFMT_SAX instruction.
 MsResult msProtoPatchSAx(struct MsProtoBuilder* b, int pc, int32_t sax);
 
-// Adds a constant with pointer-identity dedup; returns the pool index, or -1
-// (sticky MS_ERROR_OOM, or MS_ERROR_SYNTAX when the pool exceeds 65536
-// entries). Value dedup arrives with task 06 (msObjectValueEquals).
+// Adds a constant with value dedup (msObjectValueEquals, gated on the type
+// tag: equal same-type constants share one entry, so int 1 and float 1.0 stay
+// in separate slots); returns the pool index, or -1 (sticky MS_ERROR_OOM, or
+// MS_ERROR_SYNTAX when the pool exceeds 65536 entries). value must be non-NULL.
 int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value);
 
 // Appends an exception table entry (v0.2 consumers; defined now per spec layout).
@@ -93,14 +94,14 @@ MsResult msProtoAddTryBlock(struct MsProtoBuilder* b, uint32_t pcStart, uint32_t
 MsResult msProtoBuild(struct MsProtoBuilder* b, struct MsProto** out);
 
 // Frees a proto's arrays and the struct itself. Does NOT free consts entries
-// or name/sourceFile (owned by the object model / GC once task 06 lands).
+// or name/sourceFile (owned by the heap / GC).
 void msProtoFree(struct MsProto* proto);
 
 // Binary-searches the line table; returns 0 when the table is empty.
 uint32_t msProtoLineAt(const struct MsProto* proto, int pc);
 
 // Disassembles the instruction stream and tables for debugging and tests.
-// Constants print as "#k<index>" placeholders until the object model lands.
+// Constants print as "#k<index>" placeholders (no value rendering yet).
 void msProtoDump(const struct MsProto* proto, FILE* out);
 
 #endif  // MSLANG_SRC_VM_MS_PROTO_H_

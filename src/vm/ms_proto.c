@@ -4,6 +4,7 @@
 
 #include "core/ms_common.h"
 #include "core/ms_memory.h"
+#include "object/ms_object.h"
 
 #define MS_PROTO_INITIAL_CAP 8
 #define MS_PROTO_CONSTS_MAX 65536   // Bx-indexed pool: 2^16 entries per proto
@@ -93,14 +94,18 @@ int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value) {
   if (b->error != MS_OK) {
     return -1;
   }
+  MS_ASSERT(value != NULL);
   // The cap check runs before the dedup scan: a full pool needs no scan.
   if (b->proto.constsLen >= MS_PROTO_CONSTS_MAX) {
     b->error = MS_ERROR_SYNTAX;
     return -1;
   }
-  // Pointer-identity dedup until task 06 lands msObjectValueEquals.
+  // Value dedup per the constant-pool contract (msObjectValueEquals, task 06),
+  // gated on the tag: 05-bytecode-proto shares slots only for same-type
+  // constants, so int 1 and float 1.0 never merge (their runtime types differ).
   for (int i = 0; i < b->proto.constsLen; ++i) {
-    if (b->proto.consts[i] == value) {
+    if (b->proto.consts[i]->header.tag == value->header.tag
+        && msObjectValueEquals(b->proto.consts[i], value)) {
       return i;
     }
   }
@@ -263,7 +268,7 @@ void msProtoDump(const struct MsProto* proto, FILE* out) {
   }
   fprintf(out, "consts[%d]:\n", proto->constsLen);
   for (int i = 0; i < proto->constsLen; ++i) {
-    fprintf(out, "#k%d\n", i);   // placeholder until the object model lands
+    fprintf(out, "#k%d\n", i);   // placeholder; value rendering is a later task
   }
   fprintf(out, "tryBlocks[%d]:\n", proto->tryBlocksLen);
   for (int i = 0; i < proto->tryBlocksLen; ++i) {
