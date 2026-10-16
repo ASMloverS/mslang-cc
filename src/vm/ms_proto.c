@@ -251,7 +251,7 @@ MsResult msProtoBuild(struct MsProtoBuilder* b, struct MsProto** out) {
     return MS_ERROR_OOM;
   }
   *proto = b->proto;
-  memset(b, 0, sizeof(*b));   // builder left empty; destroy is a no-op
+  msProtoBuilderInit(b);   // builder left empty with a fresh proto header
   *out = proto;
   return MS_OK;
 }
