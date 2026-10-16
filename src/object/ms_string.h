@@ -45,4 +45,9 @@ static inline uint32_t msStringHash(const struct MsString* s) {
 // Byte-wise content equality.
 bool msStringEquals(const struct MsString* a, const struct MsString* b);
 
+// Removes s from the intern table if present (pointer identity), keeping
+// probe chains intact via backward-shift deletion. Called by msObjectFree;
+// not part of normal value lifecycle before GC (task 17).
+void msStringInternRemove(struct MsHeap* heap, const struct MsString* s);
+
 #endif  // MSLANG_SRC_OBJECT_MS_STRING_H_

@@ -919,7 +919,7 @@ bool msStringEquals(const struct MsString* a, const struct MsString* b) {
 cmake --build build && ctest --test-dir build -R test_string --output-on-failure
 ```
 
-预期：`11 of 11 tests passed`。全量 ctest 10/10 绿。
+预期：`12 of 12 tests passed`。全量 ctest 10/10 绿。
 
 - [ ] **Step 6: 提交**
 
@@ -1396,7 +1396,7 @@ git commit -m "✨ feat(object): add scalar constructors and accessors"
 - Modify: `src/object/ms_object.c`
 - Modify: `tests/c/test_object.c`
 
-语义（规格定死）：指针相同即真（驻留快路径，**先于** NaN 判定——同一 NaN 对象与自身相等）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签按 double 数值比较；`str` 按内容；其余标签按指针（容器/实例值语义属任务 16/25）。哈希一致性：整数值的 float 按 int 路径求哈希，保证 `hash(42) == hash(42.0)`。
+语义（规格定死）：指针相同即真（驻留快路径；float NaN 除外——与自身也不等，02-types §3.2）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签按 double 数值比较；`str` 按内容；其余标签按指针（容器/实例值语义属任务 16/25）。哈希一致性：整数值的 float 按 int 路径求哈希，保证 `hash(42) == hash(42.0)`。
 
 - [ ] **Step 1: 追加失败测试**
 
@@ -1434,8 +1434,11 @@ MS_TEST(object, valueEqualsNaNAndIdentity) {
   struct MsFloat* nanB = msFloatNew(&heap, NAN);
   MS_ASSERT_TRUE(nanA != nanB);
   MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanB));
-  // Identity fast path runs first: an object always equals itself.
-  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanA));
+  // NaN is unequal even to itself (02-types section 3.2); the identity fast
+  // path must not override that, but still works for ordinary floats.
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanA));
+  struct MsFloat* ordinary = msFloatNew(&heap, 1.5);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)ordinary, (struct MsObject*)ordinary));
   msHeapDestroy(&heap);
   struct MsMemStats stats;
   msMemGetStats(&stats);
@@ -1582,7 +1585,13 @@ static uint32_t msHashMix64(uint64_t x) {
 
 bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b) {
   if (a == b) {
-    return true;                 // identity fast path (interning residency)
+    // Identity fast path (interning residency) -- but NaN is unequal even to
+    // itself (02-types section 3.2), so floats take the value compare here.
+    if (a != NULL && a->header.tag == MS_TYPE_FLOAT) {
+      double v = ((const struct MsFloat*)a)->value;
+      return v == v;
+    }
+    return true;
   }
   if (a == NULL || b == NULL) {
     return false;

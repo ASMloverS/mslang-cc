@@ -458,8 +458,11 @@ MS_TEST(object, valueEqualsNaNAndIdentity) {
   struct MsFloat* nanB = msFloatNew(&heap, NAN);
   MS_ASSERT_TRUE(nanA != nanB);
   MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanB));
-  // Identity fast path runs first: an object always equals itself.
-  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanA));
+  // NaN is unequal even to itself (02-types section 3.2); the identity fast
+  // path must not override that, but still works for ordinary floats.
+  MS_ASSERT_TRUE(!msObjectValueEquals((struct MsObject*)nanA, (struct MsObject*)nanA));
+  struct MsFloat* ordinary = msFloatNew(&heap, 1.5);
+  MS_ASSERT_TRUE(msObjectValueEquals((struct MsObject*)ordinary, (struct MsObject*)ordinary));
   msHeapDestroy(&heap);
   struct MsMemStats stats;
   msMemGetStats(&stats);

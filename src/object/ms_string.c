@@ -127,3 +127,31 @@ bool msStringEquals(const struct MsString* a, const struct MsString* b) {
   }
   return a->byteLen == 0 || memcmp(a->data, b->data, a->byteLen) == 0;
 }
+
+void msStringInternRemove(struct MsHeap* heap, const struct MsString* s) {
+  MS_ASSERT(heap != NULL);
+  MS_ASSERT(s != NULL);
+  if (heap->internSlots == NULL) {
+    return;
+  }
+  size_t mask = heap->internCap - 1;
+  size_t idx = s->hash & mask;
+  while (heap->internSlots[idx] != NULL && heap->internSlots[idx] != s) {
+    idx = (idx + 1) & mask;
+  }
+  if (heap->internSlots[idx] == NULL) {
+    return;                       // not interned (e.g. long string)
+  }
+  // Backward-shift deletion: an entry may move into the hole only when the
+  // hole lies on its own probe path, so no lookup chain is broken.
+  size_t hole = idx;
+  for (size_t i = (idx + 1) & mask; heap->internSlots[i] != NULL; i = (i + 1) & mask) {
+    size_t home = heap->internSlots[i]->hash & mask;
+    if (((hole - home) & mask) < ((i - home) & mask)) {
+      heap->internSlots[hole] = heap->internSlots[i];
+      hole = i;
+    }
+  }
+  heap->internSlots[hole] = NULL;
+  --heap->internLen;
+}

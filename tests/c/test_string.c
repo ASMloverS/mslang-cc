@@ -215,6 +215,60 @@ MS_TEST(string, longStringNewOomReturnsNull) {
   msTestAssertNoLeaks();
 }
 
+MS_TEST(string, freeInternedStringKeepsTableConsistent) {
+  msMemResetStats();
+  struct MsHeap heap;
+  msTestHeapBootstrap(&heap);
+  struct MsString* ptrs[50];
+  char buf[16];
+  for (int i = 0; i < 50; ++i) {
+    snprintf(buf, sizeof(buf), "f%d", i);
+    ptrs[i] = msStringFromCStr(&heap, buf);
+    MS_ASSERT_TRUE(ptrs[i] != NULL);
+  }
+  MS_ASSERT_EQ(50, (long long)heap.internLen);
+  // Free every other interned string through the generic object-free API.
+  for (int i = 0; i < 50; i += 2) {
+    msObjectFree(&heap, (struct MsObject*)ptrs[i]);
+  }
+  MS_ASSERT_EQ(25, (long long)heap.internLen);
+  MS_ASSERT_EQ(25, (long long)heap.objectCount);
+  // Survivors must still hit by content, at the same pointer.
+  for (int i = 1; i < 50; i += 2) {
+    snprintf(buf, sizeof(buf), "f%d", i);
+    MS_ASSERT_TRUE(msStringFromCStr(&heap, buf) == ptrs[i]);
+  }
+  // Re-creating a freed string allocates a fresh object and re-interns it.
+  struct MsString* again = msStringFromCStr(&heap, "f0");
+  MS_ASSERT_TRUE(again != NULL);
+  MS_ASSERT_EQ(26, (long long)heap.internLen);
+  MS_ASSERT_TRUE(msStringFromCStr(&heap, "f0") == again);
+  // Long (non-interned) strings bypass the table entirely.
+  char longBuf[41];
+  memset(longBuf, 'q', 40);
+  longBuf[40] = '\0';
+  struct MsString* longStr = msStringNew(&heap, longBuf, 40);
+  MS_ASSERT_TRUE(longStr != NULL);
+  size_t internBefore = heap.internLen;
+  size_t countBefore = heap.objectCount;
+  msObjectFree(&heap, (struct MsObject*)longStr);
+  MS_ASSERT_EQ((long long)internBefore, (long long)heap.internLen);
+  MS_ASSERT_EQ((long long)(countBefore - 1), (long long)heap.objectCount);
+  // Push past the 0.75 load factor so a rehash runs over the compacted table;
+  // survivors must still hit at the same pointer afterwards.
+  for (int i = 0; i < 100; ++i) {
+    snprintf(buf, sizeof(buf), "g%d", i);
+    MS_ASSERT_TRUE(msStringFromCStr(&heap, buf) != NULL);
+  }
+  MS_ASSERT_EQ(256, (long long)heap.internCap);
+  for (int i = 1; i < 50; i += 2) {
+    snprintf(buf, sizeof(buf), "f%d", i);
+    MS_ASSERT_TRUE(msStringFromCStr(&heap, buf) == ptrs[i]);
+  }
+  msHeapDestroy(&heap);
+  msTestAssertNoLeaks();
+}
+
 static const MsTestCase msTestCases[] = {
   {"string.newRoundtrip", teststringnewRoundtrip},
   {"string.fromCStrMatchesNew", teststringfromCStrMatchesNew},
@@ -228,6 +282,7 @@ static const MsTestCase msTestCases[] = {
   {"string.newOomReturnsNull", teststringnewOomReturnsNull},
   {"string.internGrowOomReturnsNull", teststringinternGrowOomReturnsNull},
   {"string.longStringNewOomReturnsNull", teststringlongStringNewOomReturnsNull},
+  {"string.freeInternedStringKeepsTableConsistent", teststringfreeInternedStringKeepsTableConsistent},
 };
 
 MS_TEST_MAIN(msTestCases)

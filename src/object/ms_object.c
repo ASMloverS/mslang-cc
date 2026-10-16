@@ -58,6 +58,9 @@ void msObjectFree(struct MsHeap* heap, struct MsObject* obj) {
   }
   *link = obj->header.gcNext;
   --heap->objectCount;
+  if (obj->header.tag == MS_TYPE_STRING) {
+    msStringInternRemove(heap, (const struct MsString*)obj);
+  }
   msFree(obj);
 }
 
@@ -203,7 +206,13 @@ static uint32_t msHashMix64(uint64_t x) {
 
 bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b) {
   if (a == b) {
-    return true;                 // identity fast path (interning residency)
+    // Identity fast path (interning residency) -- but NaN is unequal even to
+    // itself (02-types section 3.2), so floats take the value compare here.
+    if (a != NULL && a->header.tag == MS_TYPE_FLOAT) {
+      double v = ((const struct MsFloat*)a)->value;
+      return v == v;
+    }
+    return true;
   }
   if (a == NULL || b == NULL) {
     return false;

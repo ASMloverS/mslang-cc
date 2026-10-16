@@ -227,7 +227,7 @@ uint32_t msObjectHash(const struct MsObject* obj);
 bool msObjectIsTruthy(const struct MsObject* obj);
 ```
 
-- `msObjectValueEquals` 语义：指针相同即真（驻留快路径）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签数值比较（`42 == 42.0` 为真），float 比较含 `nan != nan`（02-types §3.2）；`str` 按内容；其余标签本任务按指针相等（容器/实例的值语义属任务 16/25，在此函数内扩展，调用方无感）。
+- `msObjectValueEquals` 语义：指针相同即真（驻留快路径；float NaN 除外——与自身也不等，02-types §3.2）；`nil` 同值；`bool` 比值；`int`/`float` 跨标签数值比较（`42 == 42.0` 为真），float 比较含 `nan != nan`（02-types §3.2）；`str` 按内容；其余标签本任务按指针相等（容器/实例的值语义属任务 16/25，在此函数内扩展，调用方无感）。
 - `msObjectHash` 一致性约束：整数先经 64 位混合（如 splitmix64 终态混合的低 32 位）；**整数值的 float（如 `42.0`）按 int 路径求哈希**，保证 `hash(42) == hash(42.0)`——这是 dict 键查找（任务 16）在数值键上不出错的必要条件；字符串直接用缓存的 `hash`；`bool`/`nil` 取定值。
 - 两个函数均不取 `MsHeap*`：字符串按内容比较/哈希无需驻留表，与任务 05 假定签名一致。
 

@@ -96,8 +96,9 @@ void msHeapDestroy(struct MsHeap* heap);
 // forbidden outside this module.
 struct MsObject* msObjectAlloc(struct MsHeap* heap, MsTypeTag tag, size_t size);
 
-// Unlinks obj from the all-objects list and frees it. Used by msHeapDestroy and
-// by the GC sweep (task 17); NOT part of normal value lifecycle before then.
+// Unlinks obj from the all-objects list and frees it (also removing interned
+// strings from the intern table). Used by the GC sweep (task 17); NOT part
+// of normal value lifecycle before then.
 void msObjectFree(struct MsHeap* heap, struct MsObject* obj);
 
 // Singleton accessors (per-heap; no mutable globals).
