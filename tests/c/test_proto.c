@@ -712,8 +712,14 @@ MS_TEST(proto, addConstPreservesSignedZero) {
   MS_ASSERT_EQ(0, first);
   MS_ASSERT_EQ(1, second);
   MS_ASSERT_EQ(2, b.proto.constsLen);
-  MS_ASSERT_TRUE(!signbit(msFloatValue(b.proto.consts[0])));
-  MS_ASSERT_TRUE(signbit(msFloatValue(b.proto.consts[1])));
+  if (second == 1 && b.proto.constsLen == 2) {
+    MS_ASSERT_TRUE(!signbit(msFloatValue(b.proto.consts[0])));
+    MS_ASSERT_TRUE(signbit(msFloatValue(b.proto.consts[1])));
+  }
+  struct MsFloat* negativeAgain = msFloatNew(&heap, -0.0);
+  MS_ASSERT_TRUE(negativeAgain != NULL);
+  MS_ASSERT_EQ(1, msProtoAddConst(&b, (struct MsObject*)negativeAgain));
+  MS_ASSERT_EQ(2, b.proto.constsLen);
   msProtoBuilderDestroy(&b);
   msHeapDestroy(&heap);
   struct MsMemStats stats;

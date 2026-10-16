@@ -98,7 +98,7 @@ static bool msProtoConstEquals(const struct MsObject* a, const struct MsObject* 
   if (a->header.tag == MS_TYPE_FLOAT) {
     double av = msFloatValue(a);
     double bv = msFloatValue(b);
-    if (av == 0.0 && bv == 0.0 && signbit(av) != signbit(bv)) {
+    if (av == 0.0 && bv == 0.0 && (signbit(av) != 0) != (signbit(bv) != 0)) {
       return false;
     }
   }
