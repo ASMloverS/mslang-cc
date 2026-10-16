@@ -1699,7 +1699,7 @@ bool msObjectIsTruthy(const struct MsObject* obj) {
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-预期：全绿，`test_object` 26/26、`test_string` 11/11、其余既有测试不受影响。
+预期：全绿，`test_object` 26/26、`test_string` 13/13、其余既有测试不受影响。
 
 - [ ] **Step 5: 提交**
 

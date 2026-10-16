@@ -171,7 +171,7 @@ loop:
 
 ### 比较、真值与链式比较约定
 
-- **数值比较**（`EQ/NE/LT/LE/GT/GE`）：双机器字 int 直接比较；int/float 混合按任务 06 `msObjectValueEquals` 的精确语义比较（float 为整数值且在 int64 值域内时按 int64 精确比较，否则不等；`nan != nan` 自然成立）；其余类型 `EQ`/`NE` 先走指针相等捷径、再走 `msObjectValueEquals`；`LT` 等序比较对非数值类型移交慢路径（字符串按内容、未来 `__lt__`），不支持则类型错误。
+- **数值比较**（`EQ/NE/LT/LE/GT/GE`）：双机器字 int 直接比较；int/float 混合：`EQ`/`NE` 按任务 06 `msObjectValueEquals` 的精确语义比较（float 为整数值且在 int64 值域内时按 int64 精确比较，否则不等；`nan != nan` 自然成立）；`LT`/`LE`/`GT`/`GE` 同样须按精确数值语义实现，不得因 double 提升让 `2^53+1` 与 `2^53` 的序关系失真；其余类型 `EQ`/`NE` 先走指针相等捷径、再走 `msObjectValueEquals`；`LT` 等序比较对非数值类型移交慢路径（字符串按内容、未来 `__lt__`），不支持则类型错误。
 - **`IS`**：身份比较——指针相等；nil/true/false 为驻留单例（任务 06 保证），小整数驻留属实现细节，脚本不得依赖（02-types §6），VM 不做额外处理。
 - **真值判定**（条件跳转、`NOT`）按 02-types §2：`nil`、`false`、数值零、空字符串/字节串、空容器为假；容器长度经任务 06 的长度接口查询（假定 `msLen` 形态，以任务 06 为准）；`__bool__`/`__len__` 魔术方法回落随任务 25 接入真值入口，VM 侧以单一 `static bool vmIsTruthy(...)` 承载，届时只改一处。
 - **条件跳转**：`JUMP_IF_FALSE/JUMP_IF_TRUE/JUMP_IF_NIL` 弹栈顶判定，`JUMP` 无条件；目标 = `pc + 1 + sAx`（任务 05 约定，本任务的 `pc` 在取指后已自增，故目标即 `pc + sAx`）。
