@@ -77,9 +77,10 @@ void msProtoSetLine(struct MsProtoBuilder* b, uint32_t line);
 // pc must address an MS_OPFMT_SAX instruction.
 MsResult msProtoPatchSAx(struct MsProtoBuilder* b, int pc, int32_t sax);
 
-// Adds a constant with value dedup (msObjectValueEquals: equal constants
-// share one entry); returns the pool index, or -1 (sticky MS_ERROR_OOM, or
-// MS_ERROR_SYNTAX when the pool exceeds 65536 entries).
+// Adds a constant with value dedup (msObjectValueEquals, gated on the type
+// tag: equal same-type constants share one entry, so int 1 and float 1.0 stay
+// in separate slots); returns the pool index, or -1 (sticky MS_ERROR_OOM, or
+// MS_ERROR_SYNTAX when the pool exceeds 65536 entries). value must be non-NULL.
 int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value);
 
 // Appends an exception table entry (v0.2 consumers; defined now per spec layout).

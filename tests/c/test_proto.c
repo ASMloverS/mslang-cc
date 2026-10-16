@@ -4,6 +4,7 @@
 
 #include "core/ms_memory.h"
 #include "object/ms_object.h"
+#include "object/ms_string.h"
 #include "vm/ms_opcode.h"
 #include "vm/ms_proto.h"
 #include "ms_test.h"
@@ -284,6 +285,55 @@ MS_TEST(proto, addConstValueDedup) {
   MS_ASSERT_TRUE(b.proto.consts[0] == kA);
   MS_ASSERT_TRUE(b.proto.consts[1] == kB);
   MS_ASSERT_TRUE(b.proto.consts[2] == kC);
+  msProtoBuilderDestroy(&b);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, addConstKeepsIntAndFloatSeparate) {
+  msMemResetStats();
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsObject* iOne = (struct MsObject*)msIntNew(&heap, 5000);
+  struct MsObject* fOne = (struct MsObject*)msFloatNew(&heap, 5000.0);
+  MS_ASSERT_TRUE(iOne != NULL && fOne != NULL);
+  // Same numeric value, different tags: must NOT share a slot (05-bytecode-proto).
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, iOne));
+  MS_ASSERT_EQ(1, msProtoAddConst(&b, fOne));
+  MS_ASSERT_EQ(2, b.proto.constsLen);
+  // Same-tag re-adds still dedup, including a fresh equal-value pointer.
+  struct MsObject* iOne2 = (struct MsObject*)msIntNew(&heap, 5000);
+  struct MsObject* fOne2 = (struct MsObject*)msFloatNew(&heap, 5000.0);
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, iOne2));
+  MS_ASSERT_EQ(1, msProtoAddConst(&b, fOne2));
+  MS_ASSERT_EQ(2, b.proto.constsLen);
+  msProtoBuilderDestroy(&b);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, addConstStringContentDedup) {
+  msMemResetStats();
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  char buf[41];
+  memset(buf, 'z', 40);
+  buf[40] = '\0';
+  struct MsString* s1 = msStringNew(&heap, buf, 40);   // long: not interned
+  struct MsString* s2 = msStringNew(&heap, buf, 40);
+  MS_ASSERT_TRUE(s1 != NULL && s2 != NULL);
+  MS_ASSERT_TRUE(s1 != s2);                            // distinct pointers, equal content
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)s1));
+  MS_ASSERT_EQ(0, msProtoAddConst(&b, (struct MsObject*)s2));
+  MS_ASSERT_EQ(1, b.proto.constsLen);
   msProtoBuilderDestroy(&b);
   msHeapDestroy(&heap);
   struct MsMemStats stats;
@@ -665,6 +715,8 @@ static const MsTestCase msTestCases[] = {
   {"Proto.PatchStickyShortCircuit", testprotopatchStickyShortCircuit},
   {"Proto.PatchSAxNegativeBoundary", testprotopatchSAxNegativeBoundary},
   {"Proto.AddConstValueDedup", testprotoaddConstValueDedup},
+  {"Proto.AddConstKeepsIntAndFloatSeparate", testprotoaddConstKeepsIntAndFloatSeparate},
+  {"Proto.AddConstStringContentDedup", testprotoaddConstStringContentDedup},
   {"Proto.AddConstCap65536", testprotoaddConstCap65536},
   {"Proto.AddTryBlockFieldsPreserved", testprotoaddTryBlockFieldsPreserved},
   {"Proto.AddConstGrowthAndDedupAfterRegrow", testprotoaddConstGrowthAndDedupAfterRegrow},

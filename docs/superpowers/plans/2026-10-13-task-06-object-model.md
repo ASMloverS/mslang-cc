@@ -1716,9 +1716,12 @@ git commit -m "✨ feat(object): add value equality, hash and truthiness"
 include 区追加 `#include "object/ms_object.h"`。`msProtoAddConst` 中的去重循环改为：
 
 ```c
-  // Value dedup per the constant-pool contract (msObjectValueEquals, task 06).
+  // Value dedup per the constant-pool contract (msObjectValueEquals, task 06),
+  // gated on the tag: 05-bytecode-proto shares slots only for same-type
+  // constants, so int 1 and float 1.0 never merge (their runtime types differ).
   for (int i = 0; i < b->proto.constsLen; ++i) {
-    if (msObjectValueEquals(b->proto.consts[i], value)) {
+    if (b->proto.consts[i]->header.tag == value->header.tag
+        && msObjectValueEquals(b->proto.consts[i], value)) {
       return i;
     }
   }
