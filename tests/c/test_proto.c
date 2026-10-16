@@ -21,6 +21,72 @@ static void msTestDumpProto(const struct MsProto* proto, char* buf, size_t bufSi
   fclose(out);
 }
 
+static struct MsProto* msTestMakeRawProto(void) {
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&b, MS_OP_RETURN, 0, 0));
+  struct MsProto* proto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&b, &proto));
+  return proto;
+}
+
+MS_TEST(proto, nestedProtoOwnershipAndLookup) {
+  msMemResetStats();
+  struct MsProtoBuilder parent;
+  msProtoBuilderInit(&parent);
+  MS_ASSERT_EQ(MS_TYPE_PROTO, parent.proto.header.tag);
+  struct MsProto* child = msTestMakeRawProto();
+  MS_ASSERT_TRUE(child != NULL);
+  MS_ASSERT_EQ(0, msProtoAddProto(&parent, child));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&parent, MS_OP_RETURN, 0, 0));
+  struct MsProto* built = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&parent, &built));
+  MS_ASSERT_TRUE(msProtoConstProto(built, 0) == child);
+  MS_ASSERT_TRUE(msProtoConstProto(built, 1) == NULL);
+  msProtoFree(built);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, failedProtoAddLeavesOwnershipWithCaller) {
+  msMemResetStats();
+  struct MsProtoBuilder parent;
+  msProtoBuilderInit(&parent);
+  MS_ASSERT_EQ(-1, msProtoEmitSAx(&parent, MS_OP_JUMP, 8388608));
+  struct MsProto* child = msTestMakeRawProto();
+  MS_ASSERT_EQ(-1, msProtoAddProto(&parent, child));
+  msProtoFree(child);
+  msProtoBuilderDestroy(&parent);
+  msProtoBuilderInit(&parent);
+  child = msTestMakeRawProto();
+  MS_ASSERT_EQ(-1, msProtoAddConst(&parent, (struct MsObject*)child));
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, parent.error);
+  msProtoFree(child);
+  msProtoBuilderDestroy(&parent);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
+MS_TEST(proto, builderDestroyReleasesNestedProtos) {
+  msMemResetStats();
+  struct MsProtoBuilder parent;
+  msProtoBuilderInit(&parent);
+  struct MsProto* grandchild = msTestMakeRawProto();
+  struct MsProtoBuilder childBuilder;
+  msProtoBuilderInit(&childBuilder);
+  MS_ASSERT_EQ(0, msProtoAddProto(&childBuilder, grandchild));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&childBuilder, MS_OP_RETURN, 0, 0));
+  struct MsProto* nested = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&childBuilder, &nested));
+  MS_ASSERT_EQ(0, msProtoAddProto(&parent, nested));
+  msProtoBuilderDestroy(&parent);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
 MS_TEST(proto, builderInitZeroed) {
   struct MsProtoBuilder b;
   msProtoBuilderInit(&b);
@@ -761,7 +827,10 @@ static const MsTestCase msTestCases[] = {
   {"Proto.BuildFreeNoLeaks", testprotobuildFreeNoLeaks},
   {"Proto.BuildOomRecoverableByDestroy", testprotobuildOomRecoverableByDestroy},
   {"Proto.LineAtClampsBeforeFirstEntry", testprotolineAtClampsBeforeFirstEntry},
-  {"Proto.DumpFlagsAndNamedProto", testprotodumpFlagsAndNamedProto}
+  {"Proto.DumpFlagsAndNamedProto", testprotodumpFlagsAndNamedProto},
+  {"Proto.NestedProtoOwnershipAndLookup", testprotonestedProtoOwnershipAndLookup},
+  {"Proto.FailedProtoAddLeavesOwnershipWithCaller", testprotofailedProtoAddLeavesOwnershipWithCaller},
+  {"Proto.BuilderDestroyReleasesNestedProtos", testprotobuilderDestroyReleasesNestedProtos}
 };
 
 MS_TEST_MAIN(msTestCases)

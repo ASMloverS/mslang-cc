@@ -105,11 +105,28 @@ static bool msProtoConstEquals(const struct MsObject* a, const struct MsObject* 
   return msObjectValueEquals(a, b);
 }
 
+static void msProtoReleaseContents(struct MsProto* proto) {
+  for (int i = 0; i < proto->constsLen; ++i) {
+    struct MsObject* value = proto->consts[i];
+    if (value != NULL && value->header.tag == MS_TYPE_PROTO) {
+      msProtoFree((struct MsProto*)value);
+    }
+  }
+  msFree(proto->code);
+  msFree(proto->consts);
+  msFree(proto->tryBlocks);
+  msFree(proto->lines);
+}
+
 int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value) {
   if (b->error != MS_OK) {
     return -1;
   }
   MS_ASSERT(value != NULL);
+  if (value->header.tag == MS_TYPE_PROTO) {
+    b->error = MS_ERROR_SYNTAX;
+    return -1;
+  }
   // The cap check runs before the dedup scan: a full pool needs no scan.
   if (b->proto.constsLen >= MS_PROTO_CONSTS_MAX) {
     b->error = MS_ERROR_SYNTAX;
@@ -133,6 +150,38 @@ int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value) {
   return b->proto.constsLen++;
 }
 
+int msProtoAddProto(struct MsProtoBuilder* b, struct MsProto* proto) {
+  if (b->error != MS_OK) {
+    return -1;
+  }
+  if (proto == NULL || proto->header.tag != MS_TYPE_PROTO) {
+    b->error = MS_ERROR_SYNTAX;
+    return -1;
+  }
+  if (b->proto.constsLen >= MS_PROTO_CONSTS_MAX) {
+    b->error = MS_ERROR_SYNTAX;
+    return -1;
+  }
+  if (b->proto.constsLen == b->constsCap
+      && !msProtoGrowArray((void**)&b->proto.consts, &b->constsCap, sizeof(struct MsObject*))) {
+    b->error = MS_ERROR_OOM;
+    return -1;
+  }
+  b->proto.consts[b->proto.constsLen] = (struct MsObject*)proto;
+  return b->proto.constsLen++;
+}
+
+const struct MsProto* msProtoConstProto(const struct MsProto* proto, int index) {
+  if (proto == NULL || index < 0 || index >= proto->constsLen) {
+    return NULL;
+  }
+  struct MsObject* value = proto->consts[index];
+  if (value == NULL || value->header.tag != MS_TYPE_PROTO) {
+    return NULL;
+  }
+  return (const struct MsProto*)value;
+}
+
 MsResult msProtoAddTryBlock(struct MsProtoBuilder* b, uint32_t pcStart, uint32_t pcEnd,
     uint32_t handlerPc, uint32_t finallyPc) {
   if (b->error != MS_OK) {
@@ -154,13 +203,14 @@ MsResult msProtoAddTryBlock(struct MsProtoBuilder* b, uint32_t pcStart, uint32_t
 
 void msProtoBuilderInit(struct MsProtoBuilder* b) {
   memset(b, 0, sizeof(*b));
+  b->proto.header.type = NULL;
+  b->proto.header.tag = (uint8_t)MS_TYPE_PROTO;
+  b->proto.header.markColor = MS_MARK_WHITE;
+  b->proto.header.gcNext = NULL;
 }
 
 void msProtoBuilderDestroy(struct MsProtoBuilder* b) {
-  msFree(b->proto.code);
-  msFree(b->proto.consts);
-  msFree(b->proto.tryBlocks);
-  msFree(b->proto.lines);
+  msProtoReleaseContents(&b->proto);
   msProtoBuilderInit(b);
 }
 
@@ -210,10 +260,7 @@ void msProtoFree(struct MsProto* proto) {
   if (proto == NULL) {
     return;
   }
-  msFree(proto->code);
-  msFree(proto->consts);   // pool entries belong to the object model, not freed here
-  msFree(proto->tryBlocks);
-  msFree(proto->lines);
+  msProtoReleaseContents(proto);
   msFree(proto);
 }
 

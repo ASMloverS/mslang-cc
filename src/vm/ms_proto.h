@@ -7,11 +7,10 @@
 
 #include <mslang/error.h>
 
+#include "object/ms_object.h"
 #include "vm/ms_opcode.h"
 
-// struct MsObject / struct MsString live in the object model (src/object/);
-// the pool and name fields are pointers only, so forward declarations suffice.
-struct MsObject;
+// The name and source file fields are pointers only.
 struct MsString;
 
 struct MsTryBlock {        // exception table entry (08-vm-internals section 2.1 layout)
@@ -29,6 +28,7 @@ struct MsLineEntry {       // pc -> line map, sorted by pc, run-encoded
 };
 
 struct MsProto {
+  struct MsObjectHeader header; // internal MS_TYPE_PROTO; not linked into MsHeap
   uint32_t* code;           // instruction stream, msAlloc'd, codeLen entries
   struct MsObject** consts; // constant pool: numbers, strings, child protos
   int codeLen;
@@ -60,8 +60,8 @@ struct MsProtoBuilder {
 
 void msProtoBuilderInit(struct MsProtoBuilder* b);
 
-// Frees the builder-owned arrays and re-zeroes the builder. Safe after a
-// failed build; a no-op after a successful one.
+// Frees builder-owned arrays and nested protos, then reinitializes the
+// builder. Safe after a failed or successful build.
 void msProtoBuilderDestroy(struct MsProtoBuilder* b);
 
 // Emits one instruction with the pending line; returns its pc, or -1 (sticky
@@ -80,8 +80,16 @@ MsResult msProtoPatchSAx(struct MsProtoBuilder* b, int pc, int32_t sax);
 // Adds a constant with value dedup (msObjectValueEquals, gated on the type
 // tag: equal same-type constants share one entry, so int 1 and float 1.0 stay
 // in separate slots); returns the pool index, or -1 (sticky MS_ERROR_OOM, or
-// MS_ERROR_SYNTAX when the pool exceeds 65536 entries). value must be non-NULL.
+// MS_ERROR_SYNTAX for a proto value or when the pool exceeds 65536 entries).
+// value must be non-NULL; child protos must use msProtoAddProto.
 int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value);
+
+// Adds a child proto without dedup. Success transfers ownership to b; on
+// failure the caller still owns proto and must free it.
+int msProtoAddProto(struct MsProtoBuilder* b, struct MsProto* proto);
+
+// Returns the child proto at index, or NULL for a bad index/non-proto entry.
+const struct MsProto* msProtoConstProto(const struct MsProto* proto, int index);
 
 // Appends an exception table entry (v0.2 consumers; defined now per spec layout).
 MsResult msProtoAddTryBlock(struct MsProtoBuilder* b, uint32_t pcStart, uint32_t pcEnd,
@@ -93,8 +101,8 @@ MsResult msProtoAddTryBlock(struct MsProtoBuilder* b, uint32_t pcStart, uint32_t
 // on failure the caller still owns the builder and must destroy it.
 MsResult msProtoBuild(struct MsProtoBuilder* b, struct MsProto** out);
 
-// Frees a proto's arrays and the struct itself. Does NOT free consts entries
-// or name/sourceFile (owned by the heap / GC).
+// Frees a proto's arrays and the struct itself, recursively freeing child
+// protos. Does NOT free heap constants or name/sourceFile (owned by heap/GC).
 void msProtoFree(struct MsProto* proto);
 
 // Binary-searches the line table; returns 0 when the table is empty.
