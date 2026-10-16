@@ -1,5 +1,6 @@
 #include "vm/ms_proto.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "core/ms_common.h"
@@ -90,6 +91,20 @@ MsResult msProtoPatchSAx(struct MsProtoBuilder* b, int pc, int32_t sax) {
   return MS_OK;
 }
 
+static bool msProtoConstEquals(const struct MsObject* a, const struct MsObject* b) {
+  if (a->header.tag != b->header.tag) {
+    return false;
+  }
+  if (a->header.tag == MS_TYPE_FLOAT) {
+    double av = msFloatValue(a);
+    double bv = msFloatValue(b);
+    if (av == 0.0 && bv == 0.0 && signbit(av) != signbit(bv)) {
+      return false;
+    }
+  }
+  return msObjectValueEquals(a, b);
+}
+
 int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value) {
   if (b->error != MS_OK) {
     return -1;
@@ -100,12 +115,12 @@ int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value) {
     b->error = MS_ERROR_SYNTAX;
     return -1;
   }
-  // Value dedup per the constant-pool contract (msObjectValueEquals, task 06),
-  // gated on the tag: 05-bytecode-proto shares slots only for same-type
-  // constants, so int 1 and float 1.0 never merge (their runtime types differ).
+  // Value dedup per the constant-pool contract, gated on the tag:
+  // 05-bytecode-proto shares slots only for same-type constants, so int 1 and
+  // float 1.0 never merge (their runtime types differ). Signed zeroes also
+  // remain distinct so the pool preserves their signs.
   for (int i = 0; i < b->proto.constsLen; ++i) {
-    if (b->proto.consts[i]->header.tag == value->header.tag
-        && msObjectValueEquals(b->proto.consts[i], value)) {
+    if (msProtoConstEquals(b->proto.consts[i], value)) {
       return i;
     }
   }

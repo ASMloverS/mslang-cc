@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -697,6 +698,29 @@ MS_TEST(proto, dumpFlagsAndNamedProto) {
   msProtoFree(proto);
 }
 
+MS_TEST(proto, addConstPreservesSignedZero) {
+  msMemResetStats();
+  struct MsHeap heap;
+  MS_ASSERT_EQ(MS_OK, msHeapInit(&heap));
+  struct MsProtoBuilder b;
+  msProtoBuilderInit(&b);
+  struct MsFloat* positive = msFloatNew(&heap, 0.0);
+  struct MsFloat* negative = msFloatNew(&heap, -0.0);
+  MS_ASSERT_TRUE(positive != NULL && negative != NULL);
+  int first = msProtoAddConst(&b, (struct MsObject*)positive);
+  int second = msProtoAddConst(&b, (struct MsObject*)negative);
+  MS_ASSERT_EQ(0, first);
+  MS_ASSERT_EQ(1, second);
+  MS_ASSERT_EQ(2, b.proto.constsLen);
+  MS_ASSERT_TRUE(!signbit(msFloatValue(b.proto.consts[0])));
+  MS_ASSERT_TRUE(signbit(msFloatValue(b.proto.consts[1])));
+  msProtoBuilderDestroy(&b);
+  msHeapDestroy(&heap);
+  struct MsMemStats stats;
+  msMemGetStats(&stats);
+  MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Proto.BuilderInitZeroed", testprotobuilderInitZeroed},
   {"Proto.BuilderDestroyEmptyNoLeaks", testprotobuilderDestroyEmptyNoLeaks},
@@ -716,6 +740,7 @@ static const MsTestCase msTestCases[] = {
   {"Proto.PatchSAxNegativeBoundary", testprotopatchSAxNegativeBoundary},
   {"Proto.AddConstValueDedup", testprotoaddConstValueDedup},
   {"Proto.AddConstKeepsIntAndFloatSeparate", testprotoaddConstKeepsIntAndFloatSeparate},
+  {"Proto.AddConstPreservesSignedZero", testprotoaddConstPreservesSignedZero},
   {"Proto.AddConstStringContentDedup", testprotoaddConstStringContentDedup},
   {"Proto.AddConstCap65536", testprotoaddConstCap65536},
   {"Proto.AddTryBlockFieldsPreserved", testprotoaddTryBlockFieldsPreserved},
