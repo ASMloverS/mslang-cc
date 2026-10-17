@@ -1,5 +1,6 @@
 #include "compiler/ms_compiler.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "core/ms_memory.h"
@@ -311,6 +312,121 @@ MS_TEST(compiler, declarationRhsReadsOuterSlot) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(compiler, binaryOpcodeMapping) {
+  static const struct {
+    const char* source;
+    MsOpCode op;
+  } cases[] = {
+    {"a + b;", MS_OP_ADD}, {"a - b;", MS_OP_SUB}, {"a * b;", MS_OP_MUL},
+    {"a / b;", MS_OP_DIV}, {"a div b;", MS_OP_FLOORDIV}, {"a % b;", MS_OP_MOD},
+    {"a ** b;", MS_OP_POW}, {"a << b;", MS_OP_SHL}, {"a >> b;", MS_OP_SHR},
+    {"a & b;", MS_OP_BITAND}, {"a | b;", MS_OP_BITOR}, {"a ^ b;", MS_OP_BITXOR}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    MsTestFixture fix;
+    msTestCompile(&fix, cases[i].source, MS_COMPILE_DEFAULT);
+    MS_ASSERT_EQ(MS_OK, fix.result);
+    MS_ASSERT_EQ(cases[i].op, msOpDecodeOp(msTestCodeAt(fix.proto, 2)));
+    if (fix.proto != NULL) {
+      MS_ASSERT_EQ(2, fix.proto->stackSize);
+    }
+    msTestFixtureDestroy(&fix);
+  }
+  MsTestFixture fix;
+  msTestCompile(&fix, "-a; ~a; not a; +a;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_NEG, msOpDecodeOp(msTestCodeAt(fix.proto, 1)));
+  MS_ASSERT_EQ(MS_OP_INVERT, msOpDecodeOp(msTestCodeAt(fix.proto, 4)));
+  MS_ASSERT_EQ(MS_OP_NOT, msOpDecodeOp(msTestCodeAt(fix.proto, 7)));
+  MS_ASSERT_EQ(MS_OP_LOAD_CONST, msOpDecodeOp(msTestCodeAt(fix.proto, 9)));
+  MS_ASSERT_EQ(MS_OP_ADD, msOpDecodeOp(msTestCodeAt(fix.proto, 11)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, constantFoldWhitelist) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "1 + 2 * 3; -5; ~0; not nil; 1 + 2.0;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  if (fix.proto != NULL) {
+    MS_ASSERT_EQ(4, fix.proto->constsLen);
+  }
+  const struct MsObject* seven = msTestConstAt(fix.proto, 0, MS_TYPE_INT);
+  if (seven != NULL) {
+    MS_ASSERT_EQ(7, msIntWordValue(seven));
+  }
+  const struct MsObject* minusFive = msTestConstAt(fix.proto, 1, MS_TYPE_INT);
+  if (minusFive != NULL) {
+    MS_ASSERT_EQ(-5, msIntWordValue(minusFive));
+  }
+  const struct MsObject* minusOne = msTestConstAt(fix.proto, 2, MS_TYPE_INT);
+  if (minusOne != NULL) {
+    MS_ASSERT_EQ(-1, msIntWordValue(minusOne));
+  }
+  const struct MsObject* three = msTestConstAt(fix.proto, 3, MS_TYPE_FLOAT);
+  if (three != NULL) {
+    MS_ASSERT_TRUE(msFloatValue(three) == 3.0);
+  }
+  MS_ASSERT_EQ(MS_OP_LOAD_CONST, msOpDecodeOp(msTestCodeAt(fix.proto, 0)));
+  MS_ASSERT_EQ(MS_OP_LOAD_TRUE, msOpDecodeOp(msTestCodeAt(fix.proto, 6)));
+  msTestFixtureDestroy(&fix);
+
+  msTestCompile(&fix, "+5; 5 - 8;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  const struct MsObject* five = msTestConstAt(fix.proto, 0, MS_TYPE_INT);
+  if (five != NULL) {
+    MS_ASSERT_EQ(5, msIntWordValue(five));
+  }
+  const struct MsObject* minusThree = msTestConstAt(fix.proto, 1, MS_TYPE_INT);
+  if (minusThree != NULL) {
+    MS_ASSERT_EQ(-3, msIntWordValue(minusThree));
+  }
+  MS_ASSERT_EQ(MS_OP_LOAD_CONST, msOpDecodeOp(msTestCodeAt(fix.proto, 0)));
+  MS_ASSERT_EQ(MS_OP_LOAD_CONST, msOpDecodeOp(msTestCodeAt(fix.proto, 2)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, int64MinAndOverflowBehavior) {
+  MsTestFixture fix;
+  msTestCompile(&fix,
+      "-9223372036854775808; 9223372036854775807 + 1; -9223372036854775808 * -1;",
+      MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  const struct MsObject* int64Min = msTestConstAt(fix.proto, 0, MS_TYPE_INT);
+  if (int64Min != NULL) {
+    MS_ASSERT_EQ(INT64_MIN, msIntWordValue(int64Min));
+  }
+  MS_ASSERT_EQ(MS_OP_ADD, msOpDecodeOp(msTestCodeAt(fix.proto, 4)));
+  MS_ASSERT_EQ(MS_OP_MUL, msOpDecodeOp(msTestCodeAt(fix.proto, 8)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, nonWhitelistOperationsRemain) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "\"a\" + \"b\"; 1 / 0;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_ADD, msOpDecodeOp(msTestCodeAt(fix.proto, 2)));
+  MS_ASSERT_EQ(MS_OP_DIV, msOpDecodeOp(msTestCodeAt(fix.proto, 6)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, foldedSignedZeroRemainDistinct) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "-0.0; 0.0;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  if (fix.proto != NULL) {
+    MS_ASSERT_EQ(2, fix.proto->constsLen);
+  }
+  const struct MsObject* negativeZero = msTestConstAt(fix.proto, 0, MS_TYPE_FLOAT);
+  if (negativeZero != NULL) {
+    MS_ASSERT_TRUE(signbit(msFloatValue(negativeZero)));
+  }
+  const struct MsObject* positiveZero = msTestConstAt(fix.proto, 1, MS_TYPE_FLOAT);
+  if (positiveZero != NULL) {
+    MS_ASSERT_TRUE(!signbit(msFloatValue(positiveZero)));
+  }
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Compiler.EmptyModule", testcompileremptyModule},
   {"Compiler.ScalarLiteralsAndDedup", testcompilerscalarLiteralsAndDedup},
@@ -321,6 +437,11 @@ static const MsTestCase msTestCases[] = {
   {"Compiler.SiblingBlocksReuseSlots", testcompilersiblingBlocksReuseSlots},
   {"Compiler.LongIdentifierResolvesByContent", testcompilerlongIdentifierResolvesByContent},
   {"Compiler.DeclarationRhsReadsOuterSlot", testcompilerdeclarationRhsReadsOuterSlot},
+  {"Compiler.BinaryOpcodeMapping", testcompilerbinaryOpcodeMapping},
+  {"Compiler.ConstantFoldWhitelist", testcompilerconstantFoldWhitelist},
+  {"Compiler.Int64MinAndOverflowBehavior", testcompilerint64MinAndOverflowBehavior},
+  {"Compiler.NonWhitelistOperationsRemain", testcompilernonWhitelistOperationsRemain},
+  {"Compiler.FoldedSignedZeroRemainDistinct", testcompilerfoldedSignedZeroRemainDistinct},
 };
 
 MS_TEST_MAIN(msTestCases)

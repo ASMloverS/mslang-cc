@@ -271,6 +271,243 @@ static void msCompilerEmitStringLiteral(struct MsCompiler* c, const struct MsAst
 static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node);
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node);
 
+static bool msCompilerIntAddOverflows(int64_t a, int64_t b) {
+  return (b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b);
+}
+
+static bool msCompilerIntSubOverflows(int64_t a, int64_t b) {
+  return (b > 0 && a < INT64_MIN + b) || (b < 0 && a > INT64_MAX + b);
+}
+
+static bool msCompilerIntMulOverflows(int64_t a, int64_t b) {
+  if (a > 0) {
+    if (b > 0) {
+      return a > INT64_MAX / b;
+    }
+    return b < INT64_MIN / a;
+  }
+  if (b > 0) {
+    return a < INT64_MIN / b;
+  }
+  return a != 0 && b < INT64_MAX / a;
+}
+
+typedef enum {
+  MS_CONST_INT,
+  MS_CONST_FLOAT,
+  MS_CONST_BOOL,
+  MS_CONST_NIL
+} MsConstKind;
+
+struct MsConstValue {
+  MsConstKind kind;
+  int64_t intValue;
+  double floatValue;
+  bool boolValue;
+};
+
+static bool msCompilerConstTruthy(const struct MsConstValue* value) {
+  switch (value->kind) {
+    case MS_CONST_INT:
+      return value->intValue != 0;
+    case MS_CONST_FLOAT:
+      return value->floatValue != 0.0;
+    case MS_CONST_BOOL:
+      return value->boolValue;
+    case MS_CONST_NIL:
+      return false;
+    default:
+      MS_UNREACHABLE();
+  }
+  return false;
+}
+
+static bool msCompilerEvalConst(struct MsCompiler* c, const struct MsAst* node,
+    int depth, struct MsConstValue* out) {
+  if (node == NULL || c->sticky != MS_OK) {
+    return false;
+  }
+  if (depth > 0 && c->nodeDepth + depth > MS_COMPILER_MAX_NODE_DEPTH) {
+    msCompilerFail(c, node, MS_ERROR_SYNTAX, 311, "AST nesting depth exceeded");
+    return false;
+  }
+  if (node->kind == MS_AST_INT) {
+    out->kind = MS_CONST_INT;
+    return msCompilerParseInt(c, node, false, &out->intValue);
+  }
+  if (node->kind == MS_AST_FLOAT) {
+    out->kind = MS_CONST_FLOAT;
+    return msCompilerParseFloat(c, node, &out->floatValue);
+  }
+  if (node->kind == MS_AST_BOOL) {
+    out->kind = MS_CONST_BOOL;
+    out->boolValue = node->as.boolLit.value;
+    return true;
+  }
+  if (node->kind == MS_AST_NIL) {
+    out->kind = MS_CONST_NIL;
+    return true;
+  }
+  if (node->kind == MS_AST_UNARY) {
+    if (node->as.unary.op == MS_TOKEN_MINUS && node->as.unary.operand->kind == MS_AST_INT) {
+      if (c->nodeDepth + depth + 1 > MS_COMPILER_MAX_NODE_DEPTH) {
+        msCompilerFail(c, node->as.unary.operand, MS_ERROR_SYNTAX, 311, "AST nesting depth exceeded");
+        return false;
+      }
+      out->kind = MS_CONST_INT;
+      return msCompilerParseInt(c, node->as.unary.operand, true, &out->intValue);
+    }
+    struct MsConstValue operand;
+    if (!msCompilerEvalConst(c, node->as.unary.operand, depth + 1, &operand)) {
+      return false;
+    }
+    if (node->as.unary.op == MS_TOKEN_KW_NOT) {
+      out->kind = MS_CONST_BOOL;
+      out->boolValue = !msCompilerConstTruthy(&operand);
+      return true;
+    }
+    if (operand.kind != MS_CONST_INT && operand.kind != MS_CONST_FLOAT) {
+      return false;
+    }
+    if (node->as.unary.op == MS_TOKEN_PLUS) {
+      *out = operand;
+      return true;
+    }
+    if (node->as.unary.op == MS_TOKEN_TILDE) {
+      if (operand.kind != MS_CONST_INT) {
+        return false;
+      }
+      out->kind = MS_CONST_INT;
+      out->intValue = ~operand.intValue;
+      return true;
+    }
+    if (node->as.unary.op != MS_TOKEN_MINUS) {
+      return false;
+    }
+    if (operand.kind == MS_CONST_FLOAT) {
+      out->kind = MS_CONST_FLOAT;
+      out->floatValue = -operand.floatValue;
+      return true;
+    }
+    if (operand.intValue == INT64_MIN) {
+      return false;
+    }
+    out->kind = MS_CONST_INT;
+    out->intValue = -operand.intValue;
+    return true;
+  }
+  if (node->kind != MS_AST_BINARY
+      || (node->as.binary.op != MS_TOKEN_PLUS && node->as.binary.op != MS_TOKEN_MINUS
+          && node->as.binary.op != MS_TOKEN_STAR)) {
+    return false;
+  }
+  struct MsConstValue left;
+  struct MsConstValue right;
+  if (!msCompilerEvalConst(c, node->as.binary.left, depth + 1, &left)
+      || !msCompilerEvalConst(c, node->as.binary.right, depth + 1, &right)) {
+    return false;
+  }
+  if ((left.kind != MS_CONST_INT && left.kind != MS_CONST_FLOAT)
+      || (right.kind != MS_CONST_INT && right.kind != MS_CONST_FLOAT)) {
+    return false;
+  }
+  if (left.kind == MS_CONST_INT && right.kind == MS_CONST_INT) {
+    bool overflow = node->as.binary.op == MS_TOKEN_PLUS
+        ? msCompilerIntAddOverflows(left.intValue, right.intValue)
+        : node->as.binary.op == MS_TOKEN_MINUS
+            ? msCompilerIntSubOverflows(left.intValue, right.intValue)
+            : msCompilerIntMulOverflows(left.intValue, right.intValue);
+    if (overflow) {
+      return false;
+    }
+    out->kind = MS_CONST_INT;
+    out->intValue = node->as.binary.op == MS_TOKEN_PLUS ? left.intValue + right.intValue
+        : node->as.binary.op == MS_TOKEN_MINUS ? left.intValue - right.intValue
+                                               : left.intValue * right.intValue;
+    return true;
+  }
+  double a = left.kind == MS_CONST_INT ? (double)left.intValue : left.floatValue;
+  double b = right.kind == MS_CONST_INT ? (double)right.intValue : right.floatValue;
+  out->kind = MS_CONST_FLOAT;
+  out->floatValue = node->as.binary.op == MS_TOKEN_PLUS ? a + b
+      : node->as.binary.op == MS_TOKEN_MINUS ? a - b : a * b;
+  return true;
+}
+
+static void msCompilerEmitConst(struct MsCompiler* c, const struct MsConstValue* value) {
+  switch (value->kind) {
+    case MS_CONST_INT:
+      msCompilerEmitConstObject(c, (struct MsObject*)msIntNew(c->heap, value->intValue));
+      break;
+    case MS_CONST_FLOAT:
+      msCompilerEmitConstObject(c, (struct MsObject*)msFloatNew(c->heap, value->floatValue));
+      break;
+    case MS_CONST_BOOL:
+      msCompilerEmitABC(c, value->boolValue ? MS_OP_LOAD_TRUE : MS_OP_LOAD_FALSE, 0, 0, 1);
+      break;
+    case MS_CONST_NIL:
+      msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+      break;
+    default:
+      MS_UNREACHABLE();
+  }
+}
+
+static MsOpCode msCompilerBinaryOp(MsTokenType token) {
+  switch (token) {
+    case MS_TOKEN_PLUS: return MS_OP_ADD;
+    case MS_TOKEN_MINUS: return MS_OP_SUB;
+    case MS_TOKEN_STAR: return MS_OP_MUL;
+    case MS_TOKEN_SLASH: return MS_OP_DIV;
+    case MS_TOKEN_KW_DIV: return MS_OP_FLOORDIV;
+    case MS_TOKEN_PERCENT: return MS_OP_MOD;
+    case MS_TOKEN_DOUBLE_STAR: return MS_OP_POW;
+    case MS_TOKEN_SHIFT_LEFT: return MS_OP_SHL;
+    case MS_TOKEN_SHIFT_RIGHT: return MS_OP_SHR;
+    case MS_TOKEN_AMP: return MS_OP_BITAND;
+    case MS_TOKEN_PIPE: return MS_OP_BITOR;
+    case MS_TOKEN_CARET: return MS_OP_BITXOR;
+    default: return MS_OP_COUNT;
+  }
+}
+
+static void msCompilerCompileBinary(struct MsCompiler* c, const struct MsAst* node) {
+  MsOpCode op = msCompilerBinaryOp(node->as.binary.op);
+  if (op == MS_OP_COUNT) {
+    msCompilerReport(c, node, 307, "binary operator is not implemented in task 07");
+    msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+    return;
+  }
+  msCompilerCompileExpr(c, node->as.binary.left);
+  msCompilerCompileExpr(c, node->as.binary.right);
+  msCompilerEmitABC(c, op, 0, 0, -1);
+}
+
+static void msCompilerCompileUnary(struct MsCompiler* c, const struct MsAst* node) {
+  if (node->as.unary.op == MS_TOKEN_PLUS) {
+    struct MsConstValue zero = {.kind = MS_CONST_INT, .intValue = 0};
+    msCompilerEmitConst(c, &zero);
+    msCompilerCompileExpr(c, node->as.unary.operand);
+    msCompilerEmitABC(c, MS_OP_ADD, 0, 0, -1);
+    return;
+  }
+  msCompilerCompileExpr(c, node->as.unary.operand);
+  switch (node->as.unary.op) {
+    case MS_TOKEN_MINUS:
+      msCompilerEmitABC(c, MS_OP_NEG, 0, 0, 0);
+      break;
+    case MS_TOKEN_TILDE:
+      msCompilerEmitABC(c, MS_OP_INVERT, 0, 0, 0);
+      break;
+    case MS_TOKEN_KW_NOT:
+      msCompilerEmitABC(c, MS_OP_NOT, 0, 0, 0);
+      break;
+    default:
+      msCompilerReport(c, node, 307, "unary operator is not implemented in task 07");
+      break;
+  }
+}
+
 typedef enum {
   MS_RESOLVE_LOCAL,
   MS_RESOLVE_UPVALUE,
@@ -446,6 +683,24 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
       struct MsString* name = msCompilerNameFromSlice(c, node->as.literal.start, node->as.literal.length);
       if (name != NULL) {
         msCompilerEmitLoadName(c, name);
+      }
+      break;
+    }
+    case MS_AST_UNARY: {
+      struct MsConstValue folded;
+      if (msCompilerEvalConst(c, node, 0, &folded)) {
+        msCompilerEmitConst(c, &folded);
+      } else if (c->sticky == MS_OK) {
+        msCompilerCompileUnary(c, node);
+      }
+      break;
+    }
+    case MS_AST_BINARY: {
+      struct MsConstValue folded;
+      if (msCompilerEvalConst(c, node, 0, &folded)) {
+        msCompilerEmitConst(c, &folded);
+      } else if (c->sticky == MS_OK) {
+        msCompilerCompileBinary(c, node);
       }
       break;
     }
