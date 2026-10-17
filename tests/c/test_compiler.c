@@ -87,8 +87,74 @@ MS_TEST(compiler, emptyModule) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(compiler, scalarLiteralsAndDedup) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "1; 1; true; false; nil;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(1, fix.proto->constsLen);
+  MS_ASSERT_EQ(1, msIntWordValue(fix.proto->consts[0]));
+  MS_ASSERT_EQ(1, fix.proto->localCount);
+  static const MsOpCode expected[] = {
+    MS_OP_LOAD_CONST, MS_OP_STORE_LOCAL,
+    MS_OP_LOAD_CONST, MS_OP_STORE_LOCAL,
+    MS_OP_LOAD_TRUE, MS_OP_STORE_LOCAL,
+    MS_OP_LOAD_FALSE, MS_OP_STORE_LOCAL,
+    MS_OP_LOAD_NIL, MS_OP_STORE_LOCAL,
+    MS_OP_LOAD_NIL, MS_OP_RETURN
+  };
+  msTestAssertOps(fix.proto, expected, sizeof(expected) / sizeof(expected[0]));
+  for (int i = 1; i < 10; i += 2) {
+    MS_ASSERT_EQ(0, msOpDecodeA(fix.proto->code[i]));
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, numericLiteralBasesAndUnderscores) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "0xff; 0o17; 0b1010; 1_000; 1_2.5_0e+1;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(5, fix.proto->constsLen);
+  MS_ASSERT_EQ(255, msIntWordValue(fix.proto->consts[0]));
+  MS_ASSERT_EQ(15, msIntWordValue(fix.proto->consts[1]));
+  MS_ASSERT_EQ(10, msIntWordValue(fix.proto->consts[2]));
+  MS_ASSERT_EQ(1000, msIntWordValue(fix.proto->consts[3]));
+  MS_ASSERT_TRUE(msFloatValue(fix.proto->consts[4]) == 125.0);
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, stringLiteralDecoding) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "\"a\\n\\u0041\"; `a\\n`;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(2, fix.proto->constsLen);
+  const struct MsString* escaped = (const struct MsString*)fix.proto->consts[0];
+  const struct MsString* raw = (const struct MsString*)fix.proto->consts[1];
+  MS_ASSERT_EQ(3, (long long)msStringLen(escaped));
+  MS_ASSERT_TRUE(memcmp(msStringData(escaped), "a\nA", 3) == 0);
+  MS_ASSERT_EQ(3, (long long)msStringLen(raw));
+  MS_ASSERT_TRUE(memcmp(msStringData(raw), "a\\n", 3) == 0);
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, integerOverflowReportsE308) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "9223372036854775808;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_TRUE(fix.proto == NULL);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  const struct MsDiag* diag = msDiagListAt(&fix.diags, 0);
+  MS_ASSERT_EQ(308, (long long)diag->code);
+  MS_ASSERT_EQ(1, (long long)diag->line);
+  MS_ASSERT_EQ(1, (long long)diag->column);
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Compiler.EmptyModule", testcompileremptyModule},
+  {"Compiler.ScalarLiteralsAndDedup", testcompilerscalarLiteralsAndDedup},
+  {"Compiler.NumericLiteralBasesAndUnderscores", testcompilernumericLiteralBasesAndUnderscores},
+  {"Compiler.StringLiteralDecoding", testcompilerstringLiteralDecoding},
+  {"Compiler.IntegerOverflowReportsE308", testcompilerintegerOverflowReportsE308},
 };
 
 MS_TEST_MAIN(msTestCases)
