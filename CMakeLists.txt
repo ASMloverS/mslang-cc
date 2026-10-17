@@ -40,6 +40,7 @@ endfunction()
 
 add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/ms_version.c
+    src/compiler/ms_compiler.c
     src/object/ms_object.c
     src/object/ms_string.c
     src/core/ms_common.c
@@ -96,4 +97,5 @@ if(MSLANG_BUILD_TESTS)
   mslang_add_c_test(test_parser)
   mslang_add_c_test(test_opcode)
   mslang_add_c_test(test_proto)
+  mslang_add_c_test(test_compiler)
 endif()
