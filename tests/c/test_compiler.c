@@ -430,6 +430,90 @@ MS_TEST(compiler, foldedSignedZeroRemainDistinct) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(compiler, logicalShortCircuitShape) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "a and b; a or b;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_JUMP_IF_FALSE, msOpDecodeOp(msTestCodeAt(fix.proto, 3)));
+  MS_ASSERT_EQ(2, msOpDecodeSAx(msTestCodeAt(fix.proto, 3)));
+  MS_ASSERT_EQ(MS_OP_JUMP_IF_TRUE, msOpDecodeOp(msTestCodeAt(fix.proto, 11)));
+  MS_ASSERT_EQ(2, msOpDecodeSAx(msTestCodeAt(fix.proto, 11)));
+  if (fix.proto != NULL) {
+    MS_ASSERT_EQ(2, fix.proto->localCount);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, constantConditionsSelectOneBranch) {
+  MsTestFixture fix;
+  msTestCompile(&fix,
+      "false and x; true or x; true and x; a if true else b; a if false else b;",
+      MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  if (fix.proto != NULL) {
+    for (int i = 0; i < fix.proto->codeLen; ++i) {
+      MsOpCode op = msOpDecodeOp(msTestCodeAt(fix.proto, i));
+      MS_ASSERT_TRUE(op != MS_OP_JUMP && op != MS_OP_JUMP_IF_FALSE && op != MS_OP_JUMP_IF_TRUE);
+    }
+  }
+  MS_ASSERT_EQ(MS_OP_LOAD_FALSE, msOpDecodeOp(msTestCodeAt(fix.proto, 0)));
+  MS_ASSERT_EQ(MS_OP_LOAD_TRUE, msOpDecodeOp(msTestCodeAt(fix.proto, 2)));
+  MS_ASSERT_EQ(MS_OP_LOAD_GLOBAL, msOpDecodeOp(msTestCodeAt(fix.proto, 4)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, conditionalExpressionJumps) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "a if c else b;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  static const MsOpCode expected[] = {
+    MS_OP_LOAD_GLOBAL, MS_OP_JUMP_IF_FALSE, MS_OP_LOAD_GLOBAL, MS_OP_JUMP,
+    MS_OP_LOAD_GLOBAL, MS_OP_STORE_LOCAL, MS_OP_LOAD_NIL, MS_OP_RETURN
+  };
+  msTestAssertOps(fix.proto, expected, sizeof(expected) / sizeof(expected[0]));
+  MS_ASSERT_EQ(2, msOpDecodeSAx(msTestCodeAt(fix.proto, 1)));
+  MS_ASSERT_EQ(1, msOpDecodeSAx(msTestCodeAt(fix.proto, 3)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, comparisonExpansion) {
+  static const struct {
+    const char* source;
+    MsOpCode op;
+    bool negate;
+  } cases[] = {
+    {"a < b;", MS_OP_LT, false}, {"a <= b;", MS_OP_LE, false},
+    {"a > b;", MS_OP_GT, false}, {"a >= b;", MS_OP_GE, false},
+    {"a == b;", MS_OP_EQ, false}, {"a != b;", MS_OP_NE, false},
+    {"a in b;", MS_OP_IN, false}, {"a not in b;", MS_OP_IN, true},
+    {"a is b;", MS_OP_IS, false}, {"a is not b;", MS_OP_IS, true}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    MsTestFixture fix;
+    msTestCompile(&fix, cases[i].source, MS_COMPILE_DEFAULT);
+    MS_ASSERT_EQ(MS_OK, fix.result);
+    MS_ASSERT_EQ(cases[i].op, msOpDecodeOp(msTestCodeAt(fix.proto, 2)));
+    MS_ASSERT_EQ(cases[i].negate ? MS_OP_NOT : MS_OP_STORE_LOCAL,
+        msOpDecodeOp(msTestCodeAt(fix.proto, 3)));
+    if (cases[i].negate) {
+      MS_ASSERT_EQ(MS_OP_STORE_LOCAL, msOpDecodeOp(msTestCodeAt(fix.proto, 4)));
+    }
+    msTestFixtureDestroy(&fix);
+  }
+}
+
+MS_TEST(compiler, positionalCallShape) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "f(a, 1);", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_CALL, msOpDecodeOp(msTestCodeAt(fix.proto, 3)));
+  MS_ASSERT_EQ(2, msOpDecodeA(msTestCodeAt(fix.proto, 3)));
+  if (fix.proto != NULL) {
+    MS_ASSERT_EQ(3, fix.proto->stackSize);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Compiler.EmptyModule", testcompileremptyModule},
   {"Compiler.ScalarLiteralsAndDedup", testcompilerscalarLiteralsAndDedup},
@@ -445,6 +529,11 @@ static const MsTestCase msTestCases[] = {
   {"Compiler.Int64MinAndOverflowBehavior", testcompilerint64MinAndOverflowBehavior},
   {"Compiler.NonWhitelistOperationsRemain", testcompilernonWhitelistOperationsRemain},
   {"Compiler.FoldedSignedZeroRemainDistinct", testcompilerfoldedSignedZeroRemainDistinct},
+  {"Compiler.LogicalShortCircuitShape", testcompilerlogicalShortCircuitShape},
+  {"Compiler.ConstantConditionsSelectOneBranch", testcompilerconstantConditionsSelectOneBranch},
+  {"Compiler.ConditionalExpressionJumps", testcompilerconditionalExpressionJumps},
+  {"Compiler.ComparisonExpansion", testcompilercomparisonExpansion},
+  {"Compiler.PositionalCallShape", testcompilerpositionalCallShape},
 };
 
 MS_TEST_MAIN(msTestCases)

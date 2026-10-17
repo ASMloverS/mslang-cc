@@ -94,6 +94,43 @@ static int msCompilerEmitABC(struct MsCompiler* c, MsOpCode op, uint8_t a,
   return pc;
 }
 
+static int msCompilerCurrentPc(const struct MsCompiler* c) {
+  return c->fn->builder.proto.codeLen;
+}
+
+static int msCompilerEmitJumpPlaceholder(struct MsCompiler* c, MsOpCode op) {
+  if (c->sticky != MS_OK) {
+    return -1;
+  }
+  int pc = msProtoEmitSAx(&c->fn->builder, op, 0);
+  if (pc < 0) {
+    msCompilerSyncBuilder(c);
+    return -1;
+  }
+  c->fn->stackDepth += op == MS_OP_JUMP ? 0 : -1;
+  MS_ASSERT(c->fn->stackDepth >= 0);
+  return pc;
+}
+
+static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc, int expectedStackDepth) {
+  struct MsFuncCtx* fn = c->fn;
+  MS_ASSERT(fn->stackDepth == expectedStackDepth);
+  MS_UNUSED(expectedStackDepth);
+  if (jumpPc < 0 || c->sticky != MS_OK) {
+    return;
+  }
+  int target = msCompilerCurrentPc(c);
+  uint32_t* instruction = &fn->builder.proto.code[jumpPc];
+  if (msOpDecodeOp(*instruction) == MS_OP_JUMP && target == jumpPc + 1) {
+    *instruction = msOpEncodeABC(MS_OP_NOP, 0, 0);
+    return;
+  }
+  MsResult result = msProtoPatchSAx(&fn->builder, jumpPc, target - (jumpPc + 1));
+  if (result != MS_OK) {
+    msCompilerSyncBuilder(c);
+  }
+}
+
 static bool msCompilerEnterNode(struct MsCompiler* c, const struct MsAst* node) {
   if (c->sticky != MS_OK) {
     return false;
@@ -456,6 +493,119 @@ static void msCompilerEmitConst(struct MsCompiler* c, const struct MsConstValue*
   }
 }
 
+static void msCompilerCompileLogical(struct MsCompiler* c, const struct MsAst* node) {
+  struct MsConstValue constant;
+  if (msCompilerEvalConst(c, node->as.binary.left, 0, &constant)) {
+    bool isAnd = node->as.binary.op == MS_TOKEN_KW_AND;
+    bool truthy = msCompilerConstTruthy(&constant);
+    if ((isAnd && !truthy) || (!isAnd && truthy)) {
+      msCompilerEmitConst(c, &constant);
+    } else {
+      msCompilerCompileExpr(c, node->as.binary.right);
+    }
+    return;
+  }
+  if (c->sticky != MS_OK) {
+    return;
+  }
+  int savedLocals = c->fn->localCount;
+  int slot = msCompilerAllocHiddenLocal(c);
+  if (slot < 0) {
+    return;
+  }
+  msCompilerCompileExpr(c, node->as.binary.left);
+  msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+  msCompilerEmitABC(c, MS_OP_LOAD_LOCAL, (uint8_t)slot, 0, 1);
+  MsOpCode jumpOp = node->as.binary.op == MS_TOKEN_KW_AND ? MS_OP_JUMP_IF_FALSE : MS_OP_JUMP_IF_TRUE;
+  int jump = msCompilerEmitJumpPlaceholder(c, jumpOp);
+  int branchDepth = c->fn->stackDepth;
+  msCompilerCompileExpr(c, node->as.binary.right);
+  msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+  msCompilerPatchToCurrent(c, jump, branchDepth);
+  msCompilerEmitABC(c, MS_OP_LOAD_LOCAL, (uint8_t)slot, 0, 1);
+  c->fn->localCount = savedLocals;
+}
+
+static void msCompilerCompileConditional(struct MsCompiler* c, const struct MsAst* node) {
+  struct MsConstValue condition;
+  if (msCompilerEvalConst(c, node->as.conditional.cond, 0, &condition)) {
+    if (msCompilerConstTruthy(&condition)) {
+      msCompilerCompileExpr(c, node->as.conditional.value);
+    } else {
+      msCompilerCompileExpr(c, node->as.conditional.elseValue);
+    }
+    return;
+  }
+  if (c->sticky != MS_OK) {
+    return;
+  }
+  msCompilerCompileExpr(c, node->as.conditional.cond);
+  int elseJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
+  int elseDepth = c->fn->stackDepth;
+  msCompilerCompileExpr(c, node->as.conditional.value);
+  int endJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+  int endDepth = c->fn->stackDepth;
+  c->fn->stackDepth = elseDepth;
+  msCompilerPatchToCurrent(c, elseJump, elseDepth);
+  msCompilerCompileExpr(c, node->as.conditional.elseValue);
+  MS_ASSERT(c->fn->stackDepth == endDepth);
+  msCompilerPatchToCurrent(c, endJump, endDepth);
+}
+
+static void msCompilerCompileComparison(struct MsCompiler* c, const struct MsAst* node) {
+  if (node->as.compareChain.opCount != 1 || node->as.compareChain.operands.count != 2) {
+    msCompilerReport(c, node, 307, "comparison chains belong to task 12");
+    msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+    return;
+  }
+  msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
+  msCompilerCompileExpr(c, node->as.compareChain.operands.items[1]);
+  MsCompareOp compare = node->as.compareChain.ops[0];
+  MsOpCode op = MS_OP_COUNT;
+  switch (compare) {
+    case MS_CMP_LT: op = MS_OP_LT; break;
+    case MS_CMP_LE: op = MS_OP_LE; break;
+    case MS_CMP_GT: op = MS_OP_GT; break;
+    case MS_CMP_GE: op = MS_OP_GE; break;
+    case MS_CMP_EQ: op = MS_OP_EQ; break;
+    case MS_CMP_NE: op = MS_OP_NE; break;
+    case MS_CMP_IN:
+    case MS_CMP_NOT_IN: op = MS_OP_IN; break;
+    case MS_CMP_IS:
+    case MS_CMP_IS_NOT: op = MS_OP_IS; break;
+    default: break;
+  }
+  if (op == MS_OP_COUNT) {
+    msCompilerReport(c, node, 307, "comparison operator is not implemented");
+    return;
+  }
+  msCompilerEmitABC(c, op, 0, 0, -1);
+  if (compare == MS_CMP_NOT_IN || compare == MS_CMP_IS_NOT) {
+    msCompilerEmitABC(c, MS_OP_NOT, 0, 0, 0);
+  }
+}
+
+static void msCompilerCompileCall(struct MsCompiler* c, const struct MsAst* node) {
+  size_t count = node->as.call.args.count;
+  if (count > 255) {
+    msCompilerReport(c, node, 312, "more than 255 positional arguments");
+    msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+    return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (node->as.call.args.items[i]->kind == MS_AST_KW_ARG) {
+      msCompilerReport(c, node, 307, "keyword calls belong to task 13");
+      msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+      return;
+    }
+  }
+  msCompilerCompileExpr(c, node->as.call.callee);
+  for (size_t i = 0; i < count; ++i) {
+    msCompilerCompileExpr(c, node->as.call.args.items[i]);
+  }
+  msCompilerEmitABC(c, MS_OP_CALL, (uint8_t)count, 0, -(int)count);
+}
+
 static MsOpCode msCompilerBinaryOp(MsTokenType token) {
   switch (token) {
     case MS_TOKEN_PLUS: return MS_OP_ADD;
@@ -707,6 +857,18 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
       }
       break;
     }
+    case MS_AST_LOGICAL:
+      msCompilerCompileLogical(c, node);
+      break;
+    case MS_AST_CONDITIONAL:
+      msCompilerCompileConditional(c, node);
+      break;
+    case MS_AST_COMPARE_CHAIN:
+      msCompilerCompileComparison(c, node);
+      break;
+    case MS_AST_CALL:
+      msCompilerCompileCall(c, node);
+      break;
     default:
       msCompilerReport(c, node, 307, "expression construct is not implemented in task 07");
       msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
