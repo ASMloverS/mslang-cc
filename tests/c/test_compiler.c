@@ -97,6 +97,22 @@ static const struct MsObject* msTestConstAt(const struct MsProto* proto, int ind
   return value;
 }
 
+static uint32_t msTestCodeAt(const struct MsProto* proto, int index) {
+  MS_ASSERT_TRUE(proto != NULL);
+  if (proto == NULL) {
+    return 0;
+  }
+  MS_ASSERT_TRUE(proto->code != NULL);
+  if (proto->code == NULL) {
+    return 0;
+  }
+  MS_ASSERT_TRUE(index >= 0 && index < proto->codeLen);
+  if (index < 0 || index >= proto->codeLen) {
+    return 0;
+  }
+  return proto->code[index];
+}
+
 MS_TEST(compiler, emptyModule) {
   MsTestFixture fix;
   msTestCompile(&fix, "", MS_COMPILE_DEFAULT);
@@ -228,12 +244,83 @@ MS_TEST(compiler, integerOverflowReportsE308) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(compiler, moduleDeclarationUsesGlobal) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "x := 1; x;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  static const MsOpCode expected[] = {
+    MS_OP_LOAD_CONST, MS_OP_STORE_GLOBAL, MS_OP_LOAD_GLOBAL,
+    MS_OP_STORE_LOCAL, MS_OP_LOAD_NIL, MS_OP_RETURN
+  };
+  msTestAssertOps(fix.proto, expected, sizeof(expected) / sizeof(expected[0]));
+  MS_ASSERT_EQ(1, msOpDecodeBx(msTestCodeAt(fix.proto, 1)));
+  MS_ASSERT_EQ(1, msOpDecodeBx(msTestCodeAt(fix.proto, 2)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 3)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, siblingBlocksReuseSlots) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "x := 0; { x := 1; x; } { x := 2; x; } x;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_STORE_LOCAL, msOpDecodeOp(msTestCodeAt(fix.proto, 3)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 3)));
+  MS_ASSERT_EQ(1, msOpDecodeA(msTestCodeAt(fix.proto, 5)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 7)));
+  MS_ASSERT_EQ(1, msOpDecodeA(msTestCodeAt(fix.proto, 9)));
+  MS_ASSERT_EQ(MS_OP_LOAD_GLOBAL, msOpDecodeOp(msTestCodeAt(fix.proto, 10)));
+  if (fix.proto != NULL) {
+    MS_ASSERT_EQ(2, fix.proto->localCount);
+  }
+  msTestFixtureDestroy(&fix);
+
+  msTestCompile(&fix, "{ 1; } { x := 2; x; }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_LOAD_LOCAL, msOpDecodeOp(msTestCodeAt(fix.proto, 4)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 4)));
+  MS_ASSERT_EQ(MS_OP_STORE_LOCAL, msOpDecodeOp(msTestCodeAt(fix.proto, 5)));
+  MS_ASSERT_EQ(1, msOpDecodeA(msTestCodeAt(fix.proto, 5)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, longIdentifierResolvesByContent) {
+  MsTestFixture fix;
+  msTestCompile(&fix,
+      "{ abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN := 1; abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN; }",
+      MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_STORE_LOCAL, msOpDecodeOp(msTestCodeAt(fix.proto, 1)));
+  MS_ASSERT_EQ(MS_OP_LOAD_LOCAL, msOpDecodeOp(msTestCodeAt(fix.proto, 2)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 1)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 2)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, declarationRhsReadsOuterSlot) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "{ x := 1; { x := x; } }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  static const MsOpCode expected[] = {
+    MS_OP_LOAD_CONST, MS_OP_STORE_LOCAL, MS_OP_LOAD_LOCAL,
+    MS_OP_STORE_LOCAL, MS_OP_LOAD_NIL, MS_OP_RETURN
+  };
+  msTestAssertOps(fix.proto, expected, sizeof(expected) / sizeof(expected[0]));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 1)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 2)));
+  MS_ASSERT_EQ(1, msOpDecodeA(msTestCodeAt(fix.proto, 3)));
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Compiler.EmptyModule", testcompileremptyModule},
   {"Compiler.ScalarLiteralsAndDedup", testcompilerscalarLiteralsAndDedup},
   {"Compiler.NumericLiteralBasesAndUnderscores", testcompilernumericLiteralBasesAndUnderscores},
   {"Compiler.StringLiteralDecoding", testcompilerstringLiteralDecoding},
   {"Compiler.IntegerOverflowReportsE308", testcompilerintegerOverflowReportsE308},
+  {"Compiler.ModuleDeclarationUsesGlobal", testcompilermoduleDeclarationUsesGlobal},
+  {"Compiler.SiblingBlocksReuseSlots", testcompilersiblingBlocksReuseSlots},
+  {"Compiler.LongIdentifierResolvesByContent", testcompilerlongIdentifierResolvesByContent},
+  {"Compiler.DeclarationRhsReadsOuterSlot", testcompilerdeclarationRhsReadsOuterSlot},
 };
 
 MS_TEST_MAIN(msTestCases)

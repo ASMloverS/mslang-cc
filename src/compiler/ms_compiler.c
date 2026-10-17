@@ -271,6 +271,156 @@ static void msCompilerEmitStringLiteral(struct MsCompiler* c, const struct MsAst
 static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node);
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node);
 
+typedef enum {
+  MS_RESOLVE_LOCAL,
+  MS_RESOLVE_UPVALUE,
+  MS_RESOLVE_GLOBAL
+} MsResolveKind;
+
+static struct MsString* msCompilerNameFromSlice(struct MsCompiler* c, const char* start, size_t len) {
+  struct MsString* name = msStringNew(c->heap, start, len);
+  if (name == NULL) {
+    msCompilerFail(c, c->fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+  }
+  return name;
+}
+
+static int msCompilerResolveLocalInFunc(const struct MsFuncCtx* fn, const struct MsString* name) {
+  for (int i = fn->localCount - 1; i >= 0; --i) {
+    if (fn->locals[i].name != NULL && msStringEquals(fn->locals[i].name, name)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static MsResolveKind msCompilerResolveName(struct MsCompiler* c, const struct MsString* name, int* slot) {
+  *slot = msCompilerResolveLocalInFunc(c->fn, name);
+  if (*slot >= 0) {
+    return MS_RESOLVE_LOCAL;
+  }
+  for (struct MsFuncCtx* parent = c->fn->parent; parent != NULL; parent = parent->parent) {
+    if (msCompilerResolveLocalInFunc(parent, name) >= 0) {
+      return MS_RESOLVE_UPVALUE;
+    }
+  }
+  return MS_RESOLVE_GLOBAL;
+}
+
+static int msCompilerDeclareLocal(struct MsCompiler* c, struct MsString* name) {
+  struct MsFuncCtx* fn = c->fn;
+  if (fn->localCount >= MS_COMPILER_MAX_LOCALS) {
+    msCompilerFail(c, fn->currentNode, MS_ERROR_SYNTAX, 306, "too many local slots");
+    return -1;
+  }
+  int slot = fn->localCount++;
+  fn->locals[slot].name = name;
+  fn->locals[slot].depth = fn->scopeDepth;
+  fn->locals[slot].isCaptured = false;
+  if (fn->localCount > fn->localMax) {
+    fn->localMax = fn->localCount;
+  }
+  return slot;
+}
+
+static void msCompilerPushScope(struct MsCompiler* c) {
+  struct MsFuncCtx* fn = c->fn;
+  if (fn->scopeDepth + 1 >= MS_COMPILER_MAX_SCOPE_DEPTH) {
+    msCompilerFail(c, fn->currentNode, MS_ERROR_SYNTAX, 306, "block nesting depth exceeded");
+    return;
+  }
+  ++fn->scopeDepth;
+  fn->scopes[fn->scopeDepth].localBase = fn->localCount;
+  fn->scopes[fn->scopeDepth].discardSlot = -1;
+}
+
+static void msCompilerPopScope(struct MsCompiler* c) {
+  struct MsFuncCtx* fn = c->fn;
+  MS_ASSERT(fn->scopeDepth > 0);
+  fn->localCount = fn->scopes[fn->scopeDepth].localBase;
+  fn->scopes[fn->scopeDepth].discardSlot = -1;
+  --fn->scopeDepth;
+}
+
+static void msCompilerEmitLoadName(struct MsCompiler* c, struct MsString* name) {
+  int slot = -1;
+  MsResolveKind kind = msCompilerResolveName(c, name, &slot);
+  if (kind == MS_RESOLVE_LOCAL) {
+    msCompilerEmitABC(c, MS_OP_LOAD_LOCAL, (uint8_t)slot, 0, 1);
+    return;
+  }
+  if (kind == MS_RESOLVE_UPVALUE) {
+    msCompilerReport(c, c->fn->currentNode, 310, "upvalue capture belongs to task 14");
+    msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+    return;
+  }
+  int index = msProtoAddConst(&c->fn->builder, (struct MsObject*)name);
+  if (index < 0) {
+    msCompilerSyncBuilder(c);
+    return;
+  }
+  msCompilerEmitABC(c, MS_OP_LOAD_GLOBAL, 0, (uint16_t)index, 1);
+}
+
+static void msCompilerEmitStoreName(struct MsCompiler* c, struct MsString* name) {
+  int slot = -1;
+  MsResolveKind kind = msCompilerResolveName(c, name, &slot);
+  if (kind == MS_RESOLVE_LOCAL) {
+    msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+    return;
+  }
+  if (kind == MS_RESOLVE_UPVALUE) {
+    msCompilerReport(c, c->fn->currentNode, 310, "upvalue capture belongs to task 14");
+    int saved = c->fn->localCount;
+    int discard = msCompilerAllocHiddenLocal(c);
+    if (discard >= 0) {
+      msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)discard, 0, -1);
+    }
+    c->fn->localCount = saved;
+    return;
+  }
+  int index = msProtoAddConst(&c->fn->builder, (struct MsObject*)name);
+  if (index < 0) {
+    msCompilerSyncBuilder(c);
+    return;
+  }
+  msCompilerEmitABC(c, MS_OP_STORE_GLOBAL, 0, (uint16_t)index, -1);
+}
+
+static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsAst* node) {
+  if (node->as.decl.targets.count != 1 || node->as.decl.values.count != 1
+      || node->as.decl.targets.items[0]->kind != MS_AST_IDENT) {
+    msCompilerReport(c, node, 307, "multiple or non-identifier assignment belongs to task 11");
+    return;
+  }
+  msCompilerCompileExpr(c, node->as.decl.values.items[0]);
+  if (c->sticky != MS_OK) {
+    return;
+  }
+  const struct MsAst* target = node->as.decl.targets.items[0];
+  struct MsString* name = msCompilerNameFromSlice(c, target->as.literal.start, target->as.literal.length);
+  if (name == NULL) {
+    return;
+  }
+  if (node->kind == MS_AST_ASSIGN) {
+    msCompilerEmitStoreName(c, name);
+    return;
+  }
+  if (c->fn->isModule && c->fn->scopeDepth == 0) {
+    int index = msProtoAddConst(&c->fn->builder, (struct MsObject*)name);
+    if (index >= 0) {
+      msCompilerEmitABC(c, MS_OP_STORE_GLOBAL, 0, (uint16_t)index, -1);
+    } else {
+      msCompilerSyncBuilder(c);
+    }
+    return;
+  }
+  int slot = msCompilerDeclareLocal(c, name);
+  if (slot >= 0) {
+    msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+  }
+}
+
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node) {
   if (!msCompilerEnterNode(c, node)) {
     return;
@@ -292,6 +442,13 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
     case MS_AST_NIL:
       msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
       break;
+    case MS_AST_IDENT: {
+      struct MsString* name = msCompilerNameFromSlice(c, node->as.literal.start, node->as.literal.length);
+      if (name != NULL) {
+        msCompilerEmitLoadName(c, name);
+      }
+      break;
+    }
     default:
       msCompilerReport(c, node, 307, "expression construct is not implemented in task 07");
       msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
@@ -319,6 +476,21 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
         }
       }
       break;
+    case MS_AST_DECL:
+    case MS_AST_ASSIGN:
+      msCompilerCompileDeclOrAssign(c, node);
+      break;
+    case MS_AST_BLOCK: {
+      int oldDepth = c->fn->scopeDepth;
+      msCompilerPushScope(c);
+      if (c->fn->scopeDepth != oldDepth) {
+        for (size_t i = 0; i < node->as.block.count && c->sticky == MS_OK; ++i) {
+          msCompilerCompileStmt(c, node->as.block.items[i]);
+        }
+        msCompilerPopScope(c);
+      }
+      break;
+    }
     case MS_AST_PASS:
       break;
     default:
