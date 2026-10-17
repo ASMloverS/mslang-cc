@@ -371,6 +371,9 @@ static bool msCompilerEvalConst(struct MsCompiler* c, const struct MsAst* node,
     }
     if (node->as.unary.op == MS_TOKEN_PLUS) {
       *out = operand;
+      if (operand.kind == MS_CONST_FLOAT) {
+        out->floatValue = 0.0 + operand.floatValue;
+      }
       return true;
     }
     if (node->as.unary.op == MS_TOKEN_TILDE) {

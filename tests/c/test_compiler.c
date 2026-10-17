@@ -411,7 +411,7 @@ MS_TEST(compiler, nonWhitelistOperationsRemain) {
 
 MS_TEST(compiler, foldedSignedZeroRemainDistinct) {
   MsTestFixture fix;
-  msTestCompile(&fix, "-0.0; 0.0;", MS_COMPILE_DEFAULT);
+  msTestCompile(&fix, "-0.0; 0.0; +(-0.0);", MS_COMPILE_DEFAULT);
   MS_ASSERT_EQ(MS_OK, fix.result);
   if (fix.proto != NULL) {
     MS_ASSERT_EQ(2, fix.proto->constsLen);
@@ -424,6 +424,9 @@ MS_TEST(compiler, foldedSignedZeroRemainDistinct) {
   if (positiveZero != NULL) {
     MS_ASSERT_TRUE(!signbit(msFloatValue(positiveZero)));
   }
+  MS_ASSERT_EQ(MS_OP_LOAD_CONST, msOpDecodeOp(msTestCodeAt(fix.proto, 4)));
+  MS_ASSERT_EQ(msOpDecodeBx(msTestCodeAt(fix.proto, 2)),
+      msOpDecodeBx(msTestCodeAt(fix.proto, 4)));
   msTestFixtureDestroy(&fix);
 }
 
