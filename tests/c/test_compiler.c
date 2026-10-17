@@ -70,12 +70,20 @@ MS_TEST(compiler, emptyModule) {
   MS_ASSERT_EQ(0, (long long)msDiagListCount(&fix.diags));
   static const MsOpCode expected[] = {MS_OP_LOAD_NIL, MS_OP_RETURN};
   msTestAssertOps(fix.proto, expected, sizeof(expected) / sizeof(expected[0]));
-  MS_ASSERT_EQ(0, fix.proto->paramCount);
-  MS_ASSERT_EQ(0, fix.proto->localCount);
-  MS_ASSERT_EQ(1, fix.proto->stackSize);
-  MS_ASSERT_TRUE(strcmp(msStringData(fix.proto->name), "<main>") == 0);
-  MS_ASSERT_TRUE(strcmp(msStringData(fix.proto->sourceFile), "test.ms") == 0);
-  MS_ASSERT_TRUE(!fix.proto->isAsync && !fix.proto->hasVarArgs && !fix.proto->hasKwArgs);
+  if (fix.proto != NULL) {
+    MS_ASSERT_EQ(0, fix.proto->paramCount);
+    MS_ASSERT_EQ(0, fix.proto->localCount);
+    MS_ASSERT_EQ(1, fix.proto->stackSize);
+    MS_ASSERT_TRUE(fix.proto->name != NULL);
+    if (fix.proto->name != NULL) {
+      MS_ASSERT_TRUE(strcmp(msStringData(fix.proto->name), "<main>") == 0);
+    }
+    MS_ASSERT_TRUE(fix.proto->sourceFile != NULL);
+    if (fix.proto->sourceFile != NULL) {
+      MS_ASSERT_TRUE(strcmp(msStringData(fix.proto->sourceFile), "test.ms") == 0);
+    }
+    MS_ASSERT_TRUE(!fix.proto->isAsync && !fix.proto->hasVarArgs && !fix.proto->hasKwArgs);
+  }
   msTestFixtureDestroy(&fix);
 }
 
