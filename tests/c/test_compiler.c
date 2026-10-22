@@ -24,7 +24,8 @@ typedef struct {
   MsResult result;
 } MsTestFixture;
 
-static void msTestCompile(MsTestFixture* fix, const char* source, uint32_t flags) {
+static void msTestCompileWithFailAfter(MsTestFixture* fix, const char* source,
+    uint32_t flags, int64_t failAfter) {
   memset(fix, 0, sizeof(*fix));
   msMemResetStats();
   MS_ASSERT_EQ(MS_OK, msHeapInit(&fix->heap));
@@ -36,8 +37,14 @@ static void msTestCompile(MsTestFixture* fix, const char* source, uint32_t flags
   fix->result = msParserParse(&fix->parser, &fix->root);
   msLexerDestroy(&fix->lexer);
   if (fix->result == MS_OK) {
+    msMemSetFailAfter(failAfter);
     fix->result = msCompilerCompile(&fix->compiler, fix->root, &fix->proto);
+    msMemSetFailAfter(-1);
   }
+}
+
+static void msTestCompile(MsTestFixture* fix, const char* source, uint32_t flags) {
+  msTestCompileWithFailAfter(fix, source, flags, -1);
 }
 
 static void msTestFixtureDestroy(MsTestFixture* fix) {
@@ -442,6 +449,14 @@ MS_TEST(compiler, logicalShortCircuitShape) {
     MS_ASSERT_EQ(2, fix.proto->localCount);
   }
   msTestFixtureDestroy(&fix);
+
+  for (int64_t failAfter = 0; failAfter < 64; ++failAfter) {
+    MsTestFixture injection;
+    msTestCompileWithFailAfter(&injection, "f(); a and b;",
+        MS_COMPILE_DEFAULT, failAfter);
+    MS_ASSERT_TRUE(injection.result == MS_OK || injection.result == MS_ERROR_OOM);
+    msTestFixtureDestroy(&injection);
+  }
 }
 
 MS_TEST(compiler, constantConditionsSelectOneBranch) {
@@ -474,6 +489,14 @@ MS_TEST(compiler, conditionalExpressionJumps) {
   MS_ASSERT_EQ(2, msOpDecodeSAx(msTestCodeAt(fix.proto, 1)));
   MS_ASSERT_EQ(1, msOpDecodeSAx(msTestCodeAt(fix.proto, 3)));
   msTestFixtureDestroy(&fix);
+
+  for (int64_t failAfter = 0; failAfter < 64; ++failAfter) {
+    MsTestFixture injection;
+    msTestCompileWithFailAfter(&injection, "f(); nil; a if c else b;",
+        MS_COMPILE_DEFAULT, failAfter);
+    MS_ASSERT_TRUE(injection.result == MS_OK || injection.result == MS_ERROR_OOM);
+    msTestFixtureDestroy(&injection);
+  }
 }
 
 MS_TEST(compiler, comparisonExpansion) {

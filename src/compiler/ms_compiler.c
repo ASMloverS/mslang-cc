@@ -113,12 +113,12 @@ static int msCompilerEmitJumpPlaceholder(struct MsCompiler* c, MsOpCode op) {
 }
 
 static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc, int expectedStackDepth) {
-  struct MsFuncCtx* fn = c->fn;
-  MS_ASSERT(fn->stackDepth == expectedStackDepth);
-  MS_UNUSED(expectedStackDepth);
   if (jumpPc < 0 || c->sticky != MS_OK) {
     return;
   }
+  struct MsFuncCtx* fn = c->fn;
+  MS_ASSERT(fn->stackDepth == expectedStackDepth);
+  MS_UNUSED(expectedStackDepth);
   int target = msCompilerCurrentPc(c);
   uint32_t* instruction = &fn->builder.proto.code[jumpPc];
   if (msOpDecodeOp(*instruction) == MS_OP_JUMP && target == jumpPc + 1) {
@@ -508,9 +508,12 @@ static void msCompilerCompileLogical(struct MsCompiler* c, const struct MsAst* n
   if (c->sticky != MS_OK) {
     return;
   }
+  int baseDepth = c->fn->stackDepth;
   int savedLocals = c->fn->localCount;
   int slot = msCompilerAllocHiddenLocal(c);
   if (slot < 0) {
+    c->fn->localCount = savedLocals;
+    c->fn->stackDepth = baseDepth;
     return;
   }
   msCompilerCompileExpr(c, node->as.binary.left);
@@ -518,11 +521,31 @@ static void msCompilerCompileLogical(struct MsCompiler* c, const struct MsAst* n
   msCompilerEmitABC(c, MS_OP_LOAD_LOCAL, (uint8_t)slot, 0, 1);
   MsOpCode jumpOp = node->as.binary.op == MS_TOKEN_KW_AND ? MS_OP_JUMP_IF_FALSE : MS_OP_JUMP_IF_TRUE;
   int jump = msCompilerEmitJumpPlaceholder(c, jumpOp);
+  if (c->sticky != MS_OK) {
+    c->fn->localCount = savedLocals;
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   int branchDepth = c->fn->stackDepth;
   msCompilerCompileExpr(c, node->as.binary.right);
   msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+  if (c->sticky != MS_OK) {
+    c->fn->localCount = savedLocals;
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   msCompilerPatchToCurrent(c, jump, branchDepth);
+  if (c->sticky != MS_OK) {
+    c->fn->localCount = savedLocals;
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   msCompilerEmitABC(c, MS_OP_LOAD_LOCAL, (uint8_t)slot, 0, 1);
+  if (c->sticky != MS_OK) {
+    c->fn->localCount = savedLocals;
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   c->fn->localCount = savedLocals;
 }
 
@@ -539,17 +562,45 @@ static void msCompilerCompileConditional(struct MsCompiler* c, const struct MsAs
   if (c->sticky != MS_OK) {
     return;
   }
+  int baseDepth = c->fn->stackDepth;
   msCompilerCompileExpr(c, node->as.conditional.cond);
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   int elseJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   int elseDepth = c->fn->stackDepth;
   msCompilerCompileExpr(c, node->as.conditional.value);
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   int endJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   int endDepth = c->fn->stackDepth;
   c->fn->stackDepth = elseDepth;
   msCompilerPatchToCurrent(c, elseJump, elseDepth);
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   msCompilerCompileExpr(c, node->as.conditional.elseValue);
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+    return;
+  }
   MS_ASSERT(c->fn->stackDepth == endDepth);
   msCompilerPatchToCurrent(c, endJump, endDepth);
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+  }
 }
 
 static void msCompilerCompileComparison(struct MsCompiler* c, const struct MsAst* node) {
