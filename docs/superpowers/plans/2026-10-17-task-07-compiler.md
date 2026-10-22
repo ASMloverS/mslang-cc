@@ -53,7 +53,7 @@
 - Modify: `src/object/ms_object.c:24-29`
 - Modify: `tests/c/test_object.c:11-35,590-617`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/c/test_object.c` 增加：
 
@@ -72,13 +72,13 @@ MS_TEST(object, internalProtoTagIsOutsideHeapTypes) {
   {"object.internalProtoTagIsOutsideHeapTypes", testobjectinternalProtoTagIsOutsideHeapTypes},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_object && ctest --test-dir build -R '^test_object$' --output-on-failure`
 
 Expected: 编译失败，`MS_TYPE_PROTO` 未声明。
 
-- [ ] **Step 3: 实现内部标签**
+- [x] **Step 3: 实现内部标签**
 
 在 `MsTypeTag` 中把 `MS_TYPE_PROTO` 放在 `MS_TYPE_COUNT` 后，保持前 20 个标签和 `MS_TYPE_COUNT` 数值不变：
 
@@ -111,13 +111,13 @@ typedef enum {
 
 `msObjectAlloc` 的 `tag < MS_TYPE_COUNT` 断言保持不变，禁止把 Proto 当普通堆对象分配。
 
-- [ ] **Step 4: 运行测试并确认绿**
+- [x] **Step 4: 运行测试并确认绿**
 
 Run: `cmake --build build --target test_object && ctest --test-dir build -R '^test_object$' --output-on-failure`
 
 Expected: `100% tests passed, 0 tests failed out of 1`，可执行文件显示 `27 of 27 tests passed`。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/object/ms_object.h src/object/ms_object.c tests/c/test_object.c
@@ -130,7 +130,7 @@ git commit -m "✨ feat(object): add internal proto type tag"
 - Modify: `src/vm/ms_proto.c:1-8,93-119`
 - Modify: `tests/c/test_proto.c:1-10,700-734`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/c/test_proto.c` 增加 `<math.h>` include，并加入：
 
@@ -165,13 +165,13 @@ MS_TEST(proto, addConstPreservesSignedZero) {
   {"Proto.AddConstPreservesSignedZero", testprotoaddConstPreservesSignedZero},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_proto && ctest --test-dir build -R '^test_proto$' --output-on-failure`
 
 Expected: `second == 1` 和 `constsLen == 2` 断言失败；当前实现把两个零去重为一个常量。
 
-- [ ] **Step 3: 实现同类型常量比较助手**
+- [x] **Step 3: 实现同类型常量比较助手**
 
 在 `ms_proto.c` include 区加入 `<math.h>`，并新增：
 
@@ -199,13 +199,13 @@ static bool msProtoConstEquals(const struct MsObject* a, const struct MsObject* 
     }
 ```
 
-- [ ] **Step 4: 运行 Proto 全测**
+- [x] **Step 4: 运行 Proto 全测**
 
 Run: `cmake --build build --target test_proto && ctest --test-dir build -R '^test_proto$' --output-on-failure`
 
 Expected: 全部通过，既有 int/float 分槽和 NaN 不去重行为不变。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/vm/ms_proto.c tests/c/test_proto.c
@@ -219,7 +219,7 @@ git commit -m "🐛 fix(vm): preserve signed zero constants"
 - Modify: `src/vm/ms_proto.c:93-203`
 - Modify: `tests/c/test_proto.c`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/c/test_proto.c` 增加构建助手和测试：
 
@@ -299,13 +299,13 @@ MS_TEST(proto, builderDestroyReleasesNestedProtos) {
   {"Proto.BuilderDestroyReleasesNestedProtos", testprotobuilderDestroyReleasesNestedProtos},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_proto`
 
 Expected: 编译失败，`msProtoAddProto`、`msProtoConstProto` 和 `MsProto.header` 不存在。
 
-- [ ] **Step 3: 扩展 Proto 头文件和 API**
+- [x] **Step 3: 扩展 Proto 头文件和 API**
 
 `ms_proto.h` 改为 include `"object/ms_object.h"`，保留 `struct MsString` 前向声明；在 `struct MsProto` 首行加入：
 
@@ -326,7 +326,7 @@ const struct MsProto* msProtoConstProto(const struct MsProto* proto, int index);
 
 更新 `msProtoFree` 注释：递归释放子 Proto，但不释放堆常量、名称和来源文件。
 
-- [ ] **Step 4: 实现递归释放和子 Proto 入池**
+- [x] **Step 4: 实现递归释放和子 Proto 入池**
 
 在 `ms_proto.c` 增加：
 
@@ -416,13 +416,13 @@ void msProtoFree(struct MsProto* proto) {
 }
 ```
 
-- [ ] **Step 5: 运行 Proto 与对象全测**
+- [x] **Step 5: 运行 Proto 与对象全测**
 
 Run: `cmake --build build --target test_proto test_object && ctest --test-dir build -R '^test_(proto|object)$' --output-on-failure`
 
 Expected: 两个测试全部通过，无泄漏；既有 builder/build/OOM 用例不因递归释放而双重释放。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add src/vm/ms_proto.h src/vm/ms_proto.c tests/c/test_proto.c
@@ -437,7 +437,7 @@ git commit -m "✨ feat(vm): own nested proto constants"
 - Create: `tests/c/test_compiler.c`
 - Modify: `CMakeLists.txt:41-52,89-99`
 
-- [ ] **Step 1: 写空模块失败测试和 fixture**
+- [x] **Step 1: 写空模块失败测试和 fixture**
 
 创建 `tests/c/test_compiler.c`，第一个 include 是被测头：
 
@@ -530,13 +530,13 @@ static const MsTestCase msTestCases[] = {
 MS_TEST_MAIN(msTestCases)
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_compiler`
 
 Expected: 配置或编译失败，`src/compiler/ms_compiler.c` / `ms_compiler.h` 不存在，目标也未注册。
 
-- [ ] **Step 3: 创建公开头**
+- [x] **Step 3: 创建公开头**
 
 创建 `src/compiler/ms_compiler.h`：
 
@@ -578,7 +578,7 @@ MsResult msCompilerCompile(struct MsCompiler* c, const struct MsAst* root, struc
 #endif  // MSLANG_SRC_COMPILER_MS_COMPILER_H_
 ```
 
-- [ ] **Step 4: 实现最小函数上下文和空模块生成**
+- [x] **Step 4: 实现最小函数上下文和空模块生成**
 
 在 `ms_compiler.c` 中定义后续任务继续使用的完整上下文：
 
@@ -802,13 +802,13 @@ MsResult msCompilerCompile(struct MsCompiler* c, const struct MsAst* root, struc
   mslang_add_c_test(test_compiler)
 ```
 
-- [ ] **Step 5: 构建并运行空模块测试**
+- [x] **Step 5: 构建并运行空模块测试**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
 Expected: `1 of 1 tests passed`，CTest 全绿。
 
-- [ ] **Step 6: 运行既有全测并提交**
+- [x] **Step 6: 运行既有全测并提交**
 
 Run: `ctest --test-dir build --output-on-failure`
 
@@ -825,7 +825,7 @@ git commit -m "✨ feat(compiler): add module proto skeleton"
 - Modify: `src/compiler/ms_compiler.c`
 - Modify: `tests/c/test_compiler.c`
 
-- [ ] **Step 1: 写字面量与丢弃槽失败测试**
+- [x] **Step 1: 写字面量与丢弃槽失败测试**
 
 增加以下用例；每个用例末尾都调用 `msTestFixtureDestroy(&fix)`：
 
@@ -902,13 +902,13 @@ MS_TEST(compiler, integerOverflowReportsE308) {
   {"Compiler.IntegerOverflowReportsE308", testcompilerintegerOverflowReportsE308},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
 Expected: 新用例失败，当前骨架对第一条语句报 E307；空模块仍通过。
 
-- [ ] **Step 3: 实现节点进入、隐藏槽和数字切片转换**
+- [x] **Step 3: 实现节点进入、隐藏槽和数字切片转换**
 
 include 区增加 `<errno.h>`、`<stdlib.h>`，并加入：
 
@@ -1027,7 +1027,7 @@ static bool msCompilerParseFloat(struct MsCompiler* c, const struct MsAst* node,
 }
 ```
 
-- [ ] **Step 4: 实现常量发射和字面量分派**
+- [x] **Step 4: 实现常量发射和字面量分派**
 
 加入以下助手；`msCompilerEmitConstObject` 同时服务后续常量折叠：
 
@@ -1128,7 +1128,7 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
 
 include 区增加 `"lexer/ms_lexer.h"`。
 
-- [ ] **Step 5: 实现语句分派并接入根节点**
+- [x] **Step 5: 实现语句分派并接入根节点**
 
 增加：
 
@@ -1172,7 +1172,7 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
   }
 ```
 
-- [ ] **Step 6: 运行编译器测试并提交**
+- [x] **Step 6: 运行编译器测试并提交**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
@@ -1189,7 +1189,7 @@ git commit -m "✨ feat(compiler): emit literal bytecode"
 - Modify: `src/compiler/ms_compiler.c`
 - Modify: `tests/c/test_compiler.c`
 
-- [ ] **Step 1: 写作用域失败测试**
+- [x] **Step 1: 写作用域失败测试**
 
 ```c
 MS_TEST(compiler, moduleDeclarationUsesGlobal) {
@@ -1267,13 +1267,13 @@ MS_TEST(compiler, declarationRhsReadsOuterSlot) {
   {"Compiler.DeclarationRhsReadsOuterSlot", testcompilerdeclarationRhsReadsOuterSlot},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
 Expected: 新用例因声明、标识符和块仍报 E307 而失败。
 
-- [ ] **Step 3: 实现作用域栈和内容名解析**
+- [x] **Step 3: 实现作用域栈和内容名解析**
 
 加入：
 
@@ -1350,7 +1350,7 @@ static void msCompilerPopScope(struct MsCompiler* c) {
 }
 ```
 
-- [ ] **Step 4: 实现名字载入/存储和声明赋值**
+- [x] **Step 4: 实现名字载入/存储和声明赋值**
 
 加入：
 
@@ -1467,7 +1467,7 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
     }
 ```
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
@@ -1484,7 +1484,7 @@ git commit -m "✨ feat(compiler): resolve block scoped names"
 - Modify: `src/compiler/ms_compiler.c`
 - Modify: `tests/c/test_compiler.c`
 
-- [ ] **Step 1: 写算术和折叠失败测试**
+- [x] **Step 1: 写算术和折叠失败测试**
 
 ```c
 MS_TEST(compiler, binaryOpcodeMapping) {
@@ -1580,13 +1580,13 @@ MS_TEST(compiler, foldedSignedZeroRemainDistinct) {
   {"Compiler.FoldedSignedZeroRemainDistinct", testcompilerfoldedSignedZeroRemainDistinct},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
 Expected: 算术/一元节点仍走 E307，新用例失败。
 
-- [ ] **Step 3: 实现安全整数折叠助手**
+- [x] **Step 3: 实现安全整数折叠助手**
 
 加入：
 
@@ -1613,7 +1613,7 @@ static bool msCompilerIntMulOverflows(int64_t a, int64_t b) {
 }
 ```
 
-- [ ] **Step 4: 实现常量值、共享深度预算的求值器和发射器**
+- [x] **Step 4: 实现常量值、共享深度预算的求值器和发射器**
 
 加入：
 
@@ -1780,7 +1780,7 @@ static void msCompilerEmitConst(struct MsCompiler* c, const struct MsConstValue*
 }
 ```
 
-- [ ] **Step 5: 实现普通算术和一元生成**
+- [x] **Step 5: 实现普通算术和一元生成**
 
 加入映射和生成函数：
 
@@ -1864,7 +1864,7 @@ static void msCompilerCompileUnary(struct MsCompiler* c, const struct MsAst* nod
     }
 ```
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
@@ -1881,7 +1881,7 @@ git commit -m "✨ feat(compiler): fold arithmetic constants"
 - Modify: `src/compiler/ms_compiler.c`
 - Modify: `tests/c/test_compiler.c`
 
-- [ ] **Step 1: 写跳转和调用失败测试**
+- [x] **Step 1: 写跳转和调用失败测试**
 
 ```c
 MS_TEST(compiler, logicalShortCircuitShape) {
@@ -1972,13 +1972,13 @@ MS_TEST(compiler, positionalCallShape) {
   {"Compiler.PositionalCallShape", testcompilerpositionalCallShape},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
 Expected: 五组节点仍走 E307，测试失败。
 
-- [ ] **Step 3: 实现跳转发射、栈深校验和回填**
+- [x] **Step 3: 实现跳转发射、栈深校验和回填**
 
 加入：
 
@@ -2021,7 +2021,7 @@ static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc, int expec
 }
 ```
 
-- [ ] **Step 4: 实现逻辑和条件表达式**
+- [x] **Step 4: 实现逻辑和条件表达式**
 
 加入：
 
@@ -2086,7 +2086,7 @@ static void msCompilerCompileConditional(struct MsCompiler* c, const struct MsAs
 }
 ```
 
-- [ ] **Step 5: 实现比较和位置调用**
+- [x] **Step 5: 实现比较和位置调用**
 
 加入：
 
@@ -2163,7 +2163,7 @@ static void msCompilerCompileCall(struct MsCompiler* c, const struct MsAst* node
       break;
 ```
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
@@ -2180,7 +2180,7 @@ git commit -m "✨ feat(compiler): emit branches and calls"
 - Modify: `src/compiler/ms_compiler.c`
 - Modify: `tests/c/test_compiler.c`
 
-- [ ] **Step 1: 写函数失败测试**
+- [x] **Step 1: 写函数失败测试**
 
 ```c
 MS_TEST(compiler, functionProtoMetadata) {
@@ -2280,13 +2280,13 @@ MS_TEST(compiler, outerLocalReportsE310) {
   {"Compiler.OuterLocalReportsE310", testcompilerouterLocalReportsE310},
 ```
 
-- [ ] **Step 2: 运行测试并确认红**
+- [x] **Step 2: 运行测试并确认红**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
 Expected: `func`、`lambda` 和 `return` 尚未支持，新用例失败。
 
-- [ ] **Step 3: 泛化函数上下文创建**
+- [x] **Step 3: 泛化函数上下文创建**
 
 用以下逻辑替换 `msCompilerPushFunc` 中固定的 `<main>` 名称和标志初始化；保留既有 OOM 清理结构：
 
@@ -2305,7 +2305,7 @@ Expected: `func`、`lambda` 和 `return` 尚未支持，新用例失败。
 
 `fn->isModule` 仍为 `funcNode == NULL`；`sourceFile` 对每个子 Proto 同样设置。
 
-- [ ] **Step 4: 实现参数、函数体和 return**
+- [x] **Step 4: 实现参数、函数体和 return**
 
 加入：
 
@@ -2373,7 +2373,7 @@ static bool msCompilerBuildFunctionProto(struct MsCompiler* c, const struct MsAs
 }
 ```
 
-- [ ] **Step 5: 实现定义点物化和名字绑定**
+- [x] **Step 5: 实现定义点物化和名字绑定**
 
 加入：
 
@@ -2439,7 +2439,7 @@ static void msCompilerCompileFunction(struct MsCompiler* c, const struct MsAst* 
       break;
 ```
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
@@ -2456,7 +2456,7 @@ git commit -m "✨ feat(compiler): compile functions and lambdas"
 - Modify: `src/compiler/ms_compiler.c`
 - Modify: `tests/c/test_compiler.c`
 
-- [ ] **Step 1: 写 REPL、赋值和行号测试**
+- [x] **Step 1: 写 REPL、赋值和行号测试**
 
 ```c
 MS_TEST(compiler, replPrintsOnlyLastExpression) {
@@ -2504,7 +2504,7 @@ MS_TEST(compiler, lineTableFollowsStatements) {
   {"Compiler.LineTableFollowsStatements", testcompilerlineTableFollowsStatements},
 ```
 
-- [ ] **Step 2: 先运行 REPL 测试确认红，再实现**
+- [x] **Step 2: 先运行 REPL 测试确认红，再实现**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
@@ -2545,7 +2545,7 @@ Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^
 
 Expected: 28 个编译器用例全部通过。
 
-- [ ] **Step 3: 写诊断和规模上限测试**
+- [x] **Step 3: 写诊断和规模上限测试**
 
 ```c
 MS_TEST(compiler, unsupportedAndLimitDiagnostics) {
@@ -2621,13 +2621,13 @@ MS_TEST(compiler, constantFoldHonorsNodeDepth) {
   {"Compiler.ConstantFoldHonorsNodeDepth", testcompilerconstantFoldHonorsNodeDepth},
 ```
 
-- [ ] **Step 4: 运行诊断测试并修正明确的占位路径**
+- [x] **Step 4: 运行诊断测试并修正明确的占位路径**
 
 Run: `cmake --build build --target test_compiler && ctest --test-dir build -R '^test_compiler$' --output-on-failure`
 
 Expected: 所有新负例返回 `MS_ERROR_SYNTAX`、诊断码正确、`fix.proto == NULL`。当前实现已含这些路径；若某个 case 仍发射父操作码，确保其错误分支只补一条 `LOAD_NIL`，不再继续生成该节点的子表达式。
 
-- [ ] **Step 5: 写槽位/块深度和全覆盖 OOM 测试**
+- [x] **Step 5: 写槽位/块深度和全覆盖 OOM 测试**
 
 增加：
 
@@ -2718,13 +2718,13 @@ MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
   {"Compiler.NestedProtoOomPathsHaveNoLeaks", testcompilernestedProtoOomPathsHaveNoLeaks},
 ```
 
-- [ ] **Step 6: 运行编译器与既有全测**
+- [x] **Step 6: 运行编译器与既有全测**
 
 Run: `cmake --build build && ctest --test-dir build --output-on-failure`
 
 Expected: 34 个编译器用例和全部 11 个 CTest 目标通过；OOM 循环最终到达一次成功编译，每轮 `liveBlocks == 0`。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add src/compiler/ms_compiler.c tests/c/test_compiler.c
@@ -2740,7 +2740,7 @@ git commit -m "✅ test(compiler): cover diagnostics and OOM paths"
 - Modify: `docs/tasks/README.md:48`
 - Modify: `docs/superpowers/plans/2026-10-17-task-07-compiler.md`（仅勾选已完成步骤）
 
-- [ ] **Step 1: 同步 Proto 和对象模型文档**
+- [x] **Step 1: 同步 Proto 和对象模型文档**
 
 在任务 05 的 `MsProto` 布局中补回首部的 `struct MsObjectHeader header`，把「与对象模型的衔接」改为当前事实：内部 `MS_TYPE_PROTO` 不挂入堆，父 Proto/builder 递归拥有子 Proto，`msProtoAddProto` 成功转移所有权、失败保留调用方所有权，`msProtoConstProto` 提供安全查询。
 
@@ -2748,7 +2748,7 @@ git commit -m "✅ test(compiler): cover diagnostics and OOM paths"
 
 在常量池去重说明中补充：浮点零只有符号位相同才共享槽位，NaN 仍不按值去重。
 
-- [ ] **Step 2: 同步任务 07 设计偏差和验收状态**
+- [x] **Step 2: 同步任务 07 设计偏差和验收状态**
 
 对 `docs/tasks/07-compiler.md` 做以下明确替换：
 
@@ -2761,7 +2761,7 @@ git commit -m "✅ test(compiler): cover diagnostics and OOM paths"
 - 验收项逐条与实际测试核对后勾选；只有全部满足才将文首状态改为 ✅。
 - 将 `docs/tasks/README.md` 任务 07 行的 ⬜ 改为 ✅。
 
-- [ ] **Step 3: 运行格式检查和 Debug 全量验收**
+- [x] **Step 3: 运行格式检查和 Debug 全量验收**
 
 Run:
 
@@ -2773,7 +2773,7 @@ ctest --test-dir build --output-on-failure
 
 Expected: `git diff --check` 无输出；构建零警告；`100% tests passed, 0 tests failed out of 11`。
 
-- [ ] **Step 4: 运行 Release 全量验收**
+- [x] **Step 4: 运行 Release 全量验收**
 
 Run:
 
@@ -2785,7 +2785,7 @@ ctest --test-dir build/release --output-on-failure
 
 Expected: Release 构建零警告，11/11 测试目标通过；所有产物位于 `build/` 内。
 
-- [ ] **Step 5: 勾选计划并提交文档**
+- [x] **Step 5: 勾选计划并提交文档**
 
 把本计划中已完成的步骤复选框由 `- [ ]` 改为 `- [x]`，不得勾掉未实际执行或失败的步骤。
 
@@ -2794,7 +2794,7 @@ git add docs/tasks/README.md docs/tasks/05-bytecode-proto.md docs/tasks/06-objec
 git commit -m "📝 docs(tasks): complete task 07 compiler"
 ```
 
-- [ ] **Step 6: 最终核对工作树**
+- [x] **Step 6: 最终核对工作树**
 
 Run: `git status --short && git log --oneline -13`
 

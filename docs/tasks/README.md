@@ -45,7 +45,7 @@
 | ✅ | 04 | v0.1 | [语法分析器与 AST](04-parser-ast.md) |
 | ✅ | 05 | v0.1 | [字节码格式与 MsProto](05-bytecode-proto.md) |
 | ✅ | 06 | v0.1 | [对象模型基础](06-object-model.md) |
-| ⬜ | 07 | v0.1 | [编译器：作用域解析与字节码生成](07-compiler.md) |
+| ✅ | 07 | v0.1 | [编译器：作用域解析与字节码生成](07-compiler.md) |
 | ⬜ | 08 | v0.1 | [VM 执行核心](08-vm-core.md) |
 | ⬜ | 09 | v0.1 | [最小可运行解释器（里程碑）](09-minimal-interpreter.md) |
 | ⬜ | 10 | v0.1 | [内建函数](10-builtin-functions.md) |

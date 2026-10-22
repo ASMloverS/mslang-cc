@@ -57,7 +57,8 @@ typedef enum {
   MS_TYPE_INSTANCE, MS_TYPE_MODULE, MS_TYPE_CHANNEL, MS_TYPE_COROUTINE,
   MS_TYPE_ITERATOR, MS_TYPE_BOUND_METHOD, MS_TYPE_C_FUNCTION,
   MS_TYPE_C_TYPE,
-  MS_TYPE_COUNT              // sentinel: number of type tags (20)
+  MS_TYPE_COUNT,             // sentinel: number of type tags (20)
+  MS_TYPE_PROTO              // internal tag for MsProto; not a script heap type
 } MsTypeTag;
 
 typedef enum {
@@ -67,6 +68,7 @@ typedef enum {
 ```
 
 - 枚举值与 `docs/language/08-vm-internals.md` §3 同序同名；`_Static_assert(MS_TYPE_COUNT == 20, ...)` 守住规范数量。
+- `MS_TYPE_PROTO` 位于 `MS_TYPE_COUNT` **之后**，是任务 07 为 `MsProto` 对象头引入的**内部标签**，不是第 21 个脚本堆类型：`MS_TYPE_COUNT == 20` 与 `heap->types[MS_TYPE_COUNT]`（20 个内建类型对象）均不变，`msObjectAlloc` 不接受该内部标签（`tag < MS_TYPE_COUNT` 由断言守住），`msTypeTagName(MS_TYPE_PROTO)` 返回 `"MS_TYPE_PROTO"`、`msTypeTagName(MS_TYPE_COUNT)` 返回 `"MS_TYPE_INVALID"`。带此标签的 Proto `header.type == NULL`，不链入全对象链表。
 - 灰色不单独取值：§5 的标记实为「黑白两色 + 标记栈」，待标记对象经栈暂存（任务 17）。
 - `msTypeTagName` 提供静态名称表（`"MS_TYPE_INT"` 等）供诊断与测试；另为 20 个内建类型对象取脚本侧名称，按 02-types §1：`NilType`/`bool`/`int`/`float`/`str`/`bytes`/`list`/`tuple`/`dict`/`set`/`function`/`type`/`instance`/`module`/`chan`/`coroutine`/`iterator`/`bound method`/`cfunction`/`ctype`（后四个无脚本字面名的取内部描述名，任务 15/25/33 定稿时可改）。
 
@@ -76,7 +78,7 @@ typedef enum {
 
 ```c
 struct MsObjectHeader {
-  struct MsType* type;       // the type object; never NULL after construction
+  struct MsType* type;       // heap objects: never NULL; internal protos: NULL
   uint8_t tag;               // MsTypeTag, cached for O(1) dispatch (see 设计依据 1)
   uint8_t markColor;         // MsMarkColor
   struct MsObject* gcNext;   // next node in the heap's all-objects list

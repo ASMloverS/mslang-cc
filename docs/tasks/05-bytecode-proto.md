@@ -26,7 +26,7 @@
 
 对规范的两处显式处理（实现与评审时以此为据）：
 
-1. **本任务的 `MsProto` 不含 §2.1 中的 `MsObjectHeader header` 字段。** GC 对象化属任务 06/17 职责，且按 `docs/tasks/README.md` 的编号依赖规则，任务 05 不得依赖任务 06。本任务中 Proto 是纯数据制品，经 `msAlloc` 分配、`msProtoFree` 释放，所有权在编译器与 `MsState` 之间显式移交；任务 06 落地时在结构体头部插入 `header` 字段并把创建路径切换为 GC 分配，本任务全部 API 不暴露内部布局，迁移不影响调用方（见「详细设计·与对象模型的衔接」）。
+1. **`MsProto` 的对象头以内部标签形式落地。** 按 `docs/tasks/README.md` 的编号依赖规则，任务 05 不得依赖任务 06，首版按纯数据制品交付；任务 07 落地时已在结构体首部补回 §2.1 的 `struct MsObjectHeader header`，`header.tag` 取内部标签 `MS_TYPE_PROTO`（位于 `MS_TYPE_COUNT` 之后，见任务 06「类型标签与标记色」）。Proto 仍经 `msAlloc` 分配、`msProtoFree` 释放，**不链入 `MsHeap` 全对象链表、不经 `msObjectAlloc` 分配**，所有权在编译器与 `MsState` 之间显式移交（见「详细设计·与对象模型的衔接」）。
 2. **规范未给出 `tryBlocks` / `lines` 的长度字段。** 仅有指针无法界定数组，本任务补充 `tryBlocksLen` / `linesLen` 两个 `int` 字段，实现时与任务 08 文档对齐。
 
 另注：§2.2 的代表性清单按类别展开为 82 条（算术类的 `BITAND/OR/XOR/SHL/SHR/INVERT` 展开为 6 条），略超「80 条以内」的目标。本任务以枚举为唯一事实源：v0.1 子集 63 条为硬约束；全集以 ≤80 为 v1.0 冻结前的软目标，若超限优先合并 `MS_OP_SELECT_ADD_RECV/ADD_SEND` 或下封 `MS_OP_CMP_CHAIN`（见「v0.1 指令子集」）。
@@ -179,6 +179,7 @@ struct MsLineEntry {       // pc -> line map, sorted by pc, run-encoded
 };
 
 struct MsProto {
+  struct MsObjectHeader header; // internal MS_TYPE_PROTO; not linked into MsHeap
   uint32_t* code;          // instruction stream, msAlloc'd, codeLen entries
   struct MsObject** consts; // constant pool: numbers, strings, child protos
   int codeLen;
@@ -209,9 +210,10 @@ struct MsProto {
 
 - 下标 0 起始；`LOAD_CONST Bx`、`MAKE_FUNCTION Bx` 等直接索引 `consts[Bx]`；单 Proto 上限 65536 项（含子 Proto），溢出属编译错误。
 - 池内容：数字（int/float）、字符串、子 Proto 三类对象；`nil`/布尔不入池（专用指令 `LOAD_NIL`/`LOAD_TRUE`/`LOAD_FALSE`）。
-- 构建期去重：同类型同值的常量共享槽位（数字按位值比较、字符串按内容比较、子 Proto 不去重）；去重在 `msProtoAddConst` 内做线性扫描（单 Proto 常量数有限，O(n²) 可接受；若基准测试暴露问题，在任务 07 侧加哈希索引，构建器 API 不变）。
-- 常量对象的比较需要对象模型（任务 06）的值相等接口；本任务假定接口名 `bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b)`，实现时以任务 06 文档定名为准。在任务 06 就绪前，`msProtoAddConst` 先按指针相等去重，值去重随任务 06 接入（验收标准不含值去重用例，测试方案中单独标注）。
-- 所有权：入池对象的所有权随 Proto 移交（GC 化后改为 GC 托管）；`msProtoFree` 只释放数组与 Proto 本体，不释放池内对象（对象的释放一律归对象模型/GC 管，避免双重释放）。
+- 构建期去重：同类型同值的常量共享槽位（去重先按 `header.tag` 门控——`int 1` 与 `float 1.0` 不共享槽位——再经 `msObjectValueEquals` 按值比较；字符串按内容比较；子 Proto 不去重）；去重在 `msProtoAddConst` 内做线性扫描（单 Proto 常量数有限，O(n²) 可接受；若基准测试暴露问题，在任务 07 侧加哈希索引，构建器 API 不变）。
+- 浮点零按符号位区分：`0.0` 与 `-0.0` 只有符号位相同才共享槽位，各占独立常量；NaN 不按值去重（`msObjectValueEquals` 中 `nan != nan`，每个 NaN 常量各占一槽）。
+- 常量对象的比较使用对象模型（任务 06）的值相等接口 `bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b)`，任务 06 落地后 `msProtoAddConst` 即为上述值去重（小整数经驻留缓存天然同指针）。
+- 所有权：入池对象的所有权随 Proto 移交（GC 化后改为 GC 托管）。`msProtoFree` 递归释放池内的子 Proto（见 `msProtoAddProto`），但不释放堆上的数字/字符串常量与 `name`/`sourceFile`（对象的释放一律归对象模型/GC 管，避免双重释放）。
 
 ### 行号表与异常表
 
@@ -250,9 +252,18 @@ void msProtoSetLine(struct MsProtoBuilder* b, uint32_t line);
 // pc must address an MS_OPFMT_SAX instruction.
 MsResult msProtoPatchSAx(struct MsProtoBuilder* b, int pc, int32_t sax);
 
-// Adds a constant with dedup; returns the pool index, or -1 (sticky
-// MS_ERROR_OOM, or MS_ERROR_SYNTAX when the pool exceeds 65536 entries).
+// Adds a constant with value dedup (msObjectValueEquals, gated on the type
+// tag); returns the pool index, or -1 (sticky MS_ERROR_OOM, or
+// MS_ERROR_SYNTAX for a proto value or when the pool exceeds 65536 entries).
+// Child protos must use msProtoAddProto.
 int msProtoAddConst(struct MsProtoBuilder* b, struct MsObject* value);
+
+// Adds a child proto without dedup. Success transfers ownership to b; on
+// failure the caller still owns proto and must free it.
+int msProtoAddProto(struct MsProtoBuilder* b, struct MsProto* proto);
+
+// Returns the child proto at index, or NULL for a bad index/non-proto entry.
+const struct MsProto* msProtoConstProto(const struct MsProto* proto, int index);
 
 // Appends an exception table entry (v0.2 consumers; defined now per spec layout).
 MsResult msProtoAddTryBlock(struct MsProtoBuilder* b, uint32_t pcStart, uint32_t pcEnd,
@@ -264,8 +275,9 @@ MsResult msProtoAddTryBlock(struct MsProtoBuilder* b, uint32_t pcStart, uint32_t
 // empty; on failure the caller still owns the builder and must destroy it.
 MsResult msProtoBuild(struct MsProtoBuilder* b, struct MsProto** out);
 
-// Frees a proto's arrays and the struct itself. Does NOT free consts entries
-// or name/sourceFile (owned by the object model / GC once task 06 lands).
+// Frees a proto's arrays and the struct itself, recursively freeing child
+// protos. Does NOT free heap constants or name/sourceFile (owned by the
+// object model / GC).
 void msProtoFree(struct MsProto* proto);
 
 // Binary-searches the line table; returns 0 when the table is empty.
@@ -282,13 +294,13 @@ void msProtoDump(const struct MsProto* proto, FILE* out);
 - 编译器对 `proto` 的元数据字段（`paramCount`/`localCount`/`stackSize`/`name`/标志位等）在 `msProtoBuild` 前直接写 `b->proto`，构建器只管四条数组与行号登记。
 - 格式一致性（ABC 指令走 `msProtoEmitABC` 等）由 `msOpFormatOf` 查表 + `MS_ASSERT` 守住，属编程错误而非运行期检查。
 
-### 与对象模型的衔接（迁移说明）
+### 与对象模型的衔接
 
-任务 06 落地时对本模块的改动限于三点，API 形状不变：
+任务 07 落地后本模块与对象模型的关系已定为以下事实，API 形状不变：
 
-1. `struct MsProto` 头部插入 `MsObjectHeader header;`，创建路径从 `msAlloc` 切换为 GC 对象分配（任务 06 的接口，假定名 `msObjectNewProto`，以任务 06 文档为准）；
-2. `msProtoFree` 收缩为仅供测试/错误路径使用的内部释放，正常路径改由 GC 回收；
-3. `msProtoAddConst` 的指针去重升级为 `msObjectValueEquals` 值去重；`msProtoDump` 的 `#k<idx>` 占位升级为打印常量值。
+1. `struct MsProto` 首部含 `struct MsObjectHeader header`，`header.tag` 为内部标签 `MS_TYPE_PROTO`（位于 `MS_TYPE_COUNT` 之后，`header.type == NULL`）；Proto 经 `msAlloc` 创建，**不挂入 `MsHeap`**（不链入全对象链表、不经 `msObjectAlloc` 分配，`msObjectAlloc` 拒绝该内部标签），GC 化前的回收路径仍为 `msProtoFree`；
+2. 父 Proto/builder 递归拥有子 Proto：`msProtoAddProto` 把子 Proto 入常量池且**成功即转移所有权**给构建器、**失败则调用方保留所有权**并须自行 `msProtoFree`；`msProtoConstProto` 提供越界/非 Proto 返回 `NULL` 的安全查询；`msProtoFree` 与 `msProtoBuilderDestroy` 递归释放整棵子 Proto 树；
+3. `msProtoAddConst` 为 `msObjectValueEquals` 值去重（按类型标签门控，浮点零按符号位区分、NaN 不去重）；`msProtoDump` 仍以 `#k<idx>` 占位打印常量。
 
 ## 实现步骤
 
@@ -328,7 +340,7 @@ void msProtoDump(const struct MsProto* proto, FILE* out);
 - [x] `src/vm/ms_opcode.{h,c}` 与 `src/vm/ms_proto.{h,c}` 存在，guard 分别为 `MSLANG_SRC_VM_MS_OPCODE_H_` / `MSLANG_SRC_VM_MS_PROTO_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef）。
 - [x] 指令定长 4 字节、两种格式位布局与本文一致；编码/解码内联函数对全操作码与边界操作数往返正确；`sAx` 有符号 24 位、跳转偏移相对下一条指令。
 - [x] `MsOpCode` 全集 82 条 + `MS_OP_COUNT`，v0.1 子集 63 条；元数据表与枚举同序完备，`msOpName`/`msOpFormatOf` 行为符合测试方案。
-- [x] `struct MsProto` 字段与本文一致（含补充的 `tryBlocksLen`/`linesLen`，不含留待任务 06 的 GC 头）；常量池上限 65536、去重与所有权约定落实。
+- [x] `struct MsProto` 字段与本文一致（含补充的 `tryBlocksLen`/`linesLen`；`MsObjectHeader header` 已随任务 07 以内部 `MS_TYPE_PROTO` 标签补回首部）；常量池上限 65536、去重与所有权约定落实。
 - [x] 构建器 API 完整（发射/行号/回填/常量/异常表/定稿/释放），粘性错误模型与所有权移交语义如文所述；全部堆分配经 `msAlloc/msRealloc/msFree`，分配统计无泄漏。
 - [x] 行号表游程编码 + 二分查询、异常表布局（含 `MS_PROTO_PC_NONE`）与本文一致。
 - [x] `tests/c/test_opcode.c` 与 `tests/c/test_proto.c` 覆盖「测试方案」全部清单项并全部通过；构建产物只落在 `build/`。

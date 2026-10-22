@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [04 语法分析器与 AST](04-parser-ast.md)、[05 字节码格式与 MsProto](05-bytecode-proto.md) |
+| v0.1 | ✅ | [04 语法分析器与 AST](04-parser-ast.md)、[05 字节码格式与 MsProto](05-bytecode-proto.md) |
 
 ## 任务目标
 
@@ -31,7 +31,7 @@
 对规范与既定文档的处理（实现与评审时以此为据）：
 
 1. **与任务 11/12/13/14 的边界。** 这些任务的文档写作时本任务未定稿，其中「新增某某生成」的表述以本文为基准对齐为**扩展关系**：本任务交付编译器骨架与基础子集（字面量、标识符、算术/位/逻辑/条件表达式、单段比较、位置参数调用、单目标 `:=`/`=`、块、表达式语句、`return` 零/单值、基础 `func`/`lambda` 编译）；任务 11 叠加 `:=`/`=` 严格检查与多目标/解包，任务 12 叠加控制流语句与链式比较，任务 13 叠加默认参数/`*args`/`**kwargs`/`CALL_KW`/`TAIL_CALL`/多值返回，任务 14 叠加 upvalue 捕获。本任务对未覆盖的 AST 节点一律走统一的「尚未实现」占位路径（E307），由对应任务逐项替换。
-2. **表达式语句的丢弃机制。** 任务 05 的操作码枚举无 `POP`；本任务定名丢弃机制为**每函数一个隐藏槽位**：表达式语句求值后 `STORE_LOCAL` 写入该槽（惰性分配、全函数复用、计入 `localCount`）。任务 45 假定的 `MS_OP_POP` 以本约定为准，不新增操作码。由此模块顶层的 `localCount` 也可大于 0——对齐任务 12 对任务 09「`localCount` 可为 0」简化的既有修正。
+2. **表达式语句的丢弃机制。** 任务 05 的操作码枚举无 `POP`；本任务定名丢弃机制为**每作用域一个隐藏槽位**：表达式语句求值后 `STORE_LOCAL` 写入当前作用域的丢弃槽（惰性分配——首个表达式语句出现时才分配，同一作用域内复用，计入 `localCount`，出块随作用域回绕失效）。任务 45 假定的 `MS_OP_POP` 以本约定为准，不新增操作码。由此模块顶层的 `localCount` 也可大于 0——对齐任务 12 对任务 09「`localCount` 可为 0」简化的既有修正。
 3. **`and`/`or` 的求值语义。** 条件跳转弹栈（任务 05/08 约定）且无 `DUP` 指令，为保持「`a and b` 在 `a` 为假时结果为 `a`」的 Python 语义，短路生成经隐藏槽中转（见「逻辑表达式」），栈深两条路径一致。
 4. **常量折叠白名单。** 只折叠结果与运行时语义**逐位一致**的情形：数值 `+ - *` 与一元 `+ - ~`、`not`；int 运算先检出溢出，溢出即不折叠（保留任务 06/08 的运行时错误路径）；`/` `div` `%` `**`、比较、字符串运算一律不折叠（保留除零等运行时错误与 NaN 语义）。
 5. **一元 `+`。** 规范未定义其对非数值的行为；字面量经常量折叠，非字面量生成 `LOAD_CONST(0)` + `MS_OP_ADD`，把类型检查留给 VM 的 `ADD` 慢路径。
@@ -46,7 +46,7 @@
 
 - `src/compiler/ms_compiler.h`（guard `MSLANG_SRC_COMPILER_MS_COMPILER_H_`）：`MsCompileFlags`、`struct MsCompiler` 完整定义（任务 12 需向其内嵌循环上下文字段，故结构体必须在头文件可见）、公开函数声明。自包含：include `<stdint.h>`、任务 02 的 `"mslang/error.h"` 与 `"core/ms_diag.h"`；前向声明 `struct MsAst`、`struct MsHeap`、`struct MsProto`、`struct MsFuncCtx`。
 - `src/compiler/ms_compiler.c`：函数编译上下文、作用域栈、分派与生成、折叠与回填的全部实现；除公开函数外一律文件内 `static`。
-- 内存纪律：编译期堆分配仅函数编译上下文（`msAlloc`/`msFree`，随 `msCompilerPopFunc` 对称释放）；常量对象经任务 06 构造器分配在 `MsHeap` 上，所有权随常量池移交（GC 落地前由任务 09 的「关闭时统一回收」兜底）；产出的 `MsProto` 由调用方以 `msProtoFree` 释放。AST 与源码缓冲区的生命周期归调用方，编译器只读。
+- 内存纪律：编译期堆分配仅函数编译上下文（`msAlloc`/`msFree`，随 `msCompilerPopFunc` 对称释放）；常量对象经任务 06 构造器分配在 `MsHeap` 上，所有权随常量池移交（GC 落地前由任务 09 的「关闭时统一回收」兜底）；产出的 `MsProto` 连同整棵子 Proto 树由调用方以 `msProtoFree` 递归释放。AST 与源码缓冲区的生命周期归调用方，编译器只读。
 
 ### 公开接口
 
@@ -87,9 +87,14 @@ MsResult msCompilerCompile(struct MsCompiler* c, const struct MsAst* root, struc
 #define MS_COMPILER_MAX_NODE_DEPTH 512    // AST 递归预算（防御病态嵌套，f-string 等复用）
 
 struct MsLocalSlot {
-  struct MsString* name;   // interned, borrowed from the heap; NULL = hidden slot
+  struct MsString* name;   // compared by content (msStringEquals); NULL = hidden slot
   int depth;               // block depth at declaration (0 = function body level)
   bool isCaptured;         // reserved for task 14 upvalue capture; always false here
+};
+
+struct MsScope {
+  int localBase;           // localCount checkpoint; restored on scope pop
+  int discardSlot;         // hidden slot for expression-statement results; -1 until used
 };
 
 struct MsFuncCtx {                 // one per function/module-top proto; file-local to ms_compiler.c
@@ -99,10 +104,10 @@ struct MsFuncCtx {                 // one per function/module-top proto; file-lo
   struct MsLocalSlot locals[MS_COMPILER_MAX_LOCALS];
   int localCount;                  // currently live slots
   int localMax;                    // high-water mark -> proto->localCount
+  struct MsScope scopes[MS_COMPILER_MAX_SCOPE_DEPTH];
   int scopeDepth;                  // 0 = function body top level; +1 per '{'
   int stackDepth;                  // current eval-stack usage above the register window
   int stackMax;                    // high-water mark -> proto->stackSize
-  int discardSlot;                 // hidden slot for expression-statement results; -1 until used
   bool isModule;                   // module top level ("<main>")
   bool isAsync;
 };
@@ -115,8 +120,9 @@ struct MsFuncCtx {                 // one per function/module-top proto; file-lo
 static void msCompilerPushScope(struct MsCompiler* c);
 
 // Leaves a block scope: rewinds localCount to the scope base so sibling blocks
-// reuse slots. Checkpoint for task 14: if a popped slot has isCaptured set,
-// emit MS_OP_CLOSE_UPVALS here (never triggers in this task).
+// reuse slots, and invalidates the scope's discard slot. Checkpoint for task
+// 14: if a popped slot has isCaptured set, emit MS_OP_CLOSE_UPVALS here
+// (never triggers in this task).
 static void msCompilerPopScope(struct MsCompiler* c);
 
 // Declares a named local at the current depth; returns its slot, or -1
@@ -129,7 +135,8 @@ static int msCompilerDeclareLocal(struct MsCompiler* c, struct MsString* name);
 static int msCompilerAllocHiddenLocal(struct MsCompiler* c);
 
 // Innermost-first lookup among live locals of the CURRENT function context;
-// returns the slot or -1.
+// names are compared by content (msStringEquals), so long (non-interned)
+// strings resolve correctly; returns the slot or -1.
 static int msCompilerResolveLocal(struct MsCompiler* c, const struct MsString* name);
 ```
 
@@ -166,14 +173,15 @@ static int msCompilerEmitJumpPlaceholder(struct MsCompiler* c, MsOpCode op);
 // Current instruction count of the innermost builder (== next pc).
 static int msCompilerCurrentPc(const struct MsCompiler* c);
 
-// Back-patches jumpPc to the current pc via msProtoPatchSAx.
+// Back-patches jumpPc to the current pc via msProtoPatchSAx; expectedStackDepth
+// records the stack depth at jump emission and is MS_ASSERT-checked here.
 // Dead-jump elimination: an unconditional MS_OP_JUMP whose target is the very
 // next instruction (target == jumpPc + 1) is rewritten to MS_OP_NOP, keeping
 // codeLen stable so previously recorded pcs stay valid. Conditional jumps are
 // never rewritten (they pop the stack; deleting one would break stack
 // balance). sAx range overflow is mapped to E309 via the builder's sticky
 // error.
-static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc);
+static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc, int expectedStackDepth);
 ```
 
 栈深不变量：编译器生成的每条路径在汇合点栈深一致（由生成模式保证）；回填点以 `MS_ASSERT` 校验当前 `stackDepth` 等于该跳转发射时记录的期望值。每个 Proto 定稿时 `stackSize = stackMax`、`localCount = localMax`。
@@ -202,8 +210,8 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
 
 ### 常量与名字
 
-- 整数字面量：词素去下划线后按前缀（`0x`/`0o`/`0b`/十进制）以 `strtoll` 转值；溢出 int64 报 E308（任务 31 落地大整数后解除，该文已约定此占位）；`msIntNew` 构造后经 `msProtoAddConst` 入池发 `LOAD_CONST Bx`。
-- 浮点：`strtod` 转值（词法形式已由任务 03 校验）；`msFloatNew` 入池。
+- 整数字面量：词素切片先复制到临时缓冲、去下划线并以 NUL 终止，再按前缀（`0x`/`0o`/`0b`/十进制）以 `strtoull` 转量级；溢出 int64 报 E308（任务 31 落地大整数后解除，该文已约定此占位）。一元 `-` 直接作用于整数字面量的「直接负字面量」语境按量级上限 `|INT64_MIN|` 解析，`-9223372036854775808` 因此可得 `INT64_MIN`（不走 `NEG` 取负，避免溢出）；`msIntNew` 构造后经 `msProtoAddConst` 入池发 `LOAD_CONST Bx`。
+- 浮点：同样切片复制/去下划线/NUL 终止后以 `strtod` 转值（词法形式已由任务 03 校验）；`msFloatNew` 入池。
 - 字符串/raw string：词素切片经 `msLexerUnescape` 解码（raw string 原文直取），`msStringNew` 入池；`{{`/`}}` 还原属任务 28 的 f-string 路径，本任务不处理 `MS_AST_FSTRING*`（E307）。
 - `true`/`false`/`nil`：`MS_OP_LOAD_TRUE` / `MS_OP_LOAD_FALSE` / `MS_OP_LOAD_NIL`，不入常量池（任务 05 约定）。
 - 字节串字面量：E307（任务 32 接通）。
@@ -226,7 +234,7 @@ STORE_LOCAL t                          STORE_LOCAL t
 Lend: LOAD_LOCAL t                     Lend: LOAD_LOCAL t
 ```
 
-隐藏槽 `t` 经 `msCompilerAllocHiddenLocal` 取得、用后随作用域回绕；两条路径栈深均净 +1。左操作数折叠为常量时按常量条件消除（见「窥孔优化」）：`false and x` → `LOAD_FALSE`，`true or x` → `LOAD_TRUE`，`true and x` / `false or x` → 仅编译 `x`——与短路不求值 `x` 的运行时语义一致。
+隐藏槽 `t` 经 `msCompilerAllocHiddenLocal` 取得、用后**显式恢复 `localCount`**（保存/还原，不等作用域回绕），不抬高后续代码的槽位基线；两条路径栈深均净 +1。左操作数折叠为常量时按常量条件消除（见「窥孔优化」）：`false and x` → `LOAD_FALSE`，`true or x` → `LOAD_TRUE`，`true and x` / `false or x` → 仅编译 `x`——与短路不求值 `x` 的运行时语义一致。
 
 - **条件表达式** `a if cond else b`：`eval cond` → `JUMP_IF_FALSE` 占位 → `eval a` → `JUMP` 占位 → 回填 else 入口 → `eval b` → 回填汇合点；两路径栈深均净 +1。
 - **单段比较**：`MsCompareOp` 直接映射 `EQ/NE/LT/LE/GT/GE/IS/IN`；`MS_CMP_NOT_IN` → `IN` + `NOT`，`MS_CMP_IS_NOT` → `IS` + `NOT`。
@@ -277,7 +285,7 @@ static struct MsFuncCtx* msCompilerPushFunc(struct MsCompiler* c, const struct M
 static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out);
 ```
 
-- `MS_AST_FUNC_DECL`：参数仅普通参数（带默认值/`*`/`**` 报 E307，任务 13 解除）；子上下文中参数按序声明为槽 `0..paramCount-1`（深度 0 局部），编译函数体，`msCompilerPopFunc` 得子 Proto；子 Proto 经 `msProtoAddConst` 入**外层**常量池（子 Proto 不去重，任务 05 约定），定义点发射 `MS_OP_MAKE_FUNCTION Bx`；随后按声明语义绑定函数名（模块深度 0 → `STORE_GLOBAL`，否则声明局部 + `STORE_LOCAL`）。`isAsync` 标志照传入子 Proto（调用语义属任务 43）。
+- `MS_AST_FUNC_DECL`：参数仅普通参数（带默认值/`*`/`**` 报 E307，任务 13 解除）；子上下文中参数按序声明为槽 `0..paramCount-1`（深度 0 局部），编译函数体，`msCompilerPopFunc` 得子 Proto；子 Proto 经 `msProtoAddProto` 入**外层**常量池（子 Proto 不去重，成功即转移所有权、失败由调用方 `msProtoFree`，任务 05 约定），定义点发射 `MS_OP_MAKE_FUNCTION Bx`；随后按声明语义绑定函数名（模块深度 0 → `STORE_GLOBAL`，否则声明局部 + `STORE_LOCAL`）。`isAsync` 标志照传入子 Proto（调用语义属任务 43）。产物 Proto 树整体由调用方一次 `msProtoFree` 递归释放。
 - `MS_AST_LAMBDA`：同上，`name = "<lambda>"`（任务 13 定名），函数体即单表达式 + `RETURN`，定义点发射 `MS_OP_MAKE_LAMBDA Bx`。
 - 嵌套函数引用外层局部：解析命中 `MS_RESOLVE_UPVALUE` 报 E310（任务 14 解除）。
 - 模块顶层：`msCompilerCompile` 以 `isModule = true` 压入首个上下文，`name = "<main>"`、`paramCount = 0`、各标志位为假（任务 09 §3 约定）。
@@ -290,7 +298,7 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out);
 ### 行号与诊断
 
 - 每条语句/每个表达式子节点首次发射前 `msProtoSetLine(node->line)`，构建器按游程编码自动追加（任务 05）。
-- 编译诊断经 `msDiagReport(c->diags, node->line, node->column, code, fmt, ...)`，与词法/语法错误共享单文件 20 条上限；`msDiagReport` 返回 `false`（已满）时置粘性错误并中止生成。
+- 编译诊断经 `msDiagReport(c->diags, node->line, node->column, code, fmt, ...)`，与词法/语法错误共享单文件 20 条上限。诊断分两级：**可恢复节点错误**（E307/E308/E310/E312 等）只记诊断并补占位指令（如 `LOAD_NIL`）继续生成其余节点，编译最终返回 `MS_ERROR_SYNTAX`；**致命错误**（OOM 与 E306/E309/E311 等规模/防御超限、诊断列表满）置 `c->sticky`，后续生成调用全部短路。诊断记满 20 条后（`msDiagReport` 返回 `false` 或列表已满）置粘性错误并中止生成。
 
 错误码表（编译段 E3xx；E301–E306 按任务 11 已定含义收录，本任务自用码自 E307 起，后续任务顺延并登记回本表）：
 
@@ -306,7 +314,7 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out);
 
 ## 实现步骤
 
-1. 建 `src/compiler/ms_compiler.h` / `ms_compiler.c` 骨架：`MsCompileFlags`、`struct MsCompiler`、`msCompilerInit`/`msCompilerDestroy`、函数上下文压弹（`msCompilerPushFunc`/`msCompilerPopFunc` 含末尾 `RETURN` 补齐与元数据填写）、粘性错误与 `nodeDepth` 预算。验证：空源码编译出仅含 `LOAD_NIL; RETURN` 的顶层 Proto，`name == "<main>"`、`paramCount/localCount/stackSize` 为 0，分配统计归零。
+1. 建 `src/compiler/ms_compiler.h` / `ms_compiler.c` 骨架：`MsCompileFlags`、`struct MsCompiler`、`msCompilerInit`/`msCompilerDestroy`、函数上下文压弹（`msCompilerPushFunc`/`msCompilerPopFunc` 含末尾 `RETURN` 补齐与元数据填写）、粘性错误与 `nodeDepth` 预算。验证：空源码编译出仅含 `LOAD_NIL; RETURN` 的顶层 Proto，`name == "<main>"`、`paramCount == 0`、`localCount == 0`、`stackSize == 1`，分配统计归零。
 2. 常量与字面量生成：整数（去下划线、四进制、`strtoll`、E308）、浮点、字符串（`msLexerUnescape`）、`true`/`false`/`nil`；`msProtoAddConst` 入池与行号登记。验证：各字面量表达式语句的指令流解码断言与 `msProtoDump` 黄金文本。
 3. 作用域栈与名字解析：push/pop/声明/最内层优先查找、模块双层语义、隐藏槽与丢弃槽；`MS_AST_DECL`/`MS_AST_ASSIGN`/`MS_AST_EXPR_STMT`/`MS_AST_BLOCK`/`MS_AST_PASS` 生成。验证：顶层 `:=` 发 `STORE_GLOBAL`、块内 `:=` 发 `STORE_LOCAL`、遮蔽与兄弟块槽位复用（转储断言槽号）、`x := x` 读外层、E306 槽位溢出。
 4. 表达式生成：token→操作码映射、一元、逻辑（隐藏槽短路模式）、条件表达式、单段比较（含 `NOT_IN`/`IS_NOT` 展开）、位置调用；栈深跟踪与汇合点不变量断言。验证：逐构造的转储黄金文本与 `stackSize` 高水位正确性。
@@ -321,7 +329,7 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out);
 
 覆盖清单：
 
-- 顶层 Proto 约定：空源码仅 `LOAD_NIL; RETURN`；`name == "<main>"`、`sourceFile`、全标志位为假；多语句序列的行号表（`msProtoLineAt` 抽查）。
+- 顶层 Proto 约定：空源码仅 `LOAD_NIL; RETURN`；`name == "<main>"`、`sourceFile`、全标志位为假、`localCount == 0`、`stackSize == 1`；多语句序列的行号表（`msProtoLineAt` 抽查）。
 - 字面量与常量池：各进制整数与下划线形式入池值正确；重复常量去重（`1; 1` 共享槽位）；浮点；字符串转义解码结果（`\n`、`\uHHHH`）；raw string 原文；`true`/`false`/`nil` 专用指令；整数溢出报 E308；`b"..."` 报 E307。
 - 作用域：顶层 `:=` → `STORE_GLOBAL`、读取 → `LOAD_GLOBAL`；块内 `:=` → 局部槽、出块后同名读回落全局；嵌套块遮蔽（同名不同槽）；兄弟块槽位复用（转储中槽号相同）；`x := x` 的 RHS 解析到外层；隐藏丢弃槽计入 `localCount`；槽位/块深度超限报 E306。
 - 表达式：映射表逐操作抽查（`+ - * / div % ** << >> & | ^`）；一元四种；优先级经 AST 保持（`1 + 2 * 3` 的结构由任务 04 保证，此处断言发射次序）；`and`/`or` 短路模式形状（含隐藏槽与两路径栈深一致）；条件表达式跳转形状；单段比较全算符（含 `not in`/`is not` 的 `IN+NOT`/`IS+NOT`）；n ≥ 2 链报 E307；位置调用栈形与 `A` 操作数、`n > 255` 报 E312；含关键字实参报 E307。
@@ -333,13 +341,13 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out);
 
 ## 验收标准
 
-- [ ] `src/compiler/ms_compiler.h` / `ms_compiler.c` 存在，guard 为 `MSLANG_SRC_COMPILER_MS_COMPILER_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、`struct MsCompiler`/`struct MsFuncCtx` 不 typedef）。
-- [ ] 单趟编译：无独立 IR 与独立优化 pass；窥孔优化仅常量折叠与死跳转消除两项，均内联于生成/回填；折叠白名单与溢出检出规则如文所述，折叠结果与 VM 语义逐位一致。
-- [ ] 块级作用域落实：作用域栈、最内层优先解析、遮蔽、出块回绕与兄弟块槽位复用；模块顶层深度 0 的 `:=` 走全局命名空间；名字解析顺序「局部 → 外层（E310 桩）→ 全局/内建」与 03-syntax §8 一致。
-- [ ] 每函数/模块顶层一个 `MsProto`；嵌套函数子 Proto 入外层常量池、`MAKE_FUNCTION`/`MAKE_LAMBDA` 发射与名绑定、参数槽位、末尾 `RETURN` 补齐、元数据（`paramCount`/`localCount`/`stackSize`/名称/标志位）填写正确。
-- [ ] 仅经任务 05 构建器 API 发射；跳转回填原语含 `JUMP`→`NOP` 死跳转改写且不改写条件跳转；栈深跟踪产出正确 `stackSize`；行号经 `msProtoSetLine` 登记。
-- [ ] E3xx 错误码表如本文（E301–E306 收录任务 11 定名，E307–E312 本任务定义）；统一「尚未实现」占位路径覆盖全部未支持节点；诊断共享单文件 20 条上限。
-- [ ] `MS_COMPILE_REPL` 选项位与顶层最后一条表达式语句的 `PRINT_EXPR` 改写落实；接口定名（`msCompilerCompile`、`msCompilerCompileStmt/Expr`、作用域钩子、`msCompilerAllocHiddenLocal` 等）与「设计依据」第 9 条一致。
-- [ ] 全部堆分配经 `msAlloc/msRealloc/msFree`；测试拆卸后分配统计归零；OOM 注入路径返回 `MS_ERROR_OOM`。
-- [ ] `tests/c/test_compiler.c` 覆盖「测试方案」全部清单项并全部通过；`ctest` 全绿；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；对任务 02/03/04/05/06 的接口引用（`msDiagReport`、`msLexerUnescape`、`struct MsAst`、`MsProtoBuilder` 族、`msIntNew`/`msStringNew` 等）均为对应已定稿文档的定名。
+- [x] `src/compiler/ms_compiler.h` / `ms_compiler.c` 存在，guard 为 `MSLANG_SRC_COMPILER_MS_COMPILER_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、`struct MsCompiler`/`struct MsFuncCtx` 不 typedef）。
+- [x] 单趟编译：无独立 IR 与独立优化 pass；窥孔优化仅常量折叠与死跳转消除两项，均内联于生成/回填；折叠白名单与溢出检出规则如文所述，折叠结果与 VM 语义逐位一致。
+- [x] 块级作用域落实：作用域栈、最内层优先解析、遮蔽、出块回绕与兄弟块槽位复用；模块顶层深度 0 的 `:=` 走全局命名空间；名字解析顺序「局部 → 外层（E310 桩）→ 全局/内建」与 03-syntax §8 一致。
+- [x] 每函数/模块顶层一个 `MsProto`；嵌套函数子 Proto 入外层常量池、`MAKE_FUNCTION`/`MAKE_LAMBDA` 发射与名绑定、参数槽位、末尾 `RETURN` 补齐、元数据（`paramCount`/`localCount`/`stackSize`/名称/标志位）填写正确。
+- [x] 仅经任务 05 构建器 API 发射；跳转回填原语含 `JUMP`→`NOP` 死跳转改写且不改写条件跳转；栈深跟踪产出正确 `stackSize`；行号经 `msProtoSetLine` 登记。
+- [x] E3xx 错误码表如本文（E301–E306 收录任务 11 定名，E307–E312 本任务定义）；统一「尚未实现」占位路径覆盖全部未支持节点；诊断共享单文件 20 条上限。
+- [x] `MS_COMPILE_REPL` 选项位与顶层最后一条表达式语句的 `PRINT_EXPR` 改写落实；接口定名（`msCompilerCompile`、`msCompilerCompileStmt/Expr`、作用域钩子、`msCompilerAllocHiddenLocal` 等）与「设计依据」第 9 条一致。
+- [x] 全部堆分配经 `msAlloc/msRealloc/msFree`；测试拆卸后分配统计归零；OOM 注入路径返回 `MS_ERROR_OOM`。
+- [x] `tests/c/test_compiler.c` 覆盖「测试方案」全部清单项并全部通过；`ctest` 全绿；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；对任务 02/03/04/05/06 的接口引用（`msDiagReport`、`msLexerUnescape`、`struct MsAst`、`MsProtoBuilder` 族、`msIntNew`/`msStringNew` 等）均为对应已定稿文档的定名。
