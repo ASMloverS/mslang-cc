@@ -1,6 +1,7 @@
 #include "compiler/ms_compiler.h"
 
 #include <math.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "core/ms_memory.h"
@@ -670,6 +671,191 @@ MS_TEST(compiler, outerLocalReportsE310) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(compiler, replPrintsOnlyLastExpression) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "1; 2;", MS_COMPILE_REPL);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  static const MsOpCode expected[] = {
+    MS_OP_LOAD_CONST, MS_OP_STORE_LOCAL, MS_OP_LOAD_CONST,
+    MS_OP_PRINT_EXPR, MS_OP_LOAD_NIL, MS_OP_RETURN
+  };
+  msTestAssertOps(fix.proto, expected, sizeof(expected) / sizeof(expected[0]));
+  if (fix.proto != NULL && fix.proto->code != NULL) {
+    for (int i = 0; i < fix.proto->codeLen; ++i) {
+      if (i != 3) {
+        MS_ASSERT_TRUE(msOpDecodeOp(fix.proto->code[i]) != MS_OP_PRINT_EXPR);
+      }
+    }
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, assignmentUsesResolvedStore) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "x := 0; x = 1; { y := 0; y = 2; }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_STORE_GLOBAL, msOpDecodeOp(msTestCodeAt(fix.proto, 3)));
+  MS_ASSERT_EQ(MS_OP_STORE_LOCAL, msOpDecodeOp(msTestCodeAt(fix.proto, 7)));
+  MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(fix.proto, 7)));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, lineTableFollowsStatements) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "1;\n2;\n", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_TRUE(fix.proto != NULL);
+  if (fix.proto != NULL) {
+    MS_ASSERT_EQ(1, (long long)msProtoLineAt(fix.proto, 0));
+    MS_ASSERT_EQ(2, (long long)msProtoLineAt(fix.proto, 2));
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, unsupportedAndLimitDiagnostics) {
+  static const struct {
+    const char* source;
+    uint32_t code;
+  } cases[] = {
+    {"b\"x\";", 307},
+    {"a < b < c;", 307},
+    {"f(x = 1);", 307},
+    {"a, b := 1, 2;", 307},
+    {"func f() { return 1, 2; }", 307}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    MsTestFixture fix;
+    msTestCompile(&fix, cases[i].source, MS_COMPILE_DEFAULT);
+    MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+    MS_ASSERT_TRUE(fix.proto == NULL);
+    const struct MsDiag* diag = NULL;
+    if (msDiagListCount(&fix.diags) > 0) {
+      diag = msDiagListAt(&fix.diags, 0);
+    }
+    MS_ASSERT_TRUE(diag != NULL);
+    if (diag != NULL) {
+      MS_ASSERT_EQ((long long)cases[i].code, (long long)diag->code);
+    }
+    msTestFixtureDestroy(&fix);
+  }
+}
+
+MS_TEST(compiler, callArgumentLimit) {
+  char source[2048];
+  size_t used = 0;
+  used += (size_t)snprintf(source + used, sizeof(source) - used, "f(");
+  for (int i = 0; i < 256; ++i) {
+    used += (size_t)snprintf(source + used, sizeof(source) - used, "%s0", i == 0 ? "" : ",");
+  }
+  snprintf(source + used, sizeof(source) - used, ");");
+  MsTestFixture fix;
+  msTestCompile(&fix, source, MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  const struct MsDiag* diag = NULL;
+  if (msDiagListCount(&fix.diags) > 0) {
+    diag = msDiagListAt(&fix.diags, 0);
+  }
+  MS_ASSERT_TRUE(diag != NULL);
+  if (diag != NULL) {
+    MS_ASSERT_EQ(312, (long long)diag->code);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, diagnosticCapStopsAtTwenty) {
+  char source[160];
+  size_t used = 0;
+  for (int i = 0; i < 20; ++i) {
+    used += (size_t)snprintf(source + used, sizeof(source) - used, "b\"\";");
+  }
+  MsTestFixture fix;
+  msTestCompile(&fix, source, MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_EQ(20, (long long)msDiagListCount(&fix.diags));
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, constantFoldHonorsNodeDepth) {
+  char source[4096];
+  size_t used = 0;
+  for (int i = 0; i < 520; ++i) {
+    used += (size_t)snprintf(source + used, sizeof(source) - used, "not ");
+  }
+  snprintf(source + used, sizeof(source) - used, "nil;");
+  MsTestFixture fix;
+  msTestCompile(&fix, source, MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  const struct MsDiag* diag = NULL;
+  if (msDiagListCount(&fix.diags) > 0) {
+    diag = msDiagListAt(&fix.diags, 0);
+  }
+  MS_ASSERT_TRUE(diag != NULL);
+  if (diag != NULL) {
+    MS_ASSERT_EQ(311, (long long)diag->code);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, localAndScopeLimits) {
+  char locals[8192];
+  size_t used = 0;
+  used += (size_t)snprintf(locals + used, sizeof(locals) - used, "{");
+  for (int i = 0; i < 257; ++i) {
+    used += (size_t)snprintf(locals + used, sizeof(locals) - used, "a%d := 0;", i);
+  }
+  snprintf(locals + used, sizeof(locals) - used, "}");
+  MsTestFixture fix;
+  msTestCompile(&fix, locals, MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  const struct MsDiag* diag = NULL;
+  if (msDiagListCount(&fix.diags) > 0) {
+    diag = msDiagListAt(&fix.diags, 0);
+  }
+  MS_ASSERT_TRUE(diag != NULL);
+  if (diag != NULL) {
+    MS_ASSERT_EQ(306, (long long)diag->code);
+  }
+  msTestFixtureDestroy(&fix);
+
+  char blocks[512];
+  used = 0;
+  for (int i = 0; i < 130; ++i) {
+    used += (size_t)snprintf(blocks + used, sizeof(blocks) - used, "{");
+  }
+  used += (size_t)snprintf(blocks + used, sizeof(blocks) - used, "pass;");
+  for (int i = 0; i < 130; ++i) {
+    used += (size_t)snprintf(blocks + used, sizeof(blocks) - used, "}");
+  }
+  msTestCompile(&fix, blocks, MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  diag = NULL;
+  if (msDiagListCount(&fix.diags) > 0) {
+    diag = msDiagListAt(&fix.diags, 0);
+  }
+  MS_ASSERT_TRUE(diag != NULL);
+  if (diag != NULL) {
+    MS_ASSERT_EQ(306, (long long)diag->code);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
+  const char* source = "func outer() { x := 1; func inner(a) { return a + 2; } }";
+  bool sawSuccess = false;
+  for (int64_t failAfter = 0; failAfter < 80 && !sawSuccess; ++failAfter) {
+    MsTestFixture fix;
+    msTestCompileWithFailAfter(&fix, source, MS_COMPILE_DEFAULT, failAfter);
+    if (fix.result == MS_OK) {
+      sawSuccess = true;
+    } else {
+      MS_ASSERT_EQ(MS_ERROR_OOM, fix.result);
+      MS_ASSERT_TRUE(fix.proto == NULL);
+    }
+    msTestFixtureDestroy(&fix);
+  }
+  MS_ASSERT_TRUE(sawSuccess);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Compiler.EmptyModule", testcompileremptyModule},
   {"Compiler.ScalarLiteralsAndDedup", testcompilerscalarLiteralsAndDedup},
@@ -696,6 +882,15 @@ static const MsTestCase msTestCases[] = {
   {"Compiler.AsyncFlagIsPreserved", testcompilerasyncFlagIsPreserved},
   {"Compiler.DefaultParamReportsE307", testcompilerdefaultParamReportsE307},
   {"Compiler.OuterLocalReportsE310", testcompilerouterLocalReportsE310},
+  {"Compiler.ReplPrintsOnlyLastExpression", testcompilerreplPrintsOnlyLastExpression},
+  {"Compiler.AssignmentUsesResolvedStore", testcompilerassignmentUsesResolvedStore},
+  {"Compiler.LineTableFollowsStatements", testcompilerlineTableFollowsStatements},
+  {"Compiler.UnsupportedAndLimitDiagnostics", testcompilerunsupportedAndLimitDiagnostics},
+  {"Compiler.CallArgumentLimit", testcompilercallArgumentLimit},
+  {"Compiler.DiagnosticCapStopsAtTwenty", testcompilerdiagnosticCapStopsAtTwenty},
+  {"Compiler.ConstantFoldHonorsNodeDepth", testcompilerconstantFoldHonorsNodeDepth},
+  {"Compiler.LocalAndScopeLimits", testcompilerlocalAndScopeLimits},
+  {"Compiler.NestedProtoOomPathsHaveNoLeaks", testcompilernestedProtoOomPathsHaveNoLeaks},
 };
 
 MS_TEST_MAIN(msTestCases)

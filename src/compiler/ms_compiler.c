@@ -43,6 +43,7 @@ struct MsFuncCtx {
   int stackMax;
   bool isModule;
   bool isAsync;
+  bool replPrint;
 };
 
 static void msCompilerReport(struct MsCompiler* c, const struct MsAst* node,
@@ -940,18 +941,27 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
   switch (node->kind) {
     case MS_AST_SOURCE_FILE:
       for (size_t i = 0; i < node->as.block.count && c->sticky == MS_OK; ++i) {
-        msCompilerCompileStmt(c, node->as.block.items[i]);
+        const struct MsAst* statement = node->as.block.items[i];
+        c->fn->replPrint = (c->flags & MS_COMPILE_REPL) != 0
+            && i + 1 == node->as.block.count && statement->kind == MS_AST_EXPR_STMT;
+        msCompilerCompileStmt(c, statement);
+        c->fn->replPrint = false;
       }
       break;
-    case MS_AST_EXPR_STMT:
+    case MS_AST_EXPR_STMT: {
+      bool print = c->fn->isModule && c->fn->replPrint;
+      c->fn->replPrint = false;
       msCompilerCompileExpr(c, node->as.exprStmt.expr);
-      if (c->sticky == MS_OK) {
+      if (print) {
+        msCompilerEmitABC(c, MS_OP_PRINT_EXPR, 0, 0, -1);
+      } else if (c->sticky == MS_OK) {
         int slot = msCompilerDiscardSlot(c);
         if (slot >= 0) {
           msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
         }
       }
       break;
+    }
     case MS_AST_DECL:
     case MS_AST_ASSIGN:
       msCompilerCompileDeclOrAssign(c, node);
