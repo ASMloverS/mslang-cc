@@ -315,7 +315,7 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out);
 ## 实现步骤
 
 1. 建 `src/compiler/ms_compiler.h` / `ms_compiler.c` 骨架：`MsCompileFlags`、`struct MsCompiler`、`msCompilerInit`/`msCompilerDestroy`、函数上下文压弹（`msCompilerPushFunc`/`msCompilerPopFunc` 含末尾 `RETURN` 补齐与元数据填写）、粘性错误与 `nodeDepth` 预算。验证：空源码编译出仅含 `LOAD_NIL; RETURN` 的顶层 Proto，`name == "<main>"`、`paramCount == 0`、`localCount == 0`、`stackSize == 1`，分配统计归零。
-2. 常量与字面量生成：整数（去下划线、四进制、`strtoll`、E308）、浮点、字符串（`msLexerUnescape`）、`true`/`false`/`nil`；`msProtoAddConst` 入池与行号登记。验证：各字面量表达式语句的指令流解码断言与 `msProtoDump` 黄金文本。
+2. 常量与字面量生成：整数（去下划线、四进制、`strtoull`、E308）、浮点、字符串（`msLexerUnescape`）、`true`/`false`/`nil`；`msProtoAddConst` 入池与行号登记。验证：各字面量表达式语句的指令流解码断言与 `msProtoDump` 黄金文本。
 3. 作用域栈与名字解析：push/pop/声明/最内层优先查找、模块双层语义、隐藏槽与丢弃槽；`MS_AST_DECL`/`MS_AST_ASSIGN`/`MS_AST_EXPR_STMT`/`MS_AST_BLOCK`/`MS_AST_PASS` 生成。验证：顶层 `:=` 发 `STORE_GLOBAL`、块内 `:=` 发 `STORE_LOCAL`、遮蔽与兄弟块槽位复用（转储断言槽号）、`x := x` 读外层、E306 槽位溢出。
 4. 表达式生成：token→操作码映射、一元、逻辑（隐藏槽短路模式）、条件表达式、单段比较（含 `NOT_IN`/`IS_NOT` 展开）、位置调用；栈深跟踪与汇合点不变量断言。验证：逐构造的转储黄金文本与 `stackSize` 高水位正确性。
 5. 窥孔优化：`msCompilerEvalConst` 白名单与溢出检出、`msCompilerEmitConst`、常量条件分支消除、`msCompilerPatchToCurrent` 的 `JUMP`→`NOP` 改写。验证：`1 + 2 * 3` 折叠为单条 `LOAD_CONST`；`INT64_MAX + 1` 不折叠（发 `ADD`）；`a if true else b` 无跳转指令；`false and x` 仅 `LOAD_FALSE`。
