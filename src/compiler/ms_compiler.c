@@ -358,8 +358,12 @@ static bool msCompilerConstTruthy(const struct MsConstValue* value) {
       return false;
     default:
       MS_UNREACHABLE();
+#ifndef NDEBUG
+      // Debug MS_UNREACHABLE is a plain assert: MSVC still needs a return here
+      // (C4715). In release __assume(0) makes it unreachable code (C4702).
+      return false;
+#endif
   }
-  return false;
 }
 
 static bool msCompilerEvalConst(struct MsCompiler* c, const struct MsAst* node,
