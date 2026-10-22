@@ -553,6 +553,10 @@ MS_TEST(compiler, functionProtoMetadata) {
     if (child->name != NULL) {
       MS_ASSERT_TRUE(strcmp(msStringData(child->name), "add") == 0);
     }
+    MS_ASSERT_TRUE(child->sourceFile != NULL);
+    if (child->sourceFile != NULL) {
+      MS_ASSERT_TRUE(strcmp(msStringData(child->sourceFile), "test.ms") == 0);
+    }
     static const MsOpCode expected[] = {
       MS_OP_LOAD_LOCAL, MS_OP_LOAD_LOCAL, MS_OP_ADD, MS_OP_RETURN
     };
@@ -575,7 +579,15 @@ MS_TEST(compiler, lambdaAndImplicitReturn) {
     if (lambda->name != NULL) {
       MS_ASSERT_TRUE(strcmp(msStringData(lambda->name), "<lambda>") == 0);
     }
+    MS_ASSERT_TRUE(lambda->sourceFile != NULL);
+    if (lambda->sourceFile != NULL) {
+      MS_ASSERT_TRUE(strcmp(msStringData(lambda->sourceFile), "test.ms") == 0);
+    }
     MS_ASSERT_EQ(1, lambda->paramCount);
+    MS_ASSERT_EQ(1, lambda->localCount);
+    static const MsOpCode expected[] = {MS_OP_LOAD_LOCAL, MS_OP_RETURN};
+    msTestAssertOps(lambda, expected, sizeof(expected) / sizeof(expected[0]));
+    MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(lambda, 0)));
   }
   MS_ASSERT_EQ(MS_OP_MAKE_LAMBDA, msOpDecodeOp(msTestCodeAt(fix.proto, 0)));
   if (function != NULL) {
@@ -629,6 +641,7 @@ MS_TEST(compiler, defaultParamReportsE307) {
     MsTestFixture fix;
     msTestCompile(&fix, sources[i], MS_COMPILE_DEFAULT);
     MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+    MS_ASSERT_TRUE(fix.proto == NULL);
     const struct MsDiag* diag = NULL;
     if (msDiagListCount(&fix.diags) > 0) {
       diag = msDiagListAt(&fix.diags, 0);
