@@ -537,6 +537,126 @@ MS_TEST(compiler, positionalCallShape) {
   msTestFixtureDestroy(&fix);
 }
 
+MS_TEST(compiler, functionProtoMetadata) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "func add(a, b) { return a + b }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  MS_ASSERT_EQ(MS_OP_MAKE_FUNCTION, msOpDecodeOp(msTestCodeAt(fix.proto, 0)));
+  MS_ASSERT_EQ(MS_OP_STORE_GLOBAL, msOpDecodeOp(msTestCodeAt(fix.proto, 1)));
+  const struct MsProto* child = fix.proto != NULL ? msProtoConstProto(fix.proto, 0) : NULL;
+  MS_ASSERT_TRUE(child != NULL);
+  if (child != NULL) {
+    MS_ASSERT_EQ(2, child->paramCount);
+    MS_ASSERT_EQ(2, child->localCount);
+    MS_ASSERT_EQ(2, child->stackSize);
+    MS_ASSERT_TRUE(child->name != NULL);
+    if (child->name != NULL) {
+      MS_ASSERT_TRUE(strcmp(msStringData(child->name), "add") == 0);
+    }
+    static const MsOpCode expected[] = {
+      MS_OP_LOAD_LOCAL, MS_OP_LOAD_LOCAL, MS_OP_ADD, MS_OP_RETURN
+    };
+    msTestAssertOps(child, expected, sizeof(expected) / sizeof(expected[0]));
+    MS_ASSERT_EQ(0, msOpDecodeA(msTestCodeAt(child, 0)));
+    MS_ASSERT_EQ(1, msOpDecodeA(msTestCodeAt(child, 1)));
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, lambdaAndImplicitReturn) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "lambda x: x; func f() { pass }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  const struct MsProto* lambda = fix.proto != NULL ? msProtoConstProto(fix.proto, 0) : NULL;
+  const struct MsProto* function = fix.proto != NULL ? msProtoConstProto(fix.proto, 1) : NULL;
+  MS_ASSERT_TRUE(lambda != NULL && function != NULL);
+  if (lambda != NULL) {
+    MS_ASSERT_TRUE(lambda->name != NULL);
+    if (lambda->name != NULL) {
+      MS_ASSERT_TRUE(strcmp(msStringData(lambda->name), "<lambda>") == 0);
+    }
+    MS_ASSERT_EQ(1, lambda->paramCount);
+  }
+  MS_ASSERT_EQ(MS_OP_MAKE_LAMBDA, msOpDecodeOp(msTestCodeAt(fix.proto, 0)));
+  if (function != NULL) {
+    MS_ASSERT_EQ(MS_OP_LOAD_NIL, msOpDecodeOp(msTestCodeAt(function, 0)));
+    MS_ASSERT_EQ(MS_OP_RETURN, msOpDecodeOp(msTestCodeAt(function, 1)));
+    MS_ASSERT_EQ(1, function->stackSize);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, nestedFunctionProtoTree) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "func outer() { func inner() { return 1; } }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  const struct MsProto* outer = fix.proto != NULL ? msProtoConstProto(fix.proto, 0) : NULL;
+  MS_ASSERT_TRUE(outer != NULL);
+  const struct MsProto* inner = outer != NULL ? msProtoConstProto(outer, 0) : NULL;
+  MS_ASSERT_TRUE(inner != NULL);
+  if (inner != NULL) {
+    MS_ASSERT_TRUE(inner->name != NULL);
+    if (inner->name != NULL) {
+      MS_ASSERT_TRUE(strcmp(msStringData(inner->name), "inner") == 0);
+    }
+  }
+  if (outer != NULL) {
+    MS_ASSERT_EQ(MS_OP_MAKE_FUNCTION, msOpDecodeOp(msTestCodeAt(outer, 0)));
+    MS_ASSERT_EQ(MS_OP_STORE_LOCAL, msOpDecodeOp(msTestCodeAt(outer, 1)));
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, asyncFlagIsPreserved) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "async func f() { pass }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  const struct MsProto* child = fix.proto != NULL ? msProtoConstProto(fix.proto, 0) : NULL;
+  MS_ASSERT_TRUE(child != NULL && child->isAsync);
+  if (child != NULL) {
+    MS_ASSERT_TRUE(!child->hasVarArgs && !child->hasKwArgs);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, defaultParamReportsE307) {
+  static const char* const sources[] = {
+    "func f(a = 1) { return a; }",
+    "func f(*args) { pass }",
+    "func f(**kwargs) { pass }"
+  };
+  for (size_t i = 0; i < sizeof(sources) / sizeof(sources[0]); ++i) {
+    MsTestFixture fix;
+    msTestCompile(&fix, sources[i], MS_COMPILE_DEFAULT);
+    MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+    const struct MsDiag* diag = NULL;
+    if (msDiagListCount(&fix.diags) > 0) {
+      diag = msDiagListAt(&fix.diags, 0);
+    }
+    MS_ASSERT_TRUE(diag != NULL);
+    if (diag != NULL) {
+      MS_ASSERT_EQ(307, (long long)diag->code);
+    }
+    msTestFixtureDestroy(&fix);
+  }
+}
+
+MS_TEST(compiler, outerLocalReportsE310) {
+  MsTestFixture fix;
+  msTestCompile(&fix, "func outer() { x := 1; func inner() { return x; } }", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_TRUE(fix.proto == NULL);
+  const struct MsDiag* diag = NULL;
+  if (msDiagListCount(&fix.diags) > 0) {
+    diag = msDiagListAt(&fix.diags, 0);
+  }
+  MS_ASSERT_TRUE(diag != NULL);
+  if (diag != NULL) {
+    MS_ASSERT_EQ(310, (long long)diag->code);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Compiler.EmptyModule", testcompileremptyModule},
   {"Compiler.ScalarLiteralsAndDedup", testcompilerscalarLiteralsAndDedup},
@@ -557,6 +677,12 @@ static const MsTestCase msTestCases[] = {
   {"Compiler.ConditionalExpressionJumps", testcompilerconditionalExpressionJumps},
   {"Compiler.ComparisonExpansion", testcompilercomparisonExpansion},
   {"Compiler.PositionalCallShape", testcompilerpositionalCallShape},
+  {"Compiler.FunctionProtoMetadata", testcompilerfunctionProtoMetadata},
+  {"Compiler.LambdaAndImplicitReturn", testcompilerlambdaAndImplicitReturn},
+  {"Compiler.NestedFunctionProtoTree", testcompilernestedFunctionProtoTree},
+  {"Compiler.AsyncFlagIsPreserved", testcompilerasyncFlagIsPreserved},
+  {"Compiler.DefaultParamReportsE307", testcompilerdefaultParamReportsE307},
+  {"Compiler.OuterLocalReportsE310", testcompilerouterLocalReportsE310},
 };
 
 MS_TEST_MAIN(msTestCases)

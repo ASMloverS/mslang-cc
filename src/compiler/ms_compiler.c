@@ -307,6 +307,8 @@ static void msCompilerEmitStringLiteral(struct MsCompiler* c, const struct MsAst
 
 static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node);
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node);
+static void msCompilerCompileReturn(struct MsCompiler* c, const struct MsAst* node);
+static void msCompilerCompileFunction(struct MsCompiler* c, const struct MsAst* node);
 
 static bool msCompilerIntAddOverflows(int64_t a, int64_t b) {
   return (b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b);
@@ -920,6 +922,9 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
     case MS_AST_CALL:
       msCompilerCompileCall(c, node);
       break;
+    case MS_AST_LAMBDA:
+      msCompilerCompileFunction(c, node);
+      break;
     default:
       msCompilerReport(c, node, 307, "expression construct is not implemented in task 07");
       msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
@@ -964,6 +969,12 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
     }
     case MS_AST_PASS:
       break;
+    case MS_AST_RETURN:
+      msCompilerCompileReturn(c, node);
+      break;
+    case MS_AST_FUNC_DECL:
+      msCompilerCompileFunction(c, node);
+      break;
     default:
       msCompilerReport(c, node, 307, "statement construct is not implemented in task 07");
       break;
@@ -993,8 +1004,16 @@ static struct MsFuncCtx* msCompilerPushFunc(struct MsCompiler* c, const struct M
   fn->scopes[0].discardSlot = -1;
   msProtoBuilderInit(&fn->builder);
   c->fn = fn;
-  const char* name = "<main>";
-  struct MsString* protoName = msStringFromCStr(c->heap, name);
+  fn->isAsync = funcNode != NULL && funcNode->as.func.isAsync;
+  fn->builder.proto.isAsync = fn->isAsync;
+  struct MsString* protoName;
+  if (funcNode == NULL) {
+    protoName = msStringFromCStr(c->heap, "<main>");
+  } else if (funcNode->kind == MS_AST_LAMBDA) {
+    protoName = msStringFromCStr(c->heap, "<lambda>");
+  } else {
+    protoName = msStringNew(c->heap, funcNode->as.func.name, funcNode->as.func.nameLen);
+  }
   if (protoName == NULL) {
     msCompilerFail(c, funcNode, MS_ERROR_OOM, 0, "out of memory");
   } else {
@@ -1040,6 +1059,109 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out) {
   MsResult result = c->sticky;
   msCompilerAbortFunc(c);
   return result;
+}
+
+static bool msCompilerValidateParams(struct MsCompiler* c, const struct MsAst* node) {
+  if (node->as.func.params.count > MS_COMPILER_MAX_LOCALS) {
+    msCompilerFail(c, node, MS_ERROR_SYNTAX, 306, "too many parameter slots");
+    return false;
+  }
+  for (size_t i = 0; i < node->as.func.params.count; ++i) {
+    const struct MsAst* param = node->as.func.params.items[i];
+    if (param->kind != MS_AST_PARAM || param->as.param.paramKind != MS_PARAM_NORMAL
+        || param->as.param.defaultValue != NULL) {
+      msCompilerReport(c, param, 307, "default and variadic parameters belong to task 13");
+      return false;
+    }
+  }
+  return true;
+}
+
+static void msCompilerCompileReturn(struct MsCompiler* c, const struct MsAst* node) {
+  if (node->as.returnStmt.values.count > 1) {
+    msCompilerReport(c, node, 307, "multiple return values belong to task 13");
+    return;
+  }
+  if (node->as.returnStmt.values.count == 0) {
+    msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+  } else {
+    msCompilerCompileExpr(c, node->as.returnStmt.values.items[0]);
+  }
+  msCompilerEmitABC(c, MS_OP_RETURN, 0, 0, -1);
+}
+
+static bool msCompilerBuildFunctionProto(struct MsCompiler* c, const struct MsAst* node,
+    struct MsProto** out) {
+  *out = NULL;
+  if (node->as.func.isStatic || !msCompilerValidateParams(c, node)) {
+    if (node->as.func.isStatic) {
+      msCompilerReport(c, node, 307, "static methods belong to task 15");
+    }
+    return false;
+  }
+  if (msCompilerPushFunc(c, node) == NULL) {
+    return false;
+  }
+  for (size_t i = 0; i < node->as.func.params.count; ++i) {
+    const struct MsAst* param = node->as.func.params.items[i];
+    struct MsString* name = msCompilerNameFromSlice(c, param->as.param.name, param->as.param.nameLen);
+    if (name != NULL) {
+      msCompilerDeclareLocal(c, name);
+    }
+  }
+  c->fn->builder.proto.paramCount = (int)node->as.func.params.count;
+  if (node->kind == MS_AST_LAMBDA) {
+    msCompilerCompileExpr(c, node->as.func.body);
+    msCompilerEmitABC(c, MS_OP_RETURN, 0, 0, -1);
+  } else if (node->as.func.body != NULL && node->as.func.body->kind == MS_AST_BLOCK) {
+    for (size_t i = 0; i < node->as.func.body->as.block.count && c->sticky == MS_OK; ++i) {
+      msCompilerCompileStmt(c, node->as.func.body->as.block.items[i]);
+    }
+  } else {
+    msCompilerReport(c, node, 307, "function body must be a block");
+  }
+  return msCompilerPopFunc(c, out) == MS_OK;
+}
+
+static void msCompilerBindFunctionName(struct MsCompiler* c, const struct MsAst* node) {
+  struct MsString* name = msCompilerNameFromSlice(c, node->as.func.name, node->as.func.nameLen);
+  if (name == NULL) {
+    return;
+  }
+  if (c->fn->isModule && c->fn->scopeDepth == 0) {
+    int index = msProtoAddConst(&c->fn->builder, (struct MsObject*)name);
+    if (index >= 0) {
+      msCompilerEmitABC(c, MS_OP_STORE_GLOBAL, 0, (uint16_t)index, -1);
+    } else {
+      msCompilerSyncBuilder(c);
+    }
+    return;
+  }
+  int slot = msCompilerDeclareLocal(c, name);
+  if (slot >= 0) {
+    msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+  }
+}
+
+static void msCompilerCompileFunction(struct MsCompiler* c, const struct MsAst* node) {
+  struct MsProto* child = NULL;
+  if (!msCompilerBuildFunctionProto(c, node, &child)) {
+    if (node->kind == MS_AST_LAMBDA && c->sticky == MS_OK) {
+      msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+    }
+    return;
+  }
+  int index = msProtoAddProto(&c->fn->builder, child);
+  if (index < 0) {
+    msProtoFree(child);
+    msCompilerSyncBuilder(c);
+    return;
+  }
+  MsOpCode op = node->kind == MS_AST_LAMBDA ? MS_OP_MAKE_LAMBDA : MS_OP_MAKE_FUNCTION;
+  msCompilerEmitABC(c, op, 0, (uint16_t)index, 1);
+  if (node->kind == MS_AST_FUNC_DECL) {
+    msCompilerBindFunctionName(c, node);
+  }
 }
 
 void msCompilerInit(struct MsCompiler* c, struct MsHeap* heap, struct MsDiagList* diags,
