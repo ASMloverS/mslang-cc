@@ -30,7 +30,13 @@ any code.
 ## Build
 
 - All build artifacts MUST be placed in `build/` only; build output anywhere
-  else is FORBIDDEN.
+  else is FORBIDDEN. `test_no_root_artifacts` enforces this and MUST NOT be
+  weakened.
+- Manual compiler and probe invocations are build commands. They MUST run
+  with the working directory inside `build/`, and every output MUST stay in
+  `build/`; MSVC invocations MUST pass `/Fo<build-dir>\` and
+  `/Fd<build-dir>\vc140.pdb`, while GCC/Clang invocations MUST pass
+  `-o build/...`.
 
 ## Git Commits
 

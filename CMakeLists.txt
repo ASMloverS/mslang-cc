@@ -74,6 +74,11 @@ mslang_apply_asan(embed-example)
 
 if(MSLANG_BUILD_TESTS)
   enable_testing()
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test_no_root_artifacts
+      COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tools/check_build_artifacts.py"
+          "${PROJECT_SOURCE_DIR}")
   function(mslang_add_c_test name)
     add_executable(${name} "tests/c/${name}.c")
     target_include_directories(${name} PRIVATE "${PROJECT_SOURCE_DIR}/tests/c")
