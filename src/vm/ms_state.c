@@ -1,6 +1,8 @@
 #include "vm/ms_state_internal.h"
 
+#include <limits.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -96,7 +98,18 @@ MsResult msStateSetGlobal(MsState* L, const struct MsString* name, struct MsObje
   }
 
   if (L->globalsLen == L->globalsCap) {
-    int newCap = L->globalsCap == 0 ? 8 : L->globalsCap * 2;
+    int newCap = 8;
+    if (L->globalsCap != 0) {
+      if (L->globalsCap > INT_MAX / 2) {
+        msStateSetOom(L);
+        return MS_ERROR_OOM;
+      }
+      newCap = L->globalsCap * 2;
+    }
+    if ((size_t)newCap > SIZE_MAX / sizeof(*L->globals)) {
+      msStateSetOom(L);
+      return MS_ERROR_OOM;
+    }
     struct MsGlobalEntry* entries = msRealloc(L->globals, (size_t)newCap * sizeof(*entries));
     if (entries == NULL) {
       msStateSetOom(L);

@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 
 #include "core/ms_memory.h"
@@ -29,11 +30,32 @@ MS_TEST(vm, stateLifecycleGlobalsAndErrors) {
   MS_ASSERT_TRUE(msStateGetGlobal(L, name) == answer);
   MS_ASSERT_TRUE(msStateGetGlobal(L, msStringFromCStr(&L->heap, "missing")) == NULL);
 
+  char nameBuffer[32];
+  for (int i = 0; i < 9; ++i) {
+    snprintf(nameBuffer, sizeof(nameBuffer), "global_%d", i);
+    struct MsString* globalName = msStringFromCStr(&L->heap, nameBuffer);
+    MS_ASSERT_TRUE(globalName != NULL);
+    MS_ASSERT_EQ(MS_OK, msStateSetGlobal(L, globalName, answer));
+  }
+  MS_ASSERT_EQ(10, L->globalsLen);
+  MS_ASSERT_EQ(16, L->globalsCap);
+  MS_ASSERT_TRUE(msStateGetGlobal(L, name) == answer);
+  MS_ASSERT_TRUE(msStateGetGlobal(L, msStringFromCStr(&L->heap, "global_0")) == answer);
+  MS_ASSERT_EQ(MS_OK, msStateSetGlobal(L, name, ratio));
+  MS_ASSERT_EQ(10, L->globalsLen);
+  MS_ASSERT_TRUE(msStateGetGlobal(L, name) == ratio);
+
   msRaiseTypeError(L, "bad %s", "value");
   MS_ASSERT_EQ(MS_ERROR_RUNTIME, msStateErrorResult(L));
   MS_ASSERT_TRUE(strstr(msStateErrorMessage(L), "TypeError: bad value") != NULL);
   msStateClearError(L);
   MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
+
+  msRaiseRuntimeError(L, "");
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(L), ""));
+  msRaiseRuntimeError(L, "first %s", "message");
+  msRaiseRuntimeError(L, "latest %s", "message");
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(L), "latest message"));
 
   msCloseState(L);
   struct MsMemStats stats;
