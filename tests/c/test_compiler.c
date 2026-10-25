@@ -650,6 +650,8 @@ MS_TEST(compiler, defaultParamReportsE307) {
     MS_ASSERT_TRUE(diag != NULL);
     if (diag != NULL) {
       MS_ASSERT_EQ(307, (long long)diag->code);
+      MS_ASSERT_EQ(1, (long long)diag->line);
+      MS_ASSERT_EQ(8, (long long)diag->column);
     }
     msTestFixtureDestroy(&fix);
   }
@@ -667,6 +669,8 @@ MS_TEST(compiler, outerLocalReportsE310) {
   MS_ASSERT_TRUE(diag != NULL);
   if (diag != NULL) {
     MS_ASSERT_EQ(310, (long long)diag->code);
+    MS_ASSERT_EQ(1, (long long)diag->line);
+    MS_ASSERT_EQ(46, (long long)diag->column);
   }
   msTestFixtureDestroy(&fix);
 }
@@ -716,12 +720,13 @@ MS_TEST(compiler, unsupportedAndLimitDiagnostics) {
   static const struct {
     const char* source;
     uint32_t code;
+    uint32_t column;
   } cases[] = {
-    {"b\"x\";", 307},
-    {"a < b < c;", 307},
-    {"f(x = 1);", 307},
-    {"a, b := 1, 2;", 307},
-    {"func f() { return 1, 2; }", 307}
+    {"b\"x\";", 307, 1},
+    {"a < b < c;", 307, 3},
+    {"f(x = 1);", 307, 2},
+    {"a, b := 1, 2;", 307, 1},
+    {"func f() { return 1, 2; }", 307, 12}
   };
   for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
     MsTestFixture fix;
@@ -735,6 +740,8 @@ MS_TEST(compiler, unsupportedAndLimitDiagnostics) {
     MS_ASSERT_TRUE(diag != NULL);
     if (diag != NULL) {
       MS_ASSERT_EQ((long long)cases[i].code, (long long)diag->code);
+      MS_ASSERT_EQ(1, (long long)diag->line);
+      MS_ASSERT_EQ((long long)cases[i].column, (long long)diag->column);
     }
     msTestFixtureDestroy(&fix);
   }
@@ -758,6 +765,8 @@ MS_TEST(compiler, callArgumentLimit) {
   MS_ASSERT_TRUE(diag != NULL);
   if (diag != NULL) {
     MS_ASSERT_EQ(312, (long long)diag->code);
+    MS_ASSERT_EQ(1, (long long)diag->line);
+    MS_ASSERT_EQ(2, (long long)diag->column);
   }
   msTestFixtureDestroy(&fix);
 }
@@ -768,10 +777,14 @@ MS_TEST(compiler, diagnosticCapStopsAtTwenty) {
   for (int i = 0; i < 20; ++i) {
     used += (size_t)snprintf(source + used, sizeof(source) - used, "b\"\";");
   }
+  used += (size_t)snprintf(source + used, sizeof(source) - used, "9223372036854775808;");
   MsTestFixture fix;
   msTestCompile(&fix, source, MS_COMPILE_DEFAULT);
   MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
   MS_ASSERT_EQ(20, (long long)msDiagListCount(&fix.diags));
+  for (int i = 0; i < 20; ++i) {
+    MS_ASSERT_EQ(307, (long long)msDiagListAt(&fix.diags, i)->code);
+  }
   msTestFixtureDestroy(&fix);
 }
 
@@ -792,6 +805,8 @@ MS_TEST(compiler, constantFoldHonorsNodeDepth) {
   MS_ASSERT_TRUE(diag != NULL);
   if (diag != NULL) {
     MS_ASSERT_EQ(311, (long long)diag->code);
+    MS_ASSERT_EQ(1, (long long)diag->line);
+    MS_ASSERT_EQ(2041, (long long)diag->column);
   }
   msTestFixtureDestroy(&fix);
 }
@@ -835,6 +850,29 @@ MS_TEST(compiler, localAndScopeLimits) {
   MS_ASSERT_TRUE(diag != NULL);
   if (diag != NULL) {
     MS_ASSERT_EQ(306, (long long)diag->code);
+  }
+  msTestFixtureDestroy(&fix);
+}
+
+MS_TEST(compiler, protoConstLimitReportsE309) {
+  char source[851982];
+  size_t used = 0;
+  for (int i = 0; i < 65537; ++i) {
+    memcpy(source + used, "lambda: nil;\n", 13);
+    used += 13;
+  }
+  source[used] = '\0';
+  MsTestFixture fix;
+  msTestCompile(&fix, source, MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+  MS_ASSERT_TRUE(fix.proto == NULL);
+  MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+  const struct MsDiag* diag = msDiagListAt(&fix.diags, 0);
+  MS_ASSERT_TRUE(diag != NULL);
+  if (diag != NULL) {
+    MS_ASSERT_EQ(309, (long long)diag->code);
+    MS_ASSERT_EQ(65537, (long long)diag->line);
+    MS_ASSERT_EQ(1, (long long)diag->column);
   }
   msTestFixtureDestroy(&fix);
 }
@@ -890,6 +928,7 @@ static const MsTestCase msTestCases[] = {
   {"Compiler.DiagnosticCapStopsAtTwenty", testcompilerdiagnosticCapStopsAtTwenty},
   {"Compiler.ConstantFoldHonorsNodeDepth", testcompilerconstantFoldHonorsNodeDepth},
   {"Compiler.LocalAndScopeLimits", testcompilerlocalAndScopeLimits},
+  {"Compiler.ProtoConstLimitReportsE309", testcompilerprotoConstLimitReportsE309},
   {"Compiler.NestedProtoOomPathsHaveNoLeaks", testcompilernestedProtoOomPathsHaveNoLeaks},
 };
 
