@@ -63,7 +63,7 @@ target_include_directories(mslang
         "${PROJECT_SOURCE_DIR}/src")
 mslang_apply_warnings(mslang)
 mslang_apply_asan(mslang)
-if(NOT MSVC)
+if(NOT WIN32)
   target_link_libraries(mslang PRIVATE m)
 endif()
 

@@ -146,12 +146,43 @@ MS_TEST(vm, slowOperatorSemantics) {
   MS_ASSERT_TRUE(result != NULL);
   MS_ASSERT_EQ(0, strcmp(msStringData((struct MsString*)result), "abcd"));
 
+  struct MsObject* empty = (struct MsObject*)msStringFromCStr(&L->heap, "");
+  result = msObjectBinaryOp(L, MS_OP_ADD, empty, empty);
+  MS_ASSERT_TRUE(result != NULL);
+  MS_ASSERT_EQ(0, (long long)msStringLen((struct MsString*)result));
+
+  const char nulLhs[] = {'a', '\0', 'b'};
+  const char nulRhs[] = {'c', '\0', 'd'};
+  const char nulExpected[] = {'a', '\0', 'b', 'c', '\0', 'd'};
+  result = msObjectBinaryOp(L, MS_OP_ADD,
+      (struct MsObject*)msStringNew(&L->heap, nulLhs, sizeof(nulLhs)),
+      (struct MsObject*)msStringNew(&L->heap, nulRhs, sizeof(nulRhs)));
+  MS_ASSERT_TRUE(result != NULL);
+  MS_ASSERT_EQ(6, (long long)msStringLen((struct MsString*)result));
+  MS_ASSERT_EQ(0, memcmp(msStringData((struct MsString*)result), nulExpected, sizeof(nulExpected)));
+
   result = msObjectBinaryOp(L, MS_OP_FLOORDIV, msNewFloat(L, -7.0), msNewFloat(L, 2.0));
   MS_ASSERT_TRUE(result != NULL);
   MS_ASSERT_TRUE(fabs(msFloatValue(result) - -4.0) < 1e-12);
   result = msObjectBinaryOp(L, MS_OP_MOD, msNewFloat(L, 7.0), msNewFloat(L, -3.0));
   MS_ASSERT_TRUE(result != NULL);
   MS_ASSERT_TRUE(fabs(msFloatValue(result) - -2.0) < 1e-12);
+
+  const MsOpCode divisionOps[] = {MS_OP_DIV, MS_OP_FLOORDIV, MS_OP_MOD};
+  for (size_t i = 0; i < sizeof(divisionOps) / sizeof(divisionOps[0]); ++i) {
+    result = msObjectBinaryOp(L, divisionOps[i], msNewFloat(L, 1.0), msNewFloat(L, 0.0));
+    MS_ASSERT_TRUE(result == NULL);
+    MS_ASSERT_EQ(MS_ERROR_RUNTIME, msStateErrorResult(L));
+    MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(L), "division by zero"));
+    msStateClearError(L);
+  }
+
+  result = msObjectBinaryOp(L, MS_OP_SHR, msNewInt(L, -2), msNewInt(L, 1));
+  MS_ASSERT_TRUE(result != NULL);
+  MS_ASSERT_EQ(-1, msIntWordValue(result));
+  result = msObjectBinaryOp(L, MS_OP_SHR, msNewInt(L, INT64_MIN), msNewInt(L, 63));
+  MS_ASSERT_TRUE(result != NULL);
+  MS_ASSERT_EQ(-1, msIntWordValue(result));
 
   result = msObjectBinaryOp(L, MS_OP_BITAND, msNewFloat(L, 1.0), msNewFloat(L, 1.0));
   MS_ASSERT_TRUE(result == NULL);

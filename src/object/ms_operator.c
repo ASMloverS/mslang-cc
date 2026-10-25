@@ -140,12 +140,17 @@ static struct MsObject* msObjectIntBinaryOp(MsState* L, MsOpCode op, struct MsOb
       return msNewInt(L, lhsValue | rhsValue);
     case MS_OP_BITXOR:
       return msNewInt(L, lhsValue ^ rhsValue);
-    case MS_OP_SHR:
+    case MS_OP_SHR: {
       if (rhsValue < 0 || rhsValue >= 64) {
         msRaiseRuntimeError(L, "invalid shift count");
         return NULL;
       }
-      return msNewInt(L, lhsValue >> (unsigned int)rhsValue);
+      unsigned int count = (unsigned int)rhsValue;
+      int64_t shifted = lhsValue >= 0
+          ? (int64_t)((uint64_t)lhsValue >> count)
+          : -1 - (int64_t)((~(uint64_t)lhsValue) >> count);
+      return msNewInt(L, shifted);
+    }
     default:
       return msObjectBinaryTypeError(L);
   }

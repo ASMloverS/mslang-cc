@@ -62,6 +62,18 @@ MS_TEST(string, emptyStringInterned) {
   msTestAssertNoLeaks();
 }
 
+MS_TEST(string, oversizedLengthReturnsNullBeforeReadingData) {
+  msMemResetStats();
+  struct MsHeap heap;
+  msTestHeapBootstrap(&heap);
+  struct MsString* s = msStringNew(&heap, "x", SIZE_MAX);
+  MS_ASSERT_TRUE(s == NULL);
+  MS_ASSERT_EQ(0, (long long)heap.internLen);
+  MS_ASSERT_EQ(0, (long long)heap.objectCount);
+  msHeapDestroy(&heap);
+  msTestAssertNoLeaks();
+}
+
 MS_TEST(string, fnv1aGoldenVectors) {
   msMemResetStats();
   struct MsHeap heap;
@@ -273,6 +285,7 @@ static const MsTestCase msTestCases[] = {
   {"string.newRoundtrip", teststringnewRoundtrip},
   {"string.fromCStrMatchesNew", teststringfromCStrMatchesNew},
   {"string.emptyStringInterned", teststringemptyStringInterned},
+  {"string.oversizedLengthReturnsNullBeforeReadingData", teststringoversizedLengthReturnsNullBeforeReadingData},
   {"string.fnv1aGoldenVectors", teststringfnv1aGoldenVectors},
   {"string.shortStringsInterned", teststringshortStringsInterned},
   {"string.longStringsNotInterned", teststringlongStringsNotInterned},

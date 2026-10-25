@@ -88,6 +88,9 @@ static struct MsString* msStringAlloc(struct MsHeap* heap, const char* data, siz
 struct MsString* msStringNew(struct MsHeap* heap, const char* data, size_t len) {
   MS_ASSERT(heap != NULL);
   MS_ASSERT(data != NULL || len == 0);
+  if (len > SIZE_MAX - sizeof(struct MsString) - 1) {
+    return NULL;
+  }
   uint32_t hash = msStringFnv1a(data, len);
   if (len > MS_STRING_SHORT_MAX_LEN) {
     return msStringAlloc(heap, data, len, hash);
