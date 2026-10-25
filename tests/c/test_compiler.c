@@ -774,16 +774,20 @@ MS_TEST(compiler, callArgumentLimit) {
 MS_TEST(compiler, diagnosticCapStopsAtTwenty) {
   char source[160];
   size_t used = 0;
-  for (int i = 0; i < 20; ++i) {
+  for (int i = 0; i < MS_DIAG_MAX_COUNT; ++i) {
     used += (size_t)snprintf(source + used, sizeof(source) - used, "b\"\";");
   }
   used += (size_t)snprintf(source + used, sizeof(source) - used, "9223372036854775808;");
   MsTestFixture fix;
   msTestCompile(&fix, source, MS_COMPILE_DEFAULT);
   MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
-  MS_ASSERT_EQ(20, (long long)msDiagListCount(&fix.diags));
-  for (int i = 0; i < 20; ++i) {
-    MS_ASSERT_EQ(307, (long long)msDiagListAt(&fix.diags, i)->code);
+  MS_ASSERT_EQ(MS_DIAG_MAX_COUNT, (long long)msDiagListCount(&fix.diags));
+  for (int i = 0; i < MS_DIAG_MAX_COUNT; ++i) {
+    const struct MsDiag* diag = msDiagListAt(&fix.diags, i);
+    MS_ASSERT_TRUE(diag != NULL);
+    if (diag != NULL) {
+      MS_ASSERT_EQ(307, (long long)diag->code);
+    }
   }
   msTestFixtureDestroy(&fix);
 }
@@ -855,11 +859,12 @@ MS_TEST(compiler, localAndScopeLimits) {
 }
 
 MS_TEST(compiler, protoConstLimitReportsE309) {
-  char source[851982];
+  static const char statement[] = "lambda: nil;\n";
+  static char source[65537 * (sizeof(statement) - 1) + 1];
   size_t used = 0;
   for (int i = 0; i < 65537; ++i) {
-    memcpy(source + used, "lambda: nil;\n", 13);
-    used += 13;
+    memcpy(source + used, statement, sizeof(statement) - 1);
+    used += sizeof(statement) - 1;
   }
   source[used] = '\0';
   MsTestFixture fix;
