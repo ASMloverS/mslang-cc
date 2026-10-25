@@ -53,7 +53,8 @@ add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/vm/ms_function.c
     src/vm/ms_opcode.c
     src/vm/ms_proto.c
-    src/vm/ms_state.c)
+    src/vm/ms_state.c
+    src/vm/ms_vm.c)
 set_target_properties(mslang PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(mslang
     PUBLIC

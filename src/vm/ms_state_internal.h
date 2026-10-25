@@ -5,6 +5,7 @@
 
 #include "object/ms_object.h"
 #include "object/ms_string.h"
+#include "vm/ms_vm.h"
 
 struct MsGlobalEntry {
   struct MsString* name;
@@ -13,6 +14,7 @@ struct MsGlobalEntry {
 
 struct MsState {
   struct MsHeap heap;
+  struct MsCoroutine main;
   struct MsGlobalEntry* globals;
   int globalsLen;
   int globalsCap;

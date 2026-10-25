@@ -68,6 +68,7 @@ MsState* msNewState(void) {
     msFree(L);
     return NULL;
   }
+  msCoroutineInit(&L->main);
   return L;
 }
 
@@ -75,6 +76,7 @@ void msCloseState(MsState* L) {
   if (L == NULL) {
     return;
   }
+  msCoroutineDestroy(&L->main);
   msFree(L->globals);
   msHeapDestroy(&L->heap);
   msFree(L);
