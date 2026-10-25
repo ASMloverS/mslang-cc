@@ -42,6 +42,7 @@ add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/ms_version.c
     src/compiler/ms_compiler.c
     src/object/ms_object.c
+    src/object/ms_operator.c
     src/object/ms_string.c
     src/core/ms_common.c
     src/core/ms_memory.c
@@ -49,6 +50,7 @@ add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/lexer/ms_lexer.c
     src/parser/ms_ast.c
     src/parser/ms_parser.c
+    src/vm/ms_function.c
     src/vm/ms_opcode.c
     src/vm/ms_proto.c
     src/vm/ms_state.c)
@@ -61,6 +63,9 @@ target_include_directories(mslang
         "${PROJECT_SOURCE_DIR}/src")
 mslang_apply_warnings(mslang)
 mslang_apply_asan(mslang)
+if(NOT MSVC)
+  target_link_libraries(mslang PRIVATE m)
+endif()
 
 add_executable(mslang-cli src/cli/main.c)
 target_link_libraries(mslang-cli PRIVATE mslang)
