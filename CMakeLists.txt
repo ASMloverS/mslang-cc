@@ -50,7 +50,8 @@ add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/parser/ms_ast.c
     src/parser/ms_parser.c
     src/vm/ms_opcode.c
-    src/vm/ms_proto.c)
+    src/vm/ms_proto.c
+    src/vm/ms_state.c)
 set_target_properties(mslang PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(mslang
     PUBLIC
@@ -103,4 +104,5 @@ if(MSLANG_BUILD_TESTS)
   mslang_add_c_test(test_opcode)
   mslang_add_c_test(test_proto)
   mslang_add_c_test(test_compiler)
+  mslang_add_c_test(test_vm)
 endif()
