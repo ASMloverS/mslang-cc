@@ -17,6 +17,7 @@ static MsResult msVmRuntimeError(MsState* L, const char* message) {
 
 static MsResult msVmOom(MsState* L) {
   msRaiseRuntimeError(L, "out of memory");
+  L->errorResult = MS_ERROR_OOM;
   return MS_ERROR_OOM;
 }
 
@@ -116,6 +117,20 @@ static MsResult msVmPushFrameAt(MsState* L, struct MsCoroutine* co, struct MsPro
     return msVmRuntimeError(L, "invalid in-place arguments");
   }
 
+  int argvIndex = -1;
+  if (!argsInPlace && argc > 0 && co->stack != NULL) {
+    uintptr_t stackAddress = (uintptr_t)(void*)co->stack;
+    uintptr_t argvAddress = (uintptr_t)(void*)argv;
+    size_t stackBytes = (size_t)co->stackTop * sizeof(*co->stack);
+    if (argvAddress >= stackAddress && argvAddress - stackAddress < stackBytes) {
+      size_t byteOffset = argvAddress - stackAddress;
+      size_t index = byteOffset / sizeof(*co->stack);
+      if (byteOffset % sizeof(*co->stack) == 0 && (int64_t)index + argc <= co->stackTop) {
+        argvIndex = (int)index;
+      }
+    }
+  }
+
   MsResult result = msVmEnsureStack(L, co, (int)windowEnd);
   if (result != MS_OK) {
     return result;
@@ -128,6 +143,9 @@ static MsResult msVmPushFrameAt(MsState* L, struct MsCoroutine* co, struct MsPro
   if (!argsInPlace) {
     co->stack[base - 1] = msNewNil(L);
     if (argc > 0) {
+      if (argvIndex >= 0) {
+        argv = co->stack + argvIndex;
+      }
       memcpy(co->stack + base, argv, (size_t)argc * sizeof(*argv));
     }
   }

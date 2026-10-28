@@ -282,13 +282,23 @@ MS_TEST(vm, pushFrameBuildsWindowAndGrows) {
   MS_ASSERT_TRUE(fixture.co.stack[4] == msNewNil(fixture.L));
   MS_ASSERT_EQ(5, fixture.co.stackTop);
 
-  for (int i = 0; i < 9; ++i) {
+  for (int i = 0; i < 11; ++i) {
     fixture.status = msVmPushFrame(fixture.L, &fixture.co, &fixture.builder.proto, 2, args);
     MS_ASSERT_EQ(MS_OK, fixture.status);
   }
-  MS_ASSERT_EQ(10, fixture.co.frameCount);
-  MS_ASSERT_TRUE(fixture.co.framesCap >= 10);
-  MS_ASSERT_EQ(20, msIntWordValue(fixture.co.stack[2]));
+  MS_ASSERT_EQ(12, fixture.co.frameCount);
+  MS_ASSERT_TRUE(fixture.co.framesCap >= 12);
+  MS_ASSERT_TRUE(fixture.co.stackCap >= 130);
+  for (int i = 0; i < fixture.co.frameCount; ++i) {
+    int base = i * 5 + 1;
+    MS_ASSERT_EQ(base, fixture.co.frames[i].baseIndex);
+    MS_ASSERT_TRUE(fixture.co.stack[base - 1] == msNewNil(fixture.L));
+    MS_ASSERT_EQ(10, msIntWordValue(fixture.co.stack[base]));
+    MS_ASSERT_EQ(20, msIntWordValue(fixture.co.stack[base + 1]));
+    MS_ASSERT_TRUE(fixture.co.stack[base + 2] == msNewNil(fixture.L));
+    MS_ASSERT_TRUE(fixture.co.stack[base + 3] == msNewNil(fixture.L));
+  }
+  MS_ASSERT_EQ(60, fixture.co.stackTop);
   msVmFixtureDestroy(&fixture);
 }
 
@@ -319,13 +329,96 @@ MS_TEST(vm, pushFrameValidatesArgumentsAndLimits) {
   msVmFixtureDestroy(&fixture);
 }
 
+MS_TEST(vm, pushFrameRelocatesAliasedArguments) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  fixture.builder.proto.paramCount = 2;
+  fixture.builder.proto.localCount = 60;
+  fixture.builder.proto.stackSize = 3;
+  struct MsObject* args[] = {
+    msVmFixtureTestInt(&fixture, 10),
+    msVmFixtureTestInt(&fixture, 20)
+  };
+  fixture.status = msVmPushFrame(fixture.L, &fixture.co, &fixture.builder.proto, 2, args);
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_EQ(64, fixture.co.stackCap);
+  struct MsObject** oldStack = fixture.co.stack;
+  struct MsCallFrame* oldFrames = fixture.co.frames;
+  struct MsCallFrame* newFrames = msAlloc((size_t)fixture.co.framesCap * sizeof(*newFrames));
+  MS_ASSERT_TRUE(newFrames != NULL);
+  memcpy(newFrames, oldFrames, (size_t)fixture.co.framesCap * sizeof(*newFrames));
+  fixture.co.frames = newFrames;
+  void* guard = msAlloc(512);
+  MS_ASSERT_TRUE(guard != NULL);
+
+  fixture.builder.proto.localCount = 4;
+  fixture.builder.proto.stackSize = 70;
+  fixture.co.frameCount = fixture.co.framesCap;
+  fixture.status = msVmPushFrame(fixture.L, &fixture.co, &fixture.builder.proto,
+      2, &fixture.co.stack[1]);
+  msFree(guard);
+  msFree(oldFrames);
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(oldStack != fixture.co.stack);
+  MS_ASSERT_EQ(10, msIntWordValue(fixture.co.stack[1]));
+  MS_ASSERT_EQ(20, msIntWordValue(fixture.co.stack[2]));
+  MS_ASSERT_TRUE(fixture.co.stack[60] == msNewNil(fixture.L));
+  MS_ASSERT_EQ(62, fixture.co.frames[fixture.co.frameCount - 1].baseIndex);
+  MS_ASSERT_EQ(10, msIntWordValue(fixture.co.stack[62]));
+  MS_ASSERT_EQ(20, msIntWordValue(fixture.co.stack[63]));
+  MS_ASSERT_TRUE(fixture.co.stack[64] == msNewNil(fixture.L));
+  MS_ASSERT_TRUE(fixture.co.stack[65] == msNewNil(fixture.L));
+  MS_ASSERT_EQ(66, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, pushFrameOomMatchesErrorState) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  fixture.builder.proto.localCount = 0;
+  fixture.builder.proto.stackSize = 0;
+  msMemSetFailAfter(0);
+  fixture.status = msVmPushFrame(fixture.L, &fixture.co, &fixture.builder.proto, 0, NULL);
+  MS_ASSERT_EQ(MS_ERROR_OOM, fixture.status);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(fixture.L));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, runValidatesStopDepthAndRecoversAfterUnderflow) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  fixture.status = msVmRun(fixture.L, &fixture.co, 0);
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  fixture.status = msVmRun(fixture.L, &fixture.co, -1);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  fixture.status = msVmRun(fixture.L, &fixture.co, 1);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+
+  msStateClearError(fixture.L);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "test.ms:0: evaluation stack underflow"));
+  msVmFixtureDestroy(&fixture);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Vm.StateLifecycleGlobalsAndErrors", testvmstateLifecycleGlobalsAndErrors},
   {"Vm.FunctionObjects", testvmfunctionObjects},
   {"Vm.SlowOperatorSemantics", testvmslowOperatorSemantics},
   {"Vm.CoroutineLifecycleAndNilReturn", testvmcoroutineLifecycleAndNilReturn},
   {"Vm.PushFrameBuildsWindowAndGrows", testvmpushFrameBuildsWindowAndGrows},
-  {"Vm.PushFrameValidatesArgumentsAndLimits", testvmpushFrameValidatesArgumentsAndLimits}
+  {"Vm.PushFrameValidatesArgumentsAndLimits", testvmpushFrameValidatesArgumentsAndLimits},
+  {"Vm.PushFrameRelocatesAliasedArguments", testvmpushFrameRelocatesAliasedArguments},
+  {"Vm.PushFrameOomMatchesErrorState", testvmpushFrameOomMatchesErrorState},
+  {"Vm.RunValidatesStopDepthAndRecoversAfterUnderflow", testvmrunValidatesStopDepthAndRecoversAfterUnderflow}
 };
 
 MS_TEST_MAIN(msTestCases)
