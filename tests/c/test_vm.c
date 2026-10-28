@@ -875,6 +875,269 @@ MS_TEST(vm, unaryArithmeticAndTruthiness) {
   msVmFixtureDestroy(&fixture);
 }
 
+struct MsVmComparisonCase {
+  MsOpCode op;
+  int64_t lhsInt;
+  double lhsFloat;
+  bool lhsIsInt;
+  int64_t rhsInt;
+  double rhsFloat;
+  bool rhsIsInt;
+  bool expected;
+};
+
+static struct MsObject* msVmFixtureComparisonValue(struct MsVmFixture* fixture,
+    int64_t intValue, double floatValue, bool isInt) {
+  return isInt ? msVmFixtureTestInt(fixture, intValue) : msNewFloat(fixture->L, floatValue);
+}
+
+static void msVmFixtureAssertBool(struct MsVmFixture* fixture, bool expected) {
+  MS_ASSERT_EQ(MS_OK, fixture->status);
+  MS_ASSERT_TRUE(fixture->result != NULL);
+  if (fixture->result != NULL) {
+    MS_ASSERT_EQ(MS_TYPE_BOOL, msObjectTag(fixture->result));
+    MS_ASSERT_TRUE(msBoolValue(fixture->result) == expected);
+  }
+  MS_ASSERT_EQ(0, fixture->co.frameCount);
+  MS_ASSERT_EQ(1, fixture->co.stackTop);
+}
+
+static void msVmTestComparisonCase(const struct MsVmComparisonCase* testCase) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  msVmFixtureRunBinary(&fixture, testCase->op,
+      msVmFixtureComparisonValue(&fixture, testCase->lhsInt, testCase->lhsFloat, testCase->lhsIsInt),
+      msVmFixtureComparisonValue(&fixture, testCase->rhsInt, testCase->rhsFloat, testCase->rhsIsInt));
+  msVmFixtureAssertBool(&fixture, testCase->expected);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, numericComparisonsAreExact) {
+  const MsOpCode ops[] = {MS_OP_EQ, MS_OP_NE, MS_OP_LT, MS_OP_LE, MS_OP_GT, MS_OP_GE};
+  const bool equalExpected[] = {true, false, false, true, false, true};
+  const bool lessExpected[] = {false, true, true, true, false, false};
+  for (int kind = 0; kind < 4; ++kind) {
+    for (int relation = 0; relation < 2; ++relation) {
+      for (size_t opIndex = 0; opIndex < sizeof(ops) / sizeof(ops[0]); ++opIndex) {
+        double rhs = relation == 0 ? 2.0 : 3.0;
+        struct MsVmComparisonCase testCase = {
+          .op = ops[opIndex],
+          .lhsInt = 2,
+          .lhsFloat = 2.0,
+          .lhsIsInt = kind == 0 || kind == 2,
+          .rhsInt = (int64_t)rhs,
+          .rhsFloat = rhs,
+          .rhsIsInt = kind == 0 || kind == 3,
+          .expected = relation == 0 ? equalExpected[opIndex] : lessExpected[opIndex]
+        };
+        msVmTestComparisonCase(&testCase);
+      }
+    }
+  }
+
+  const int64_t aboveDoubleExact = INT64_C(9007199254740993);
+  const double nearestDouble = 9007199254740992.0;
+  const struct MsVmComparisonCase cases[] = {
+    {MS_OP_EQ, aboveDoubleExact, 0.0, true, 0, nearestDouble, false, false},
+    {MS_OP_NE, aboveDoubleExact, 0.0, true, 0, nearestDouble, false, true},
+    {MS_OP_LT, aboveDoubleExact, 0.0, true, 0, nearestDouble, false, false},
+    {MS_OP_LE, aboveDoubleExact, 0.0, true, 0, nearestDouble, false, false},
+    {MS_OP_GT, aboveDoubleExact, 0.0, true, 0, nearestDouble, false, true},
+    {MS_OP_GE, aboveDoubleExact, 0.0, true, 0, nearestDouble, false, true},
+    {MS_OP_EQ, 0, nearestDouble, false, aboveDoubleExact, 0.0, true, false},
+    {MS_OP_NE, 0, nearestDouble, false, aboveDoubleExact, 0.0, true, true},
+    {MS_OP_LT, 0, nearestDouble, false, aboveDoubleExact, 0.0, true, true},
+    {MS_OP_LE, 0, nearestDouble, false, aboveDoubleExact, 0.0, true, true},
+    {MS_OP_GT, 0, nearestDouble, false, aboveDoubleExact, 0.0, true, false},
+    {MS_OP_GE, 0, nearestDouble, false, aboveDoubleExact, 0.0, true, false},
+    {MS_OP_LT, INT64_C(9007199254740992), 0.0, true, 0, nearestDouble, false, false},
+    {MS_OP_LE, INT64_C(9007199254740992), 0.0, true, 0, nearestDouble, false, true},
+    {MS_OP_LT, -2, 0.0, true, 0, -1.5, false, true},
+    {MS_OP_GT, -1, 0.0, true, 0, -1.5, false, true},
+    {MS_OP_LT, 1, 0.0, true, 0, 1.5, false, true},
+    {MS_OP_GT, 1, 0.0, true, 0, 0.5, false, true},
+    {MS_OP_LT, 0, -1.5, false, -2, 0.0, true, false},
+    {MS_OP_GT, 0, -1.5, false, -1, 0.0, true, false},
+    {MS_OP_LT, 0, 1.5, false, 1, 0.0, true, false},
+    {MS_OP_GT, 0, 0.5, false, 1, 0.0, true, false}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    msVmTestComparisonCase(&cases[i]);
+  }
+}
+
+MS_TEST(vm, nanZeroAndBoundaryComparisons) {
+  const struct MsVmComparisonCase cases[] = {
+    {MS_OP_EQ, 0, NAN, false, 0, NAN, false, false},
+    {MS_OP_NE, 0, NAN, false, 0, NAN, false, true},
+    {MS_OP_LT, 0, NAN, false, 0, 0.0, false, false},
+    {MS_OP_LE, 0, 0.0, false, 0, NAN, false, false},
+    {MS_OP_GT, 0, NAN, false, 0, 0.0, false, false},
+    {MS_OP_GE, 0, 0.0, false, 0, NAN, false, false},
+    {MS_OP_EQ, 1, 0.0, true, 0, NAN, false, false},
+    {MS_OP_NE, 0, NAN, false, 1, 0.0, true, true},
+    {MS_OP_LT, 1, 0.0, true, 0, NAN, false, false},
+    {MS_OP_EQ, 0, -0.0, false, 0, 0.0, false, true},
+    {MS_OP_NE, 0, -0.0, false, 0, 0.0, false, false},
+    {MS_OP_LE, 0, -0.0, false, 0, 0.0, false, true},
+    {MS_OP_GE, 0, -0.0, false, 0, 0.0, false, true},
+    {MS_OP_LT, INT64_MAX, 0.0, true, 0, INFINITY, false, true},
+    {MS_OP_GT, INT64_MIN, 0.0, true, 0, -INFINITY, false, true},
+    {MS_OP_GT, 0, INFINITY, false, INT64_MAX, 0.0, true, true},
+    {MS_OP_LT, 0, -INFINITY, false, INT64_MIN, 0.0, true, true},
+    {MS_OP_LT, INT64_MAX, 0.0, true, 0, 9223372036854775808.0, false, true},
+    {MS_OP_GT, 0, 9223372036854775808.0, false, INT64_MAX, 0.0, true, true},
+    {MS_OP_EQ, INT64_MIN, 0.0, true, 0, -9223372036854775808.0, false, true},
+    {MS_OP_LE, INT64_MIN, 0.0, true, 0, -9223372036854775808.0, false, true},
+    {MS_OP_GE, INT64_MIN, 0.0, true, 0, -9223372036854775808.0, false, true},
+    {MS_OP_GT, INT64_MIN, 0.0, true, 0, -9223372036854777856.0, false, true},
+    {MS_OP_LT, 0, -9223372036854777856.0, false, INT64_MIN, 0.0, true, true}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    msVmTestComparisonCase(&cases[i]);
+  }
+}
+
+static void msVmFixtureRunBinaryArgs(struct MsVmFixture* fixture, MsOpCode op,
+    struct MsObject* lhs, struct MsObject* rhs) {
+  fixture->builder.proto.paramCount = 2;
+  fixture->builder.proto.localCount = 2;
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_LOCAL, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_LOCAL, 1, 0));
+  msProtoSetLine(&fixture->builder, 17);
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture->builder, op, 0, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture->builder, MS_OP_RETURN, 0, 0));
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&fixture->builder, &fixture->proto));
+  struct MsObject* args[] = {lhs, rhs};
+  fixture->status = msCallProto(fixture->L, &fixture->co, fixture->proto, 2, args, &fixture->result);
+}
+
+MS_TEST(vm, stringComparisonsAndIdentity) {
+  const MsOpCode ops[] = {MS_OP_LT, MS_OP_LE, MS_OP_GT, MS_OP_GE, MS_OP_NE, MS_OP_EQ};
+  const bool expected[] = {true, true, false, false, true, false};
+  for (size_t i = 0; i < sizeof(ops) / sizeof(ops[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunBinary(&fixture, ops[i],
+        (struct MsObject*)msStringFromCStr(&fixture.L->heap, "abc"),
+        (struct MsObject*)msStringFromCStr(&fixture.L->heap, "abd"));
+    msVmFixtureAssertBool(&fixture, expected[i]);
+    msVmFixtureDestroy(&fixture);
+  }
+
+  const char* longString = "a-long-string-with-shared-contents-but-distinct-object-identities";
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  struct MsObject* lhs = (struct MsObject*)msStringFromCStr(&fixture.L->heap, longString);
+  struct MsObject* rhs = (struct MsObject*)msStringFromCStr(&fixture.L->heap, longString);
+  MS_ASSERT_TRUE(lhs != rhs);
+  msVmFixtureRunBinaryArgs(&fixture, MS_OP_EQ, lhs, rhs);
+  msVmFixtureAssertBool(&fixture, true);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  lhs = (struct MsObject*)msStringFromCStr(&fixture.L->heap, longString);
+  rhs = (struct MsObject*)msStringFromCStr(&fixture.L->heap, longString);
+  MS_ASSERT_TRUE(lhs != rhs);
+  msVmFixtureRunBinaryArgs(&fixture, MS_OP_IS, lhs, rhs);
+  msVmFixtureAssertBool(&fixture, false);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  msVmFixtureRunBinary(&fixture, MS_OP_IS, msNewNil(fixture.L), msNewNil(fixture.L));
+  msVmFixtureAssertBool(&fixture, true);
+  msVmFixtureDestroy(&fixture);
+}
+
+static void msVmFixtureRunChain(struct MsVmFixture* fixture,
+    int64_t lhs, int64_t middle, int64_t rhs) {
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture->builder, msVmFixtureTestInt(fixture, lhs)));
+  MS_ASSERT_EQ(1, msProtoAddConst(&fixture->builder, msVmFixtureTestInt(fixture, middle)));
+  MS_ASSERT_EQ(2, msProtoAddConst(&fixture->builder, msVmFixtureTestInt(fixture, rhs)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture->builder, MS_OP_CMP_CHAIN, MS_OP_LT, 2));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, 2));
+  MS_ASSERT_EQ(4, msProtoEmitABC(&fixture->builder, MS_OP_LT, 0, 0));
+  MS_ASSERT_EQ(5, msProtoEmitABC(&fixture->builder, MS_OP_RETURN, 0, 0));
+  MS_ASSERT_EQ(6, fixture->builder.proto.codeLen);
+  MS_ASSERT_TRUE(msOpDecodeOp(fixture->builder.proto.code[5]) == MS_OP_RETURN);
+  msVmFixtureRun(fixture);
+}
+
+MS_TEST(vm, comparisonChainsJumpToSharedReturn) {
+  const int64_t values[][3] = {{1, 2, 3}, {1, 3, 2}, {2, 1, 0}};
+  const bool expected[] = {true, false, false};
+  for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunChain(&fixture, values[i][0], values[i][1], values[i][2]);
+    msVmFixtureAssertBool(&fixture, expected[i]);
+    msVmFixtureDestroy(&fixture);
+  }
+}
+
+static void msVmFixtureRunChainDivisionTail(struct MsVmFixture* fixture, int64_t lhs, int64_t middle) {
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture->builder, msVmFixtureTestInt(fixture, lhs)));
+  MS_ASSERT_EQ(1, msProtoAddConst(&fixture->builder, msVmFixtureTestInt(fixture, middle)));
+  int oneIndex = msProtoAddConst(&fixture->builder, msVmFixtureTestInt(fixture, 1));
+  int zeroIndex = msProtoAddConst(&fixture->builder, msVmFixtureTestInt(fixture, 0));
+  MS_ASSERT_TRUE(oneIndex >= 0);
+  MS_ASSERT_TRUE(zeroIndex >= 0);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture->builder, MS_OP_CMP_CHAIN, MS_OP_LT, 4));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, (uint16_t)oneIndex));
+  MS_ASSERT_EQ(4, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, (uint16_t)zeroIndex));
+  msProtoSetLine(&fixture->builder, 17);
+  MS_ASSERT_EQ(5, msProtoEmitABC(&fixture->builder, MS_OP_DIV, 0, 0));
+  MS_ASSERT_EQ(6, msProtoEmitABC(&fixture->builder, MS_OP_LT, 0, 0));
+  MS_ASSERT_EQ(7, msProtoEmitABC(&fixture->builder, MS_OP_RETURN, 0, 0));
+  MS_ASSERT_EQ(8, fixture->builder.proto.codeLen);
+  MS_ASSERT_TRUE(msOpDecodeOp(fixture->builder.proto.code[7]) == MS_OP_RETURN);
+  msVmFixtureRun(fixture);
+}
+
+MS_TEST(vm, comparisonChainShortCircuitsErrorTail) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  msVmFixtureRunChainDivisionTail(&fixture, 2, 1);
+  msVmFixtureAssertBool(&fixture, false);
+  MS_ASSERT_TRUE(msStateErrorMessage(fixture.L) == NULL);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  msVmFixtureRunChainDivisionTail(&fixture, 1, 2);
+  msVmFixtureAssertError(&fixture, "division by zero");
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, invalidComparisonChainOpcodeRestoresCoroutine) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  msProtoSetLine(&fixture.builder, 23);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_CMP_CHAIN, MS_OP_ADD, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "invalid comparison chain opcode") != NULL);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "test.ms:23") != NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+
+  msStateClearError(fixture.L);
+  struct MsProto* recovery = msVmTestRawProto();
+  MS_ASSERT_TRUE(recovery != NULL);
+  fixture.status = msCallProto(fixture.L, &fixture.co, recovery, 0, NULL, &fixture.result);
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == msNewNil(fixture.L));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(1, fixture.co.stackTop);
+  msProtoFree(recovery);
+  msVmFixtureDestroy(&fixture);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Vm.StateLifecycleGlobalsAndErrors", testvmstateLifecycleGlobalsAndErrors},
   {"Vm.FunctionObjects", testvmfunctionObjects},
@@ -894,7 +1157,13 @@ static const MsTestCase msTestCases[] = {
   {"Vm.IntegerArithmeticAndShiftBoundaries", testvmintegerArithmeticAndShiftBoundaries},
   {"Vm.NumericArithmeticPromotesToFloat", testvmnumericArithmeticPromotesToFloat},
   {"Vm.ArithmeticErrorsRestoreCoroutine", testvmarithmeticErrorsRestoreCoroutine},
-  {"Vm.UnaryArithmeticAndTruthiness", testvmunaryArithmeticAndTruthiness}
+  {"Vm.UnaryArithmeticAndTruthiness", testvmunaryArithmeticAndTruthiness},
+  {"Vm.NumericComparisonsAreExact", testvmnumericComparisonsAreExact},
+  {"Vm.NanZeroAndBoundaryComparisons", testvmnanZeroAndBoundaryComparisons},
+  {"Vm.StringComparisonsAndIdentity", testvmstringComparisonsAndIdentity},
+  {"Vm.ComparisonChainsJumpToSharedReturn", testvmcomparisonChainsJumpToSharedReturn},
+  {"Vm.ComparisonChainShortCircuitsErrorTail", testvmcomparisonChainShortCircuitsErrorTail},
+  {"Vm.InvalidComparisonChainOpcodeRestoresCoroutine", testvminvalidComparisonChainOpcodeRestoresCoroutine}
 };
 
 MS_TEST_MAIN(msTestCases)
