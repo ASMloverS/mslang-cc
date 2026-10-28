@@ -10,6 +10,7 @@
 #include "core/ms_memory.h"
 #include "object/ms_operator.h"
 #include "object/ms_string.h"
+#include "vm/ms_function.h"
 #include "vm/ms_state_internal.h"
 
 static MsResult msVmRuntimeError(MsState* L, const char* message) {
@@ -36,12 +37,51 @@ static MsResult msVmErrorAt(MsState* L, const struct MsCallFrame* frame, const c
   return msStateErrorResult(L) == MS_ERROR_OOM ? MS_ERROR_OOM : MS_ERROR_RUNTIME;
 }
 
-static MsResult msVmPropagatedErrorAt(MsState* L, const struct MsCallFrame* frame) {
+static bool msVmMessageHasLocation(const char* message, const char* sourceFile, uint32_t line) {
+  size_t sourceLen = strlen(sourceFile);
+  if (strncmp(message, sourceFile, sourceLen) != 0 || message[sourceLen] != ':') {
+    return false;
+  }
+  const char* cursor = message + sourceLen + 1;
+  if (*cursor < '0' || *cursor > '9') {
+    return false;
+  }
+  uint32_t parsedLine = 0;
+  while (*cursor >= '0' && *cursor <= '9') {
+    uint32_t digit = (uint32_t)(*cursor - '0');
+    if (parsedLine > (UINT32_MAX - digit) / 10) {
+      return false;
+    }
+    parsedLine = parsedLine * 10 + digit;
+    ++cursor;
+  }
+  return parsedLine == line && cursor[0] == ':' && cursor[1] == ' ';
+}
+
+static MsResult msVmWrapErrorAt(MsState* L, const struct MsCallFrame* frame) {
   if (msStateErrorResult(L) == MS_ERROR_OOM) {
     return MS_ERROR_OOM;
   }
   const char* message = msStateErrorMessage(L);
-  return msVmErrorAt(L, frame, message != NULL ? message : "operation failed");
+  if (message == NULL) {
+    message = "operation failed";
+  }
+  const char* sourceFile = "<unknown>";
+  if (frame->proto != NULL && frame->proto->sourceFile != NULL) {
+    sourceFile = msStringData(frame->proto->sourceFile);
+  }
+  uint32_t line = 0;
+  if (frame->proto != NULL) {
+    line = msProtoLineAt(frame->proto, frame->pc - 1);
+  }
+  if (msVmMessageHasLocation(message, sourceFile, line)) {
+    return MS_ERROR_RUNTIME;
+  }
+  return msVmErrorAt(L, frame, message);
+}
+
+static MsResult msVmPropagatedErrorAt(MsState* L, const struct MsCallFrame* frame) {
+  return msVmWrapErrorAt(L, frame);
 }
 
 static struct MsObject* msVmConstAt(MsState* L, const struct MsCallFrame* frame,
@@ -130,8 +170,9 @@ static MsResult msVmEnsureFrames(MsState* L, struct MsCoroutine* co, int needed)
 }
 
 static MsResult msVmPushFrameAt(MsState* L, struct MsCoroutine* co, struct MsProto* proto,
-    int argc, struct MsObject** argv, bool argsInPlace, int base, struct MsUpvalue** upvalues) {
-  if (proto == NULL || argc < 0 || (argc > 0 && argv == NULL)) {
+    int argc, struct MsObject** argv, bool argsInPlace, int base, struct MsUpvalue** upvalues,
+    int upvalueCount) {
+  if (proto == NULL || argc < 0 || (argc > 0 && argv == NULL && !argsInPlace)) {
     return msVmRuntimeError(L, "invalid frame arguments");
   }
   if (proto->paramCount < 0 || argc != proto->paramCount) {
@@ -198,7 +239,7 @@ static MsResult msVmPushFrameAt(MsState* L, struct MsCoroutine* co, struct MsPro
   frame->pc = 0;
   frame->baseIndex = base;
   frame->upvalues = upvalues;
-  frame->upvalueCount = 0;
+  frame->upvalueCount = upvalueCount;
   return MS_OK;
 }
 
@@ -217,7 +258,7 @@ MsResult msVmPushFrame(MsState* L, struct MsCoroutine* co, struct MsProto* proto
   if (co->stackTop < 0 || co->stackTop == INT_MAX) {
     return msVmRuntimeError(L, "stack overflow");
   }
-  return msVmPushFrameAt(L, co, proto, argc, argv, false, co->stackTop + 1, NULL);
+  return msVmPushFrameAt(L, co, proto, argc, argv, false, co->stackTop + 1, NULL, 0);
 }
 
 static bool msVmCanPush(const struct MsCoroutine* co, const struct MsCallFrame* frame, int windowEnd) {
@@ -753,6 +794,44 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
         }
         break;
       }
+      case MS_OP_CALL: {
+        // safepoint: scheduler preemption and GC handshake.
+        int argc = msOpDecodeA(instr);
+        int base = co->stackTop - argc;
+        if (base < 1) {
+          result = msVmErrorAt(L, frame, "invalid call stack");
+          break;
+        }
+        struct MsObject* callable = co->stack[base - 1];
+        if (msObjectTag(callable) == MS_TYPE_FUNCTION) {
+          struct MsFunction* function = (struct MsFunction*)callable;
+          struct MsProto* proto = function->proto;
+          if (proto->isAsync) {
+            result = msVmErrorAt(L, frame, "async call requires the scheduler");
+            break;
+          }
+          result = msVmPushFrameAt(L, co, proto, argc, NULL, true, base,
+              function->upvalues, function->upvalueCount);
+          if (result == MS_OK) {
+            frame = &co->frames[co->frameCount - 1];
+          }
+          break;
+        }
+        if (msObjectTag(callable) == MS_TYPE_C_FUNCTION) {
+          MsCFunction function = msAsCFunction(callable);
+          struct MsObject* value = function(L, argc, &co->stack[base]);
+          frame = &co->frames[co->frameCount - 1];
+          if (value == NULL) {
+            result = msVmPropagatedErrorAt(L, frame);
+            break;
+          }
+          co->stackTop = base - 1;
+          co->stack[co->stackTop++] = value;
+          break;
+        }
+        result = msVmErrorAt(L, frame, "object is not callable");
+        break;
+      }
       case MS_OP_RETURN: {
         if (!msVmCanPop(co, frame)) {
           result = msVmErrorAt(L, frame, "evaluation stack underflow");
@@ -774,6 +853,9 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
         break;
     }
     if (result != MS_OK) {
+      if (result == MS_ERROR_RUNTIME) {
+        result = msVmWrapErrorAt(L, frame);
+      }
       co->frameCount = stopAt;
       co->stackTop = entryTop;
       return result;

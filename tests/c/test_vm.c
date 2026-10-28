@@ -1138,6 +1138,288 @@ MS_TEST(vm, invalidComparisonChainOpcodeRestoresCoroutine) {
   msVmFixtureDestroy(&fixture);
 }
 
+static void msVmTestCallProtoBuilderInit(MsState* L, struct MsProtoBuilder* builder, int stackSize) {
+  msProtoBuilderInit(builder);
+  builder->proto.name = msStringFromCStr(&L->heap, "<call-test>");
+  builder->proto.sourceFile = msStringFromCStr(&L->heap, "test.ms");
+  builder->proto.stackSize = stackSize;
+}
+
+MS_TEST(vm, scriptFunctionCallReturns42) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  struct MsProtoBuilder addBuilder;
+  msVmTestCallProtoBuilderInit(fixture.L, &addBuilder, 2);
+  addBuilder.proto.paramCount = 2;
+  addBuilder.proto.localCount = 2;
+  MS_ASSERT_EQ(0, msProtoEmitABC(&addBuilder, MS_OP_LOAD_LOCAL, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&addBuilder, MS_OP_LOAD_LOCAL, 1, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&addBuilder, MS_OP_ADD, 0, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&addBuilder, MS_OP_RETURN, 0, 0));
+  struct MsProto* addProto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&addBuilder, &addProto));
+  struct MsObject* addFunction = msNewFunction(fixture.L, addProto);
+  MS_ASSERT_TRUE(addFunction != NULL);
+
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, addFunction));
+  MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 20)));
+  MS_ASSERT_EQ(2, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 22)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 2));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 2, 0));
+  MS_ASSERT_EQ(4, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(fixture.result != NULL);
+  if (fixture.result != NULL) {
+    MS_ASSERT_EQ(42, msIntWordValue(fixture.result));
+  }
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(1, fixture.co.stackTop);
+  msProtoFree(addProto);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, nestedScriptCallsGrowFrameArray) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  enum { levelCount = 9 };
+  struct MsProtoBuilder builders[levelCount];
+  struct MsProto* protos[levelCount];
+  for (int i = 0; i < levelCount; ++i) {
+    msVmTestCallProtoBuilderInit(fixture.L, &builders[i], 2);
+    protos[i] = NULL;
+  }
+
+  struct MsObject* nextFunction = NULL;
+  for (int i = levelCount - 1; i >= 0; --i) {
+    if (i == levelCount - 1) {
+      MS_ASSERT_EQ(0, msProtoAddConst(&builders[i], msVmFixtureTestInt(&fixture, 42)));
+      MS_ASSERT_EQ(0, msProtoEmitABC(&builders[i], MS_OP_LOAD_CONST, 0, 0));
+    } else {
+      MS_ASSERT_EQ(0, msProtoAddConst(&builders[i], nextFunction));
+      MS_ASSERT_EQ(0, msProtoEmitABC(&builders[i], MS_OP_LOAD_CONST, 0, 0));
+      MS_ASSERT_EQ(1, msProtoEmitABC(&builders[i], MS_OP_CALL, 0, 0));
+    }
+    int returnPc = i == levelCount - 1 ? 1 : 2;
+    MS_ASSERT_EQ(returnPc, msProtoEmitABC(&builders[i], MS_OP_RETURN, 0, 0));
+    MS_ASSERT_EQ(MS_OK, msProtoBuild(&builders[i], &protos[i]));
+    nextFunction = msNewFunction(fixture.L, protos[i]);
+    MS_ASSERT_TRUE(nextFunction != NULL);
+  }
+
+  fixture.builder.proto.stackSize = 2;
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, nextFunction));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(fixture.result != NULL);
+  if (fixture.result != NULL) {
+    MS_ASSERT_EQ(42, msIntWordValue(fixture.result));
+  }
+  MS_ASSERT_TRUE(fixture.co.framesCap >= levelCount + 1);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(1, fixture.co.stackTop);
+  for (int i = 0; i < levelCount; ++i) {
+    msProtoFree(protos[i]);
+  }
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, cFunctionCallReturnsAndPropagatesErrors) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  struct MsObject* function = msNewCFunction(fixture.L,
+      msStringFromCStr(&fixture.L->heap, "addOne"), msVmTestCAddOne);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, function));
+  MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 41)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 1, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(fixture.result != NULL);
+  if (fixture.result != NULL) {
+    MS_ASSERT_EQ(42, msIntWordValue(fixture.result));
+  }
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(1, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  function = msNewCFunction(fixture.L,
+      msStringFromCStr(&fixture.L->heap, "addOne"), msVmTestCAddOne);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, function));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  msProtoSetLine(&fixture.builder, 23);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, msStateErrorResult(fixture.L));
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "test.ms:23: TypeError: expected one int"));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, callValidationReportsLocationAndRestores) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  struct MsProtoBuilder identityBuilder;
+  msVmTestCallProtoBuilderInit(fixture.L, &identityBuilder, 1);
+  identityBuilder.proto.paramCount = 1;
+  identityBuilder.proto.localCount = 1;
+  MS_ASSERT_EQ(0, msProtoEmitABC(&identityBuilder, MS_OP_LOAD_LOCAL, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&identityBuilder, MS_OP_RETURN, 0, 0));
+  struct MsProto* identityProto = NULL;
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&identityBuilder, &identityProto));
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msNewFunction(fixture.L, identityProto)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  msProtoSetLine(&fixture.builder, 19);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "test.ms:19: argument count mismatch"));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+
+  msStateClearError(fixture.L);
+  struct MsObject* args[] = {msVmFixtureTestInt(&fixture, 1)};
+  fixture.result = msNewNil(fixture.L);
+  fixture.status = msCallProto(fixture.L, &fixture.co, fixture.proto, 1, args, &fixture.result);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "argument count mismatch"));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msProtoFree(identityProto);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 99)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  msProtoSetLine(&fixture.builder, 29);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "test.ms:29: object is not callable"));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  msProtoSetLine(&fixture.builder, 31);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 1, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "test.ms:31: invalid call stack"));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, callRejectsUnsupportedFunctionKinds) {
+  for (int kind = 0; kind < 3; ++kind) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    struct MsProtoBuilder childBuilder;
+    msVmTestCallProtoBuilderInit(fixture.L, &childBuilder, 1);
+    childBuilder.proto.hasVarArgs = kind == 0;
+    childBuilder.proto.hasKwArgs = kind == 1;
+    childBuilder.proto.isAsync = kind == 2;
+    MS_ASSERT_EQ(0, msProtoEmitABC(&childBuilder, MS_OP_LOAD_NIL, 0, 0));
+    MS_ASSERT_EQ(1, msProtoEmitABC(&childBuilder, MS_OP_RETURN, 0, 0));
+    struct MsProto* childProto = NULL;
+    MS_ASSERT_EQ(MS_OK, msProtoBuild(&childBuilder, &childProto));
+    MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msNewFunction(fixture.L, childProto)));
+    MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+    msProtoSetLine(&fixture.builder, (uint32_t)(13 + kind));
+    MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 0, 0));
+    MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+    msVmFixtureRun(&fixture);
+
+    const char* message = kind == 2 ? "async call requires the scheduler" : "variadic calls not supported";
+    char expected[128];
+    snprintf(expected, sizeof(expected), "test.ms:%d: %s", 13 + kind, message);
+    MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+    MS_ASSERT_TRUE(fixture.result == NULL);
+    MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), expected));
+    MS_ASSERT_EQ(0, fixture.co.frameCount);
+    MS_ASSERT_EQ(0, fixture.co.stackTop);
+    msProtoFree(childProto);
+    msVmFixtureDestroy(&fixture);
+  }
+}
+
+MS_TEST(vm, recursiveCallOverflowRestoresCoroutine) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  fixture.builder.proto.localCount = 0;
+  fixture.builder.proto.stackSize = 2;
+  struct MsString* name = msStringFromCStr(&fixture.L->heap, "recur");
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, (struct MsObject*)name));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_GLOBAL, 0, 0));
+  msProtoSetLine(&fixture.builder, 37);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&fixture.builder, &fixture.proto));
+  struct MsObject* function = msNewFunction(fixture.L, fixture.proto);
+  MS_ASSERT_TRUE(function != NULL);
+  MS_ASSERT_EQ(MS_OK, msStateSetGlobal(fixture.L, name, function));
+
+  fixture.status = msCallProto(fixture.L, &fixture.co, fixture.proto, 0, NULL, &fixture.result);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, msStateErrorResult(fixture.L));
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "test.ms:37: call stack overflow"));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, coroutineCanRunNewProtoAfterError) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  msVmFixtureRunBinary(&fixture, MS_OP_DIV,
+      msVmFixtureTestInt(&fixture, 1), msVmFixtureTestInt(&fixture, 0));
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(0, strcmp(msStateErrorMessage(fixture.L), "test.ms:17: division by zero"));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+
+  msStateClearError(fixture.L);
+  msProtoFree(fixture.proto);
+  fixture.proto = NULL;
+  msProtoBuilderDestroy(&fixture.builder);
+  msVmTestCallProtoBuilderInit(fixture.L, &fixture.builder, 1);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 42)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(fixture.result != NULL);
+  if (fixture.result != NULL) {
+    MS_ASSERT_EQ(42, msIntWordValue(fixture.result));
+  }
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(1, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Vm.StateLifecycleGlobalsAndErrors", testvmstateLifecycleGlobalsAndErrors},
   {"Vm.FunctionObjects", testvmfunctionObjects},
@@ -1163,7 +1445,14 @@ static const MsTestCase msTestCases[] = {
   {"Vm.StringComparisonsAndIdentity", testvmstringComparisonsAndIdentity},
   {"Vm.ComparisonChainsJumpToSharedReturn", testvmcomparisonChainsJumpToSharedReturn},
   {"Vm.ComparisonChainShortCircuitsErrorTail", testvmcomparisonChainShortCircuitsErrorTail},
-  {"Vm.InvalidComparisonChainOpcodeRestoresCoroutine", testvminvalidComparisonChainOpcodeRestoresCoroutine}
+  {"Vm.InvalidComparisonChainOpcodeRestoresCoroutine", testvminvalidComparisonChainOpcodeRestoresCoroutine},
+  {"Vm.ScriptFunctionCallReturns42", testvmscriptFunctionCallReturns42},
+  {"Vm.NestedScriptCallsGrowFrameArray", testvmnestedScriptCallsGrowFrameArray},
+  {"Vm.CFunctionCallReturnsAndPropagatesErrors", testvmcFunctionCallReturnsAndPropagatesErrors},
+  {"Vm.CallValidationReportsLocationAndRestores", testvmcallValidationReportsLocationAndRestores},
+  {"Vm.CallRejectsUnsupportedFunctionKinds", testvmcallRejectsUnsupportedFunctionKinds},
+  {"Vm.RecursiveCallOverflowRestoresCoroutine", testvmrecursiveCallOverflowRestoresCoroutine},
+  {"Vm.CoroutineCanRunNewProtoAfterError", testvmcoroutineCanRunNewProtoAfterError}
 };
 
 MS_TEST_MAIN(msTestCases)
