@@ -1420,6 +1420,38 @@ MS_TEST(vm, coroutineCanRunNewProtoAfterError) {
   msVmFixtureDestroy(&fixture);
 }
 
+static struct MsObject* msVmTestCLocatedError(MsState* L, int64_t argc, struct MsObject** argv) {
+  (void)argc;
+  (void)argv;
+  msRaiseRuntimeError(L, "test.ms:23: TypeError: located callback failure");
+  return NULL;
+}
+
+MS_TEST(vm, cFunctionCallPreservesExistingLocation) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  struct MsObject* function = msNewCFunction(fixture.L,
+      msStringFromCStr(&fixture.L->heap, "locatedError"), msVmTestCLocatedError);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, function));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  msProtoSetLine(&fixture.builder, 19);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_CALL, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  const char* message = msStateErrorMessage(fixture.L);
+  const char* expected = "test.ms:23: TypeError: located callback failure";
+  if (strcmp(message, expected) != 0) {
+    printf("actual error: %s\n", message);
+  }
+  MS_ASSERT_EQ(0, strcmp(message, expected));
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Vm.StateLifecycleGlobalsAndErrors", testvmstateLifecycleGlobalsAndErrors},
   {"Vm.FunctionObjects", testvmfunctionObjects},
@@ -1452,7 +1484,8 @@ static const MsTestCase msTestCases[] = {
   {"Vm.CallValidationReportsLocationAndRestores", testvmcallValidationReportsLocationAndRestores},
   {"Vm.CallRejectsUnsupportedFunctionKinds", testvmcallRejectsUnsupportedFunctionKinds},
   {"Vm.RecursiveCallOverflowRestoresCoroutine", testvmrecursiveCallOverflowRestoresCoroutine},
-  {"Vm.CoroutineCanRunNewProtoAfterError", testvmcoroutineCanRunNewProtoAfterError}
+  {"Vm.CoroutineCanRunNewProtoAfterError", testvmcoroutineCanRunNewProtoAfterError},
+  {"Vm.CFunctionCallPreservesExistingLocation", testvmcFunctionCallPreservesExistingLocation}
 };
 
 MS_TEST_MAIN(msTestCases)

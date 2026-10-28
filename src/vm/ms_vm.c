@@ -37,7 +37,7 @@ static MsResult msVmErrorAt(MsState* L, const struct MsCallFrame* frame, const c
   return msStateErrorResult(L) == MS_ERROR_OOM ? MS_ERROR_OOM : MS_ERROR_RUNTIME;
 }
 
-static bool msVmMessageHasLocation(const char* message, const char* sourceFile, uint32_t line) {
+static bool msVmMessageHasLocation(const char* message, const char* sourceFile) {
   size_t sourceLen = strlen(sourceFile);
   if (strncmp(message, sourceFile, sourceLen) != 0 || message[sourceLen] != ':') {
     return false;
@@ -55,7 +55,7 @@ static bool msVmMessageHasLocation(const char* message, const char* sourceFile, 
     parsedLine = parsedLine * 10 + digit;
     ++cursor;
   }
-  return parsedLine == line && cursor[0] == ':' && cursor[1] == ' ';
+  return cursor[0] == ':' && cursor[1] == ' ';
 }
 
 static MsResult msVmWrapErrorAt(MsState* L, const struct MsCallFrame* frame) {
@@ -70,11 +70,7 @@ static MsResult msVmWrapErrorAt(MsState* L, const struct MsCallFrame* frame) {
   if (frame->proto != NULL && frame->proto->sourceFile != NULL) {
     sourceFile = msStringData(frame->proto->sourceFile);
   }
-  uint32_t line = 0;
-  if (frame->proto != NULL) {
-    line = msProtoLineAt(frame->proto, frame->pc - 1);
-  }
-  if (msVmMessageHasLocation(message, sourceFile, line)) {
+  if (msVmMessageHasLocation(message, sourceFile)) {
     return MS_ERROR_RUNTIME;
   }
   return msVmErrorAt(L, frame, message);
