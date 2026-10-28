@@ -409,6 +409,194 @@ MS_TEST(vm, runValidatesStopDepthAndRecoversAfterUnderflow) {
   msVmFixtureDestroy(&fixture);
 }
 
+MS_TEST(vm, constantsLocalsGlobalsAndMove) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  fixture.builder.proto.localCount = 2;
+  const char* globalName = "a-global-name-longer-than-thirty-two-bytes";
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 40)));
+  MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 2)));
+  MS_ASSERT_EQ(2, msProtoAddConst(&fixture.builder,
+      (struct MsObject*)msStringFromCStr(&fixture.L->heap, globalName)));
+
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_NOP, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_STORE_LOCAL, 0, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(4, msProtoEmitABC(&fixture.builder, MS_OP_STORE_LOCAL, 1, 0));
+  MS_ASSERT_EQ(5, msProtoEmitABC(&fixture.builder, MS_OP_MOVE, 0, 1));
+  MS_ASSERT_EQ(6, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_LOCAL, 0, 0));
+  MS_ASSERT_EQ(7, msProtoEmitABC(&fixture.builder, MS_OP_STORE_GLOBAL, 0, 2));
+  MS_ASSERT_EQ(8, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_GLOBAL, 0, 2));
+  MS_ASSERT_EQ(9, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_EQ(2, msIntWordValue(fixture.result));
+  struct MsString* sameName = msStringFromCStr(&fixture.L->heap, globalName);
+  MS_ASSERT_TRUE(msStateGetGlobal(fixture.L, sameName) == fixture.result);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, jumpBackEdgeComputesLoop) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  fixture.builder.proto.localCount = 2;
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 0)));
+  MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 1)));
+  MS_ASSERT_EQ(2, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 6)));
+
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_STORE_LOCAL, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_STORE_LOCAL, 1, 0));
+  MS_ASSERT_EQ(4, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_LOCAL, 0, 0));
+  MS_ASSERT_EQ(5, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_LOCAL, 1, 0));
+  MS_ASSERT_EQ(6, msProtoEmitABC(&fixture.builder, MS_OP_ADD, 0, 0));
+  MS_ASSERT_EQ(7, msProtoEmitABC(&fixture.builder, MS_OP_STORE_LOCAL, 0, 0));
+  MS_ASSERT_EQ(8, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_LOCAL, 1, 0));
+  MS_ASSERT_EQ(9, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(10, msProtoEmitABC(&fixture.builder, MS_OP_ADD, 0, 0));
+  MS_ASSERT_EQ(11, msProtoEmitABC(&fixture.builder, MS_OP_STORE_LOCAL, 1, 0));
+  MS_ASSERT_EQ(12, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_LOCAL, 1, 0));
+  MS_ASSERT_EQ(13, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 2));
+  MS_ASSERT_EQ(14, msProtoEmitABC(&fixture.builder, MS_OP_LT, 0, 0));
+  MS_ASSERT_EQ(15, msProtoEmitSAx(&fixture.builder, MS_OP_JUMP_IF_FALSE, 1));
+  MS_ASSERT_EQ(16, msProtoEmitSAx(&fixture.builder, MS_OP_JUMP, -13));
+  MS_ASSERT_EQ(17, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_LOCAL, 0, 0));
+  MS_ASSERT_EQ(18, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_EQ(15, msIntWordValue(fixture.result));
+  msVmFixtureDestroy(&fixture);
+}
+
+static struct MsObject* msVmFixtureTestConditionValue(struct MsVmFixture* fixture, int valueIndex) {
+  switch (valueIndex) {
+    case 0:
+      return msNewNil(fixture->L);
+    case 1:
+      return msNewBool(fixture->L, false);
+    case 2:
+      return msVmFixtureTestInt(fixture, 0);
+    case 3:
+      return (struct MsObject*)msFloatNew(&fixture->L->heap, 0.0);
+    case 4:
+      return (struct MsObject*)msStringFromCStr(&fixture->L->heap, "");
+    case 5:
+      return msNewBool(fixture->L, true);
+    case 6:
+      return msVmFixtureTestInt(fixture, -1);
+    case 7:
+      return (struct MsObject*)msFloatNew(&fixture->L->heap, 0.5);
+    case 8:
+      return (struct MsObject*)msStringFromCStr(&fixture->L->heap, "value");
+    default:
+      return NULL;
+  }
+}
+
+MS_TEST(vm, conditionalJumpsCoverTruthiness) {
+  const MsOpCode jumpOps[] = {MS_OP_JUMP_IF_FALSE, MS_OP_JUMP_IF_TRUE, MS_OP_JUMP_IF_NIL};
+  const bool truthy[] = {false, false, false, false, false, true, true, true, true};
+  for (size_t opIndex = 0; opIndex < sizeof(jumpOps) / sizeof(jumpOps[0]); ++opIndex) {
+    for (int valueIndex = 0; valueIndex < 9; ++valueIndex) {
+      struct MsVmFixture fixture;
+      msVmFixtureInit(&fixture);
+      struct MsObject* value = msVmFixtureTestConditionValue(&fixture, valueIndex);
+      MS_ASSERT_TRUE(value != NULL);
+      MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, value));
+      MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 10)));
+      MS_ASSERT_EQ(2, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 20)));
+      MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+      MS_ASSERT_EQ(1, msProtoEmitSAx(&fixture.builder, jumpOps[opIndex], 2));
+      MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+      MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+      MS_ASSERT_EQ(4, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 2));
+      MS_ASSERT_EQ(5, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+      msVmFixtureRun(&fixture);
+
+      bool shouldJump = jumpOps[opIndex] == MS_OP_JUMP_IF_NIL
+          ? valueIndex == 0
+          : truthy[valueIndex] == (jumpOps[opIndex] == MS_OP_JUMP_IF_TRUE);
+      MS_ASSERT_EQ(MS_OK, fixture.status);
+      MS_ASSERT_EQ(shouldJump ? 20 : 10, msIntWordValue(fixture.result));
+      MS_ASSERT_EQ(0, fixture.co.frameCount);
+      MS_ASSERT_EQ(1, fixture.co.stackTop);
+      msVmFixtureDestroy(&fixture);
+    }
+  }
+}
+
+MS_TEST(vm, undefinedGlobalReportsLocationAndRestores) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder,
+      (struct MsObject*)msStringFromCStr(&fixture.L->heap, "missing")));
+  msProtoSetLine(&fixture.builder, 9);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_GLOBAL, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "undefined name 'missing'") != NULL);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "test.ms:9") != NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, invalidOperandsReportRuntimeErrors) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "constant index out of bounds") != NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_MOVE, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "local index out of bounds") != NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 1)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_GLOBAL, 0, 0));
+  msVmFixtureRun(&fixture);
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "invalid global name") != NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, integerAddOverflowUsesSlowPath) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, INT64_MAX)));
+  MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 1)));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_ADD, 0, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "integer overflow") != NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Vm.StateLifecycleGlobalsAndErrors", testvmstateLifecycleGlobalsAndErrors},
   {"Vm.FunctionObjects", testvmfunctionObjects},
@@ -418,7 +606,13 @@ static const MsTestCase msTestCases[] = {
   {"Vm.PushFrameValidatesArgumentsAndLimits", testvmpushFrameValidatesArgumentsAndLimits},
   {"Vm.PushFrameRelocatesAliasedArguments", testvmpushFrameRelocatesAliasedArguments},
   {"Vm.PushFrameOomMatchesErrorState", testvmpushFrameOomMatchesErrorState},
-  {"Vm.RunValidatesStopDepthAndRecoversAfterUnderflow", testvmrunValidatesStopDepthAndRecoversAfterUnderflow}
+  {"Vm.RunValidatesStopDepthAndRecoversAfterUnderflow", testvmrunValidatesStopDepthAndRecoversAfterUnderflow},
+  {"Vm.ConstantsLocalsGlobalsAndMove", testvmconstantsLocalsGlobalsAndMove},
+  {"Vm.JumpBackEdgeComputesLoop", testvmjumpBackEdgeComputesLoop},
+  {"Vm.ConditionalJumpsCoverTruthiness", testvmconditionalJumpsCoverTruthiness},
+  {"Vm.UndefinedGlobalReportsLocationAndRestores", testvmundefinedGlobalReportsLocationAndRestores},
+  {"Vm.InvalidOperandsReportRuntimeErrors", testvminvalidOperandsReportRuntimeErrors},
+  {"Vm.IntegerAddOverflowUsesSlowPath", testvmintegerAddOverflowUsesSlowPath}
 };
 
 MS_TEST_MAIN(msTestCases)

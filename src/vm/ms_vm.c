@@ -7,6 +7,7 @@
 
 #include "core/ms_common.h"
 #include "core/ms_memory.h"
+#include "object/ms_operator.h"
 #include "object/ms_string.h"
 #include "vm/ms_state_internal.h"
 
@@ -32,6 +33,43 @@ static MsResult msVmErrorAt(MsState* L, const struct MsCallFrame* frame, const c
   }
   msRaiseRuntimeError(L, "%s:%u: %s", sourceFile, (unsigned)line, message);
   return msStateErrorResult(L) == MS_ERROR_OOM ? MS_ERROR_OOM : MS_ERROR_RUNTIME;
+}
+
+static MsResult msVmPropagatedErrorAt(MsState* L, const struct MsCallFrame* frame) {
+  if (msStateErrorResult(L) == MS_ERROR_OOM) {
+    return MS_ERROR_OOM;
+  }
+  const char* message = msStateErrorMessage(L);
+  return msVmErrorAt(L, frame, message != NULL ? message : "operation failed");
+}
+
+static struct MsObject* msVmConstAt(MsState* L, const struct MsCallFrame* frame,
+    int index, MsResult* result) {
+  if (index < 0 || index >= frame->proto->constsLen || frame->proto->consts == NULL
+      || frame->proto->consts[index] == NULL) {
+    *result = msVmErrorAt(L, frame, "constant index out of bounds");
+    return NULL;
+  }
+  return frame->proto->consts[index];
+}
+
+static MsResult msVmUndefinedGlobalAt(MsState* L, const struct MsCallFrame* frame,
+    const struct MsString* name) {
+  const char* sourceFile = "<unknown>";
+  if (frame->proto != NULL && frame->proto->sourceFile != NULL) {
+    sourceFile = msStringData(frame->proto->sourceFile);
+  }
+  uint32_t line = 0;
+  if (frame->proto != NULL) {
+    line = msProtoLineAt(frame->proto, frame->pc - 1);
+  }
+  msRaiseRuntimeError(L, "%s:%u: undefined name '%s'", sourceFile, (unsigned)line, msStringData(name));
+  return msStateErrorResult(L) == MS_ERROR_OOM ? MS_ERROR_OOM : MS_ERROR_RUNTIME;
+}
+
+static void msVmJumpBy(struct MsCallFrame* frame, int32_t offset) {
+  int64_t target = (int64_t)frame->pc + offset;
+  frame->pc = target < 0 ? -1 : target > INT_MAX ? INT_MAX : (int)target;
 }
 
 static MsResult msVmEnsureStack(MsState* L, struct MsCoroutine* co, int needed) {
@@ -215,6 +253,18 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
     switch ((int)msOpDecodeOp(instr)) {
       case MS_OP_NOP:
         break;
+      case MS_OP_LOAD_CONST: {
+        struct MsObject* constant = msVmConstAt(L, frame, msOpDecodeBx(instr), &result);
+        if (constant == NULL) {
+          break;
+        }
+        if (!msVmCanPush(co, frame, windowEnd)) {
+          result = msVmErrorAt(L, frame, "evaluation stack overflow");
+          break;
+        }
+        co->stack[co->stackTop++] = constant;
+        break;
+      }
       case MS_OP_LOAD_NIL:
       case MS_OP_LOAD_TRUE:
       case MS_OP_LOAD_FALSE:
@@ -228,6 +278,148 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
           co->stack[co->stackTop++] = msNewBool(L, msOpDecodeOp(instr) == MS_OP_LOAD_TRUE);
         }
         break;
+      case MS_OP_MOVE: {
+        int destination = msOpDecodeA(instr);
+        int source = msOpDecodeBx(instr);
+        if (destination >= frame->proto->localCount || source >= frame->proto->localCount) {
+          result = msVmErrorAt(L, frame, "local index out of bounds");
+          break;
+        }
+        co->stack[frame->baseIndex + destination] = co->stack[frame->baseIndex + source];
+        break;
+      }
+      case MS_OP_LOAD_LOCAL: {
+        int slot = msOpDecodeA(instr);
+        if (slot >= frame->proto->localCount) {
+          result = msVmErrorAt(L, frame, "local index out of bounds");
+          break;
+        }
+        if (!msVmCanPush(co, frame, windowEnd)) {
+          result = msVmErrorAt(L, frame, "evaluation stack overflow");
+          break;
+        }
+        co->stack[co->stackTop++] = co->stack[frame->baseIndex + slot];
+        break;
+      }
+      case MS_OP_STORE_LOCAL: {
+        int slot = msOpDecodeA(instr);
+        if (slot >= frame->proto->localCount) {
+          result = msVmErrorAt(L, frame, "local index out of bounds");
+          break;
+        }
+        if (!msVmCanPop(co, frame)) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        co->stack[frame->baseIndex + slot] = co->stack[--co->stackTop];
+        break;
+      }
+      case MS_OP_LOAD_GLOBAL: {
+        struct MsObject* nameObject = msVmConstAt(L, frame, msOpDecodeBx(instr), &result);
+        if (nameObject == NULL) {
+          break;
+        }
+        if (msObjectTag(nameObject) != MS_TYPE_STRING) {
+          result = msVmErrorAt(L, frame, "invalid global name");
+          break;
+        }
+        if (!msVmCanPush(co, frame, windowEnd)) {
+          result = msVmErrorAt(L, frame, "evaluation stack overflow");
+          break;
+        }
+        const struct MsString* name = (const struct MsString*)nameObject;
+        struct MsObject* value = msStateGetGlobal(L, name);
+        if (value == NULL) {
+          result = msVmUndefinedGlobalAt(L, frame, name);
+          break;
+        }
+        co->stack[co->stackTop++] = value;
+        break;
+      }
+      case MS_OP_STORE_GLOBAL: {
+        struct MsObject* nameObject = msVmConstAt(L, frame, msOpDecodeBx(instr), &result);
+        if (nameObject == NULL) {
+          break;
+        }
+        if (msObjectTag(nameObject) != MS_TYPE_STRING) {
+          result = msVmErrorAt(L, frame, "invalid global name");
+          break;
+        }
+        if (!msVmCanPop(co, frame)) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        struct MsObject* value = co->stack[--co->stackTop];
+        result = msStateSetGlobal(L, (const struct MsString*)nameObject, value);
+        break;
+      }
+      case MS_OP_ADD:
+      case MS_OP_LT: {
+        if (co->stackTop < frame->baseIndex + frame->proto->localCount + 2) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        struct MsObject* rhs = co->stack[--co->stackTop];
+        struct MsObject* lhs = co->stack[--co->stackTop];
+        MsOpCode op = msOpDecodeOp(instr);
+        struct MsObject* value = NULL;
+        bool fastPath = false;
+        if (msObjectTag(lhs) == MS_TYPE_INT && msObjectTag(rhs) == MS_TYPE_INT
+            && msIntIsWord(lhs) && msIntIsWord(rhs)) {
+          int64_t lhsValue = msIntWordValue(lhs);
+          int64_t rhsValue = msIntWordValue(rhs);
+          if (op == MS_OP_LT) {
+            value = msNewBool(L, lhsValue < rhsValue);
+            fastPath = true;
+          } else {
+            bool overflows = (rhsValue > 0 && lhsValue > INT64_MAX - rhsValue)
+                || (rhsValue < 0 && lhsValue < INT64_MIN - rhsValue);
+            if (!overflows) {
+              value = msNewInt(L, lhsValue + rhsValue);
+              fastPath = true;
+            }
+          }
+        }
+        if (!fastPath) {
+          value = msObjectBinaryOp(L, op, lhs, rhs);
+        }
+        if (value == NULL) {
+          result = msVmPropagatedErrorAt(L, frame);
+          break;
+        }
+        co->stack[co->stackTop++] = value;
+        break;
+      }
+      case MS_OP_JUMP: {
+        int32_t offset = msOpDecodeSAx(instr);
+        if (offset < 0) {
+          // safepoint: scheduler preemption and GC handshake.
+        }
+        msVmJumpBy(frame, offset);
+        break;
+      }
+      case MS_OP_JUMP_IF_FALSE:
+      case MS_OP_JUMP_IF_TRUE:
+      case MS_OP_JUMP_IF_NIL: {
+        if (!msVmCanPop(co, frame)) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        struct MsObject* condition = co->stack[--co->stackTop];
+        bool truthy = msObjectIsTruthy(condition);
+        MsOpCode op = msOpDecodeOp(instr);
+        bool shouldJump = op == MS_OP_JUMP_IF_NIL
+            ? msObjectTag(condition) == MS_TYPE_NIL
+            : truthy == (op == MS_OP_JUMP_IF_TRUE);
+        if (shouldJump) {
+          int32_t offset = msOpDecodeSAx(instr);
+          if (offset < 0) {
+            // safepoint: scheduler preemption and GC handshake.
+          }
+          msVmJumpBy(frame, offset);
+        }
+        break;
+      }
       case MS_OP_RETURN: {
         if (!msVmCanPop(co, frame)) {
           result = msVmErrorAt(L, frame, "evaluation stack underflow");
