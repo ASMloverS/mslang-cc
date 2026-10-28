@@ -1,6 +1,7 @@
 #include "vm/ms_vm.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -227,6 +228,194 @@ static bool msVmCanPop(const struct MsCoroutine* co, const struct MsCallFrame* f
   return co->stackTop > frame->baseIndex + frame->proto->localCount;
 }
 
+static bool msVmCheckedMul(int64_t lhs, int64_t rhs, int64_t* out) {
+  if (lhs == 0 || rhs == 0) {
+    *out = 0;
+    return true;
+  }
+  if (lhs == -1) {
+    if (rhs == INT64_MIN) {
+      return false;
+    }
+    *out = -rhs;
+    return true;
+  }
+  if (rhs == -1) {
+    if (lhs == INT64_MIN) {
+      return false;
+    }
+    *out = -lhs;
+    return true;
+  }
+  if ((lhs > 0 && rhs > 0 && lhs > INT64_MAX / rhs)
+      || (lhs > 0 && rhs < 0 && rhs < INT64_MIN / lhs)
+      || (lhs < 0 && rhs > 0 && lhs < INT64_MIN / rhs)
+      || (lhs < 0 && rhs < 0 && lhs < INT64_MAX / rhs)) {
+    return false;
+  }
+  *out = lhs * rhs;
+  return true;
+}
+
+static bool msVmIsNumeric(const struct MsObject* value) {
+  return msObjectTag(value) == MS_TYPE_FLOAT
+      || (msObjectTag(value) == MS_TYPE_INT && msIntIsWord(value));
+}
+
+static double msVmNumericValue(const struct MsObject* value) {
+  return msObjectTag(value) == MS_TYPE_INT
+      ? (double)msIntWordValue(value)
+      : msFloatValue(value);
+}
+
+static struct MsObject* msVmBinaryOp(MsState* L, MsOpCode op, struct MsObject* lhs, struct MsObject* rhs) {
+  if (msObjectTag(lhs) == MS_TYPE_INT && msObjectTag(rhs) == MS_TYPE_INT
+      && msIntIsWord(lhs) && msIntIsWord(rhs)) {
+    int64_t lhsValue = msIntWordValue(lhs);
+    int64_t rhsValue = msIntWordValue(rhs);
+    int64_t result;
+    switch (op) {
+      case MS_OP_ADD:
+        if ((rhsValue > 0 && lhsValue > INT64_MAX - rhsValue)
+            || (rhsValue < 0 && lhsValue < INT64_MIN - rhsValue)) {
+          break;
+        }
+        return msNewInt(L, lhsValue + rhsValue);
+      case MS_OP_SUB:
+        if ((rhsValue > 0 && lhsValue < INT64_MIN + rhsValue)
+            || (rhsValue < 0 && lhsValue > INT64_MAX + rhsValue)) {
+          break;
+        }
+        return msNewInt(L, lhsValue - rhsValue);
+      case MS_OP_MUL:
+        if (!msVmCheckedMul(lhsValue, rhsValue, &result)) {
+          break;
+        }
+        return msNewInt(L, result);
+      case MS_OP_DIV:
+        if (rhsValue == 0) {
+          break;
+        }
+        return msNewFloat(L, (double)lhsValue / (double)rhsValue);
+      case MS_OP_FLOORDIV:
+      case MS_OP_MOD:
+        if (rhsValue == 0 || (lhsValue == INT64_MIN && rhsValue == -1)) {
+          break;
+        }
+        result = op == MS_OP_FLOORDIV ? lhsValue / rhsValue : lhsValue % rhsValue;
+        int64_t remainder = lhsValue % rhsValue;
+        if (remainder != 0 && ((lhsValue < 0) != (rhsValue < 0))) {
+          result += op == MS_OP_FLOORDIV ? -1 : rhsValue;
+        }
+        return msNewInt(L, result);
+      case MS_OP_POW:
+        if (rhsValue < 0) {
+          return msNewFloat(L, pow((double)lhsValue, (double)rhsValue));
+        }
+        result = 1;
+        int64_t base = lhsValue;
+        uint64_t exponent = (uint64_t)rhsValue;
+        while (exponent != 0) {
+          if ((exponent & 1) != 0 && !msVmCheckedMul(result, base, &result)) {
+            return msObjectBinaryOp(L, op, lhs, rhs);
+          }
+          exponent >>= 1;
+          if (exponent != 0 && !msVmCheckedMul(base, base, &base)) {
+            return msObjectBinaryOp(L, op, lhs, rhs);
+          }
+        }
+        return msNewInt(L, result);
+      case MS_OP_BITAND:
+        return msNewInt(L, lhsValue & rhsValue);
+      case MS_OP_BITOR:
+        return msNewInt(L, lhsValue | rhsValue);
+      case MS_OP_BITXOR:
+        return msNewInt(L, lhsValue ^ rhsValue);
+      case MS_OP_SHL:
+      case MS_OP_SHR:
+        if (rhsValue < 0 || rhsValue >= 64) {
+          msRaiseRuntimeError(L, "invalid shift count");
+          return NULL;
+        }
+        if (op == MS_OP_SHR) {
+          unsigned int count = (unsigned int)rhsValue;
+          result = lhsValue >= 0
+              ? (int64_t)((uint64_t)lhsValue >> count)
+              : -1 - (int64_t)((~(uint64_t)lhsValue) >> count);
+          return msNewInt(L, result);
+        }
+        if (rhsValue == 63) {
+          if (lhsValue == 0) {
+            return msNewInt(L, 0);
+          }
+          if (lhsValue == -1) {
+            return msNewInt(L, INT64_MIN);
+          }
+          break;
+        }
+        int64_t factor = (int64_t)(UINT64_C(1) << (unsigned int)rhsValue);
+        if (!msVmCheckedMul(lhsValue, factor, &result)) {
+          break;
+        }
+        return msNewInt(L, result);
+      default:
+        return msObjectBinaryOp(L, op, lhs, rhs);
+    }
+    return msObjectBinaryOp(L, op, lhs, rhs);
+  }
+
+  if (msVmIsNumeric(lhs) && msVmIsNumeric(rhs)
+      && (op == MS_OP_ADD || op == MS_OP_SUB || op == MS_OP_MUL || op == MS_OP_DIV || op == MS_OP_POW)) {
+    double lhsValue = msVmNumericValue(lhs);
+    double rhsValue = msVmNumericValue(rhs);
+    if (op == MS_OP_DIV && rhsValue == 0.0) {
+      msRaiseRuntimeError(L, "division by zero");
+      return NULL;
+    }
+    double result;
+    switch (op) {
+      case MS_OP_ADD:
+        result = lhsValue + rhsValue;
+        break;
+      case MS_OP_SUB:
+        result = lhsValue - rhsValue;
+        break;
+      case MS_OP_MUL:
+        result = lhsValue * rhsValue;
+        break;
+      case MS_OP_DIV:
+        result = lhsValue / rhsValue;
+        break;
+      case MS_OP_POW:
+        result = pow(lhsValue, rhsValue);
+        break;
+      default:
+        return msObjectBinaryOp(L, op, lhs, rhs);
+    }
+    return msNewFloat(L, result);
+  }
+  return msObjectBinaryOp(L, op, lhs, rhs);
+}
+
+static struct MsObject* msVmUnaryOp(MsState* L, MsOpCode op, struct MsObject* operand) {
+  if (op == MS_OP_NOT) {
+    return msNewBool(L, !msObjectIsTruthy(operand));
+  }
+  if (msObjectTag(operand) == MS_TYPE_INT && msIntIsWord(operand)) {
+    int64_t value = msIntWordValue(operand);
+    if (op == MS_OP_NEG && value != INT64_MIN) {
+      return msNewInt(L, -value);
+    }
+    if (op == MS_OP_INVERT) {
+      return msNewInt(L, ~value);
+    }
+  }
+  if (msObjectTag(operand) == MS_TYPE_FLOAT && op == MS_OP_NEG) {
+    return msNewFloat(L, -msFloatValue(operand));
+  }
+  return msObjectUnaryOp(L, op, operand);
+}
+
 MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
   int entryFrames = co->frameCount;
   int entryTop = co->stackTop;
@@ -354,6 +543,47 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
         break;
       }
       case MS_OP_ADD:
+      case MS_OP_SUB:
+      case MS_OP_MUL:
+      case MS_OP_DIV:
+      case MS_OP_FLOORDIV:
+      case MS_OP_MOD:
+      case MS_OP_POW:
+      case MS_OP_BITAND:
+      case MS_OP_BITOR:
+      case MS_OP_BITXOR:
+      case MS_OP_SHL:
+      case MS_OP_SHR: {
+        if (co->stackTop < frame->baseIndex + frame->proto->localCount + 2) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        struct MsObject* rhs = co->stack[--co->stackTop];
+        struct MsObject* lhs = co->stack[--co->stackTop];
+        struct MsObject* value = msVmBinaryOp(L, msOpDecodeOp(instr), lhs, rhs);
+        if (value == NULL) {
+          result = msVmPropagatedErrorAt(L, frame);
+          break;
+        }
+        co->stack[co->stackTop++] = value;
+        break;
+      }
+      case MS_OP_NEG:
+      case MS_OP_INVERT:
+      case MS_OP_NOT: {
+        if (!msVmCanPop(co, frame)) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        struct MsObject* operand = co->stack[--co->stackTop];
+        struct MsObject* value = msVmUnaryOp(L, msOpDecodeOp(instr), operand);
+        if (value == NULL) {
+          result = msVmPropagatedErrorAt(L, frame);
+          break;
+        }
+        co->stack[co->stackTop++] = value;
+        break;
+      }
       case MS_OP_LT: {
         if (co->stackTop < frame->baseIndex + frame->proto->localCount + 2) {
           result = msVmErrorAt(L, frame, "evaluation stack underflow");
@@ -361,27 +591,15 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
         }
         struct MsObject* rhs = co->stack[--co->stackTop];
         struct MsObject* lhs = co->stack[--co->stackTop];
-        MsOpCode op = msOpDecodeOp(instr);
         struct MsObject* value = NULL;
         bool fastPath = false;
         if (msObjectTag(lhs) == MS_TYPE_INT && msObjectTag(rhs) == MS_TYPE_INT
             && msIntIsWord(lhs) && msIntIsWord(rhs)) {
-          int64_t lhsValue = msIntWordValue(lhs);
-          int64_t rhsValue = msIntWordValue(rhs);
-          if (op == MS_OP_LT) {
-            value = msNewBool(L, lhsValue < rhsValue);
-            fastPath = true;
-          } else {
-            bool overflows = (rhsValue > 0 && lhsValue > INT64_MAX - rhsValue)
-                || (rhsValue < 0 && lhsValue < INT64_MIN - rhsValue);
-            if (!overflows) {
-              value = msNewInt(L, lhsValue + rhsValue);
-              fastPath = true;
-            }
-          }
+          value = msNewBool(L, msIntWordValue(lhs) < msIntWordValue(rhs));
+          fastPath = true;
         }
         if (!fastPath) {
-          value = msObjectBinaryOp(L, op, lhs, rhs);
+          value = msObjectBinaryOp(L, MS_OP_LT, lhs, rhs);
         }
         if (value == NULL) {
           result = msVmPropagatedErrorAt(L, frame);

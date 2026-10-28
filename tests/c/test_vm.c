@@ -594,21 +594,284 @@ MS_TEST(vm, invalidOperandsReportRuntimeErrors) {
   msVmFixtureDestroy(&fixture);
 }
 
-MS_TEST(vm, integerAddOverflowUsesSlowPath) {
+static void msVmFixtureRunBinary(struct MsVmFixture* fixture, MsOpCode op,
+    struct MsObject* lhs, struct MsObject* rhs) {
+  int lhsIndex = msProtoAddConst(&fixture->builder, lhs);
+  int rhsIndex = msProtoAddConst(&fixture->builder, rhs);
+  MS_ASSERT_EQ(0, lhsIndex);
+  MS_ASSERT_TRUE(rhsIndex >= 0);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, (uint16_t)rhsIndex));
+  msProtoSetLine(&fixture->builder, 17);
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture->builder, op, 0, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture->builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(fixture);
+}
+
+static void msVmFixtureRunUnary(struct MsVmFixture* fixture, MsOpCode op, struct MsObject* value) {
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture->builder, value));
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture->builder, MS_OP_LOAD_CONST, 0, 0));
+  msProtoSetLine(&fixture->builder, 17);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture->builder, op, 0, 0));
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture->builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(fixture);
+}
+
+struct MsVmIntBinaryCase {
+  MsOpCode op;
+  int64_t lhs;
+  int64_t rhs;
+  int64_t expected;
+};
+
+MS_TEST(vm, integerArithmeticAndShiftBoundaries) {
+  const struct MsVmIntBinaryCase cases[] = {
+    {MS_OP_ADD, 20, 22, 42},
+    {MS_OP_ADD, INT64_MAX, 0, INT64_MAX},
+    {MS_OP_ADD, INT64_MIN, 0, INT64_MIN},
+    {MS_OP_SUB, 20, 22, -2},
+    {MS_OP_SUB, INT64_MIN, 0, INT64_MIN},
+    {MS_OP_MUL, -6, 7, -42},
+    {MS_OP_MUL, INT64_MIN, 1, INT64_MIN},
+    {MS_OP_FLOORDIV, -7, 2, -4},
+    {MS_OP_FLOORDIV, 7, -2, -4},
+    {MS_OP_MOD, -7, 2, 1},
+    {MS_OP_MOD, 7, -3, -2},
+    {MS_OP_POW, 2, 10, 1024},
+    {MS_OP_POW, 2, 62, INT64_MAX / 2 + 1},
+    {MS_OP_POW, -2, 63, INT64_MIN},
+    {MS_OP_BITAND, 12, 10, 8},
+    {MS_OP_BITOR, 12, 3, 15},
+    {MS_OP_BITXOR, 12, 10, 6},
+    {MS_OP_SHL, -3, 2, -12},
+    {MS_OP_SHL, 1, 0, 1},
+    {MS_OP_SHL, -1, 0, -1},
+    {MS_OP_SHL, 0, 63, 0},
+    {MS_OP_SHL, -1, 63, INT64_MIN},
+    {MS_OP_SHL, 1, 62, INT64_MAX / 2 + 1},
+    {MS_OP_SHR, -7, 2, -2},
+    {MS_OP_SHR, INT64_MIN, 63, -1},
+    {MS_OP_SHR, INT64_MAX, 63, 0},
+    {MS_OP_SHR, -7, 0, -7},
+    {MS_OP_SHR, 7, 0, 7}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunBinary(&fixture, cases[i].op,
+        msVmFixtureTestInt(&fixture, cases[i].lhs), msVmFixtureTestInt(&fixture, cases[i].rhs));
+    MS_ASSERT_EQ(MS_OK, fixture.status);
+    MS_ASSERT_TRUE(fixture.result != NULL);
+    if (fixture.result != NULL) {
+      MS_ASSERT_EQ(MS_TYPE_INT, msObjectTag(fixture.result));
+      MS_ASSERT_EQ(cases[i].expected, msIntWordValue(fixture.result));
+    }
+    MS_ASSERT_EQ(0, fixture.co.frameCount);
+    MS_ASSERT_EQ(1, fixture.co.stackTop);
+    msVmFixtureDestroy(&fixture);
+  }
+}
+
+struct MsVmNumericCase {
+  MsOpCode op;
+  double lhs;
+  double rhs;
+  double expected;
+  bool lhsIsInt;
+  bool rhsIsInt;
+};
+
+static struct MsObject* msVmFixtureNumericValue(struct MsVmFixture* fixture, double value, bool isInt) {
+  return isInt ? msVmFixtureTestInt(fixture, (int64_t)value) : msNewFloat(fixture->L, value);
+}
+
+MS_TEST(vm, numericArithmeticPromotesToFloat) {
+  const struct MsVmNumericCase cases[] = {
+    {MS_OP_ADD, 1, 2.5, 3.5, true, false},
+    {MS_OP_ADD, 1.5, 2, 3.5, false, true},
+    {MS_OP_ADD, 1.25, 2.5, 3.75, false, false},
+    {MS_OP_SUB, 5, 2.5, 2.5, true, false},
+    {MS_OP_SUB, 5.5, 2, 3.5, false, true},
+    {MS_OP_SUB, 5.5, 2.25, 3.25, false, false},
+    {MS_OP_MUL, -3, 2.5, -7.5, true, false},
+    {MS_OP_MUL, -3.5, 2, -7, false, true},
+    {MS_OP_MUL, -1.5, 2, -3, false, false},
+    {MS_OP_DIV, 10, 4, 2.5, true, true},
+    {MS_OP_DIV, 10, 4, 2.5, true, false},
+    {MS_OP_DIV, 10, 4, 2.5, false, true},
+    {MS_OP_DIV, 5, 2, 2.5, false, false},
+    {MS_OP_FLOORDIV, -7, 2, -4, true, false},
+    {MS_OP_FLOORDIV, -7, 2, -4, false, true},
+    {MS_OP_FLOORDIV, -7, 2, -4, false, false},
+    {MS_OP_MOD, 7, -3, -2, true, false},
+    {MS_OP_MOD, 7, -3, -2, false, true},
+    {MS_OP_MOD, 7, -3, -2, false, false},
+    {MS_OP_POW, 2, -2, 0.25, true, true},
+    {MS_OP_POW, 2, -2, 0.25, true, false},
+    {MS_OP_POW, 2, -2, 0.25, false, true},
+    {MS_OP_POW, 2, 3, 8, false, false}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunBinary(&fixture, cases[i].op,
+        msVmFixtureNumericValue(&fixture, cases[i].lhs, cases[i].lhsIsInt),
+        msVmFixtureNumericValue(&fixture, cases[i].rhs, cases[i].rhsIsInt));
+    MS_ASSERT_EQ(MS_OK, fixture.status);
+    MS_ASSERT_TRUE(fixture.result != NULL);
+    if (fixture.result != NULL) {
+      MS_ASSERT_EQ(MS_TYPE_FLOAT, msObjectTag(fixture.result));
+      double actual = msFloatValue(fixture.result);
+      if (actual != cases[i].expected) {
+        printf("numeric case %zu (op %d): expected %.17g, actual %.17g\n",
+            i, (int)cases[i].op, cases[i].expected, actual);
+      }
+      MS_ASSERT_TRUE(actual == cases[i].expected);
+    }
+    MS_ASSERT_EQ(0, fixture.co.frameCount);
+    MS_ASSERT_EQ(1, fixture.co.stackTop);
+    msVmFixtureDestroy(&fixture);
+  }
+}
+
+struct MsVmIntErrorCase {
+  MsOpCode op;
+  int64_t lhs;
+  int64_t rhs;
+  const char* message;
+};
+
+static void msVmFixtureAssertError(struct MsVmFixture* fixture, const char* message) {
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture->status);
+  MS_ASSERT_TRUE(fixture->result == NULL);
+  const char* actual = msStateErrorMessage(fixture->L);
+  MS_ASSERT_TRUE(actual != NULL);
+  if (actual != NULL) {
+    MS_ASSERT_TRUE(strstr(actual, message) != NULL);
+    MS_ASSERT_TRUE(strstr(actual, "test.ms:17") != NULL);
+  }
+  MS_ASSERT_EQ(0, fixture->co.frameCount);
+  MS_ASSERT_EQ(0, fixture->co.stackTop);
+  msStateClearError(fixture->L);
+}
+
+MS_TEST(vm, arithmeticErrorsRestoreCoroutine) {
+  const struct MsVmIntErrorCase cases[] = {
+    {MS_OP_DIV, 1, 0, "division by zero"},
+    {MS_OP_FLOORDIV, 1, 0, "division by zero"},
+    {MS_OP_MOD, 1, 0, "division by zero"},
+    {MS_OP_SHL, 1, -1, "invalid shift count"},
+    {MS_OP_SHR, 1, 64, "invalid shift count"},
+    {MS_OP_ADD, INT64_MAX, 1, "integer overflow"},
+    {MS_OP_ADD, INT64_MIN, -1, "integer overflow"},
+    {MS_OP_SUB, INT64_MIN, 1, "integer overflow"},
+    {MS_OP_MUL, INT64_MIN, -1, "integer overflow"},
+    {MS_OP_FLOORDIV, INT64_MIN, -1, "integer overflow"},
+    {MS_OP_MOD, INT64_MIN, -1, "integer overflow"},
+    {MS_OP_POW, 2, 63, "integer overflow"},
+    {MS_OP_SHL, 1, 63, "integer overflow"},
+    {MS_OP_SHL, -2, 63, "integer overflow"}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunBinary(&fixture, cases[i].op,
+        msVmFixtureTestInt(&fixture, cases[i].lhs), msVmFixtureTestInt(&fixture, cases[i].rhs));
+    msVmFixtureAssertError(&fixture, cases[i].message);
+    msVmFixtureDestroy(&fixture);
+  }
+
+  const MsOpCode zeroDivisionOps[] = {MS_OP_DIV, MS_OP_FLOORDIV, MS_OP_MOD};
+  const double zeroes[] = {0.0, -0.0};
+  for (size_t opIndex = 0; opIndex < sizeof(zeroDivisionOps) / sizeof(zeroDivisionOps[0]); ++opIndex) {
+    for (size_t zeroIndex = 0; zeroIndex < sizeof(zeroes) / sizeof(zeroes[0]); ++zeroIndex) {
+      struct MsVmFixture fixture;
+      msVmFixtureInit(&fixture);
+      msVmFixtureRunBinary(&fixture, zeroDivisionOps[opIndex],
+          msNewFloat(fixture.L, 1.0), msNewFloat(fixture.L, zeroes[zeroIndex]));
+      msVmFixtureAssertError(&fixture, "division by zero");
+      msVmFixtureDestroy(&fixture);
+    }
+  }
+
+  const MsOpCode bitwiseOps[] = {MS_OP_BITAND, MS_OP_BITOR, MS_OP_BITXOR, MS_OP_SHL, MS_OP_SHR};
+  for (size_t i = 0; i < sizeof(bitwiseOps) / sizeof(bitwiseOps[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunBinary(&fixture, bitwiseOps[i], msNewFloat(fixture.L, 1.0), msNewFloat(fixture.L, 1.0));
+    msVmFixtureAssertError(&fixture, "TypeError:");
+    msVmFixtureDestroy(&fixture);
+  }
+}
+
+struct MsVmIntUnaryCase {
+  MsOpCode op;
+  int64_t value;
+  int64_t expected;
+};
+
+MS_TEST(vm, unaryArithmeticAndTruthiness) {
+  const struct MsVmIntUnaryCase cases[] = {
+    {MS_OP_NEG, 42, -42},
+    {MS_OP_NEG, -42, 42},
+    {MS_OP_NEG, INT64_MAX, INT64_MIN + 1},
+    {MS_OP_NEG, INT64_MIN + 1, INT64_MAX},
+    {MS_OP_INVERT, 0, -1},
+    {MS_OP_INVERT, -1, 0}
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunUnary(&fixture, cases[i].op, msVmFixtureTestInt(&fixture, cases[i].value));
+    MS_ASSERT_EQ(MS_OK, fixture.status);
+    MS_ASSERT_TRUE(fixture.result != NULL);
+    if (fixture.result != NULL) {
+      MS_ASSERT_EQ(MS_TYPE_INT, msObjectTag(fixture.result));
+      MS_ASSERT_EQ(cases[i].expected, msIntWordValue(fixture.result));
+    }
+    MS_ASSERT_EQ(1, fixture.co.stackTop);
+    msVmFixtureDestroy(&fixture);
+  }
+
   struct MsVmFixture fixture;
   msVmFixtureInit(&fixture);
-  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, INT64_MAX)));
-  MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 1)));
-  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
-  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
-  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_ADD, 0, 0));
-  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
-  msVmFixtureRun(&fixture);
+  msVmFixtureRunUnary(&fixture, MS_OP_NEG, msNewFloat(fixture.L, 2.5));
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(fixture.result != NULL);
+  if (fixture.result != NULL) {
+    MS_ASSERT_EQ(MS_TYPE_FLOAT, msObjectTag(fixture.result));
+    MS_ASSERT_TRUE(msFloatValue(fixture.result) == -2.5);
+  }
+  msVmFixtureDestroy(&fixture);
 
-  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
-  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "integer overflow") != NULL);
-  MS_ASSERT_EQ(0, fixture.co.frameCount);
-  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  struct MsObject* notValues[4];
+  const bool notExpected[] = {true, true, false, false};
+  for (int i = 0; i < 4; ++i) {
+    msVmFixtureInit(&fixture);
+    notValues[0] = msNewNil(fixture.L);
+    notValues[1] = (struct MsObject*)msStringFromCStr(&fixture.L->heap, "");
+    notValues[2] = (struct MsObject*)msStringFromCStr(&fixture.L->heap, "value");
+    notValues[3] = msVmFixtureTestInt(&fixture, 1);
+    msVmFixtureRunUnary(&fixture, MS_OP_NOT, notValues[i]);
+    MS_ASSERT_EQ(MS_OK, fixture.status);
+    MS_ASSERT_TRUE(fixture.result != NULL);
+    if (fixture.result != NULL) {
+      MS_ASSERT_EQ(MS_TYPE_BOOL, msObjectTag(fixture.result));
+      MS_ASSERT_TRUE(msBoolValue(fixture.result) == notExpected[i]);
+    }
+    MS_ASSERT_EQ(0, fixture.co.frameCount);
+    MS_ASSERT_EQ(1, fixture.co.stackTop);
+    msVmFixtureDestroy(&fixture);
+  }
+
+  msVmFixtureInit(&fixture);
+  msVmFixtureRunUnary(&fixture, MS_OP_NEG, msVmFixtureTestInt(&fixture, INT64_MIN));
+  msVmFixtureAssertError(&fixture, "integer overflow");
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  msVmFixtureRunUnary(&fixture, MS_OP_INVERT, msNewFloat(fixture.L, 1.0));
+  msVmFixtureAssertError(&fixture, "TypeError:");
   msVmFixtureDestroy(&fixture);
 }
 
@@ -628,7 +891,10 @@ static const MsTestCase msTestCases[] = {
   {"Vm.ConditionalJumpsCoverTruthiness", testvmconditionalJumpsCoverTruthiness},
   {"Vm.UndefinedGlobalReportsLocationAndRestores", testvmundefinedGlobalReportsLocationAndRestores},
   {"Vm.InvalidOperandsReportRuntimeErrors", testvminvalidOperandsReportRuntimeErrors},
-  {"Vm.IntegerAddOverflowUsesSlowPath", testvmintegerAddOverflowUsesSlowPath}
+  {"Vm.IntegerArithmeticAndShiftBoundaries", testvmintegerArithmeticAndShiftBoundaries},
+  {"Vm.NumericArithmeticPromotesToFloat", testvmnumericArithmeticPromotesToFloat},
+  {"Vm.ArithmeticErrorsRestoreCoroutine", testvmarithmeticErrorsRestoreCoroutine},
+  {"Vm.UnaryArithmeticAndTruthiness", testvmunaryArithmeticAndTruthiness}
 };
 
 MS_TEST_MAIN(msTestCases)
