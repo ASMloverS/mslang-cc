@@ -258,6 +258,21 @@ MS_TEST(vm, coroutineLifecycleAndNilReturn) {
   msVmFixtureDestroy(&fixture);
 }
 
+MS_TEST(vm, booleanConstantsLoad) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  msVmFixtureTestConst(&fixture, MS_OP_LOAD_TRUE);
+  MS_ASSERT_EQ(MS_TYPE_BOOL, msObjectTag(fixture.result));
+  MS_ASSERT_TRUE(msBoolValue(fixture.result));
+  msVmFixtureDestroy(&fixture);
+
+  msVmFixtureInit(&fixture);
+  msVmFixtureTestConst(&fixture, MS_OP_LOAD_FALSE);
+  MS_ASSERT_EQ(MS_TYPE_BOOL, msObjectTag(fixture.result));
+  MS_ASSERT_TRUE(!msBoolValue(fixture.result));
+  msVmFixtureDestroy(&fixture);
+}
+
 MS_TEST(vm, pushFrameBuildsWindowAndGrows) {
   struct MsVmFixture fixture;
   msVmFixtureInit(&fixture);
@@ -602,6 +617,7 @@ static const MsTestCase msTestCases[] = {
   {"Vm.FunctionObjects", testvmfunctionObjects},
   {"Vm.SlowOperatorSemantics", testvmslowOperatorSemantics},
   {"Vm.CoroutineLifecycleAndNilReturn", testvmcoroutineLifecycleAndNilReturn},
+  {"Vm.BooleanConstantsLoad", testvmbooleanConstantsLoad},
   {"Vm.PushFrameBuildsWindowAndGrows", testvmpushFrameBuildsWindowAndGrows},
   {"Vm.PushFrameValidatesArgumentsAndLimits", testvmpushFrameValidatesArgumentsAndLimits},
   {"Vm.PushFrameRelocatesAliasedArguments", testvmpushFrameRelocatesAliasedArguments},
