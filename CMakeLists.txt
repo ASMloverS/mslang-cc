@@ -113,4 +113,7 @@ if(MSLANG_BUILD_TESTS)
   mslang_add_c_test(test_proto)
   mslang_add_c_test(test_compiler)
   mslang_add_c_test(test_vm)
+  add_test(NAME test_ms_scripts
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/run_tests.py"
+          --mslang "$<TARGET_FILE:mslang-cli>")
 endif()
