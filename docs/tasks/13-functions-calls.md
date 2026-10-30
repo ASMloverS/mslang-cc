@@ -104,7 +104,7 @@ int defaultCount;               // trailing normal params carrying a default val
 
 帧建立流程（callee 为 `MS_TYPE_FUNCTION`，对应 VM 助手 `msVmCallFunction`，假定名）：
 
-1. 检查调用深度：当前协程帧数达到 `MS_VM_MAX_FRAMES`（取 1000，定义在 VM 内部头文件，与任务 08 对齐）时置错误槽 `RecursionError: maximum recursion depth exceeded`，返回 `MS_ERROR_RUNTIME`。
+1. 检查调用深度：当前协程帧数达到 `MS_VM_FRAMES_MAX`（取 1000，定义在 VM 内部头文件，与任务 08 对齐）时置错误槽 `RecursionError: maximum recursion depth exceeded`，返回 `MS_ERROR_RUNTIME`。
 2. `base = 栈顶 - (n + k)`，`callable` 位于 `base - 1`。
 3. 参数绑定（第 4 节）：结果写入协程持有的 scratch 槽数组（长度 S = `paramCount` + var/kw 占位），绑定失败（TypeError）直接中止，实参与 callable 由统一错误路径清栈。
 4. 窗口落成：弹出全部 n + k 个实参；把 scratch 的 S 个槽值写入 `base` 起的连续槽位；窗口扩展至 `localCount`，其余槽补 nil；栈顶设为 `base + localCount`，求值栈从窗口上方重新计起。
