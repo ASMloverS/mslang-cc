@@ -1452,6 +1452,269 @@ MS_TEST(vm, cFunctionCallPreservesExistingLocation) {
   msVmFixtureDestroy(&fixture);
 }
 
+MS_TEST(vm, allocationFailuresRestoreAndDoNotLeak) {
+  bool sawSuccess = false;
+  for (int64_t failAfter = 0; failAfter <= 39; ++failAfter) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 40)));
+    MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 2)));
+    MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+    MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
+    MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_ADD, 0, 0));
+    MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+    MS_ASSERT_EQ(MS_OK, msProtoBuild(&fixture.builder, &fixture.proto));
+
+    msMemSetFailAfter(failAfter);
+    fixture.status = msCallProto(fixture.L, &fixture.co, fixture.proto, 0, NULL, &fixture.result);
+    msMemSetFailAfter(-1);
+    MS_ASSERT_TRUE(fixture.status == MS_OK || fixture.status == MS_ERROR_OOM);
+    if (fixture.status == MS_OK) {
+      sawSuccess = true;
+      MS_ASSERT_TRUE(fixture.result != NULL);
+      if (fixture.result != NULL) {
+        MS_ASSERT_EQ(42, msIntWordValue(fixture.result));
+      }
+      MS_ASSERT_EQ(0, fixture.co.frameCount);
+      MS_ASSERT_EQ(1, fixture.co.stackTop);
+    } else {
+      MS_ASSERT_EQ(MS_ERROR_OOM, fixture.status);
+      MS_ASSERT_TRUE(fixture.result == NULL);
+      MS_ASSERT_EQ(0, fixture.co.frameCount);
+      MS_ASSERT_EQ(0, fixture.co.stackTop);
+      MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(fixture.L));
+    }
+    msVmFixtureDestroy(&fixture);
+  }
+  MS_ASSERT_TRUE(sawSuccess);
+}
+
+MS_TEST(vm, targetedAllocationFailuresSetOom) {
+  msMemResetStats();
+  MsState* L = msNewState();
+  MS_ASSERT_TRUE(L != NULL);
+  if (L == NULL) {
+    return;
+  }
+  struct MsProto* proto = msVmTestRawProto();
+  struct MsString* globalName = msStringFromCStr(&L->heap, "oomGlobal");
+  struct MsString* functionName = msStringFromCStr(&L->heap, "oomFunction");
+  struct MsObject* value = msNewInt(L, INT64_MAX);
+  struct MsObject* lhs = (struct MsObject*)msStringFromCStr(&L->heap, "left");
+  struct MsObject* rhs = (struct MsObject*)msStringFromCStr(&L->heap, "right");
+  MS_ASSERT_TRUE(proto != NULL);
+  MS_ASSERT_TRUE(globalName != NULL);
+  MS_ASSERT_TRUE(functionName != NULL);
+  MS_ASSERT_TRUE(value != NULL);
+  MS_ASSERT_TRUE(lhs != NULL);
+  MS_ASSERT_TRUE(rhs != NULL);
+
+  msMemSetFailAfter(0);
+  MsResult status = msStateSetGlobal(L, globalName, value);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_EQ(MS_ERROR_OOM, status);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(L));
+  MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
+  MS_ASSERT_EQ(0, L->globalsLen);
+  MS_ASSERT_EQ(0, L->globalsCap);
+  msStateClearError(L);
+
+  msMemSetFailAfter(0);
+  struct MsObject* function = msNewFunction(L, proto);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(function == NULL);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(L));
+  MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
+  msStateClearError(L);
+
+  msMemSetFailAfter(0);
+  function = msNewCFunction(L, functionName, msVmTestCAddOne);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(function == NULL);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(L));
+  MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
+  msStateClearError(L);
+
+  for (int64_t failAfter = 0; failAfter <= 1; ++failAfter) {
+    msMemSetFailAfter(failAfter);
+    struct MsObject* concatenated = msObjectBinaryOp(L, MS_OP_ADD, lhs, rhs);
+    msMemSetFailAfter(-1);
+    MS_ASSERT_TRUE(concatenated == NULL);
+    MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(L));
+    MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
+    msStateClearError(L);
+  }
+
+  msMemSetFailAfter(0);
+  struct MsObject* arithmetic = msObjectBinaryOp(L, MS_OP_BITAND, value, value);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_TRUE(arithmetic == NULL);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(L));
+  MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
+  msStateClearError(L);
+
+  for (int64_t failAfter = 0; failAfter <= 2; ++failAfter) {
+    msMemSetFailAfter(failAfter);
+    msRaiseRuntimeError(L, "formatted %s", "failure");
+    msMemSetFailAfter(-1);
+    MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(L));
+    MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
+    msStateClearError(L);
+  }
+
+  msProtoFree(proto);
+  msVmTestCloseState(L);
+}
+
+MS_TEST(vm, stateCreationOomEventuallySucceeds) {
+  bool sawSuccess = false;
+  for (int64_t failAfter = 0; failAfter <= 39; ++failAfter) {
+    msMemResetStats();
+    msMemSetFailAfter(failAfter);
+    MsState* L = msNewState();
+    msMemSetFailAfter(-1);
+    if (L == NULL) {
+      struct MsMemStats stats;
+      msMemGetStats(&stats);
+      MS_ASSERT_EQ(0, (long long)stats.liveBlocks);
+    } else {
+      sawSuccess = true;
+      msVmTestCloseState(L);
+    }
+  }
+  MS_ASSERT_TRUE(sawSuccess);
+}
+
+MS_TEST(vm, locationFormattingOomReturnsOom) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder,
+      (struct MsObject*)msStringFromCStr(&fixture.L->heap, "missing")));
+  msProtoSetLine(&fixture.builder, 41);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_GLOBAL, 0, 0));
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  MS_ASSERT_EQ(MS_OK, msProtoBuild(&fixture.builder, &fixture.proto));
+
+  msMemSetFailAfter(2);
+  fixture.status = msCallProto(fixture.L, &fixture.co, fixture.proto, 0, NULL, &fixture.result);
+  msMemSetFailAfter(-1);
+  MS_ASSERT_EQ(MS_ERROR_OOM, fixture.status);
+  MS_ASSERT_TRUE(fixture.result == NULL);
+  MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(fixture.L));
+  MS_ASSERT_TRUE(msStateErrorMessage(fixture.L) == NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, deepEvaluationStackGrowsInSingleProto) {
+  enum { valueCount = 65 };
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  fixture.builder.proto.stackSize = valueCount;
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 1)));
+  for (int i = 0; i < valueCount; ++i) {
+    MS_ASSERT_EQ(i, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
+  }
+  for (int i = 0; i < valueCount - 1; ++i) {
+    MS_ASSERT_EQ(valueCount + i, msProtoEmitABC(&fixture.builder, MS_OP_ADD, 0, 0));
+  }
+  MS_ASSERT_EQ(2 * valueCount - 1, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_OK, fixture.status);
+  MS_ASSERT_TRUE(fixture.result != NULL);
+  if (fixture.result != NULL) {
+    MS_ASSERT_EQ(valueCount, msIntWordValue(fixture.result));
+  }
+  MS_ASSERT_TRUE(fixture.co.stackCap > 64);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(1, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, diagnosticUsesMatchingLineSegment) {
+  struct MsVmFixture fixture;
+  msVmFixtureInit(&fixture);
+  MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder,
+      (struct MsObject*)msStringFromCStr(&fixture.L->heap, "missing")));
+  msProtoSetLine(&fixture.builder, 3);
+  MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_NOP, 0, 0));
+  msProtoSetLine(&fixture.builder, 11);
+  MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_NOP, 0, 0));
+  msProtoSetLine(&fixture.builder, 29);
+  MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_GLOBAL, 0, 0));
+  MS_ASSERT_EQ(3, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+  msVmFixtureRun(&fixture);
+
+  MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+  MS_ASSERT_EQ(3, fixture.proto->linesLen);
+  MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "test.ms:29: undefined name 'missing'") != NULL);
+  MS_ASSERT_EQ(0, fixture.co.frameCount);
+  MS_ASSERT_EQ(0, fixture.co.stackTop);
+  msVmFixtureDestroy(&fixture);
+}
+
+MS_TEST(vm, booleanIdentityUsesSingletons) {
+  const bool values[][2] = {{true, true}, {false, false}, {true, false}};
+  const bool expected[] = {true, true, false};
+  for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    msVmFixtureRunBinary(&fixture, MS_OP_IS,
+        msNewBool(fixture.L, values[i][0]), msNewBool(fixture.L, values[i][1]));
+    msVmFixtureAssertBool(&fixture, expected[i]);
+    msVmFixtureDestroy(&fixture);
+  }
+}
+
+MS_TEST(vm, instructionPointerOutsideCodeRestores) {
+  const int32_t offsets[] = {1, -2};
+  for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    MS_ASSERT_EQ(0, msProtoEmitSAx(&fixture.builder, MS_OP_JUMP, offsets[i]));
+    msVmFixtureRun(&fixture);
+    MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+    MS_ASSERT_TRUE(fixture.result == NULL);
+    MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "instruction pointer out of bounds") != NULL);
+    MS_ASSERT_EQ(0, fixture.co.frameCount);
+    MS_ASSERT_EQ(0, fixture.co.stackTop);
+    msVmFixtureDestroy(&fixture);
+  }
+}
+
+#ifdef NDEBUG
+MS_TEST(vm, unsupportedOpcodeRestores) {
+  const MsOpCode ops[] = {MS_OP_BUILD_LIST, MS_OP_MAKE_FUNCTION, MS_OP_GET_ITER};
+  for (size_t i = 0; i < sizeof(ops) / sizeof(ops[0]); ++i) {
+    struct MsVmFixture fixture;
+    msVmFixtureInit(&fixture);
+    MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, ops[i], 0, 0));
+    MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_NIL, 0, 0));
+    MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_RETURN, 0, 0));
+    msVmFixtureRun(&fixture);
+
+    MS_ASSERT_EQ(MS_ERROR_RUNTIME, fixture.status);
+    MS_ASSERT_TRUE(fixture.result == NULL);
+    MS_ASSERT_TRUE(strstr(msStateErrorMessage(fixture.L), "opcode not implemented") != NULL);
+    MS_ASSERT_EQ(0, fixture.co.frameCount);
+    MS_ASSERT_EQ(0, fixture.co.stackTop);
+
+    msStateClearError(fixture.L);
+    struct MsProto* recovery = msVmTestRawProto();
+    MS_ASSERT_TRUE(recovery != NULL);
+    fixture.status = msCallProto(fixture.L, &fixture.co, recovery, 0, NULL, &fixture.result);
+    MS_ASSERT_EQ(MS_OK, fixture.status);
+    MS_ASSERT_TRUE(fixture.result == msNewNil(fixture.L));
+    MS_ASSERT_EQ(0, fixture.co.frameCount);
+    MS_ASSERT_EQ(1, fixture.co.stackTop);
+    msProtoFree(recovery);
+    msVmFixtureDestroy(&fixture);
+  }
+}
+#endif
+
 static const MsTestCase msTestCases[] = {
   {"Vm.StateLifecycleGlobalsAndErrors", testvmstateLifecycleGlobalsAndErrors},
   {"Vm.FunctionObjects", testvmfunctionObjects},
@@ -1485,7 +1748,18 @@ static const MsTestCase msTestCases[] = {
   {"Vm.CallRejectsUnsupportedFunctionKinds", testvmcallRejectsUnsupportedFunctionKinds},
   {"Vm.RecursiveCallOverflowRestoresCoroutine", testvmrecursiveCallOverflowRestoresCoroutine},
   {"Vm.CoroutineCanRunNewProtoAfterError", testvmcoroutineCanRunNewProtoAfterError},
-  {"Vm.CFunctionCallPreservesExistingLocation", testvmcFunctionCallPreservesExistingLocation}
+  {"Vm.CFunctionCallPreservesExistingLocation", testvmcFunctionCallPreservesExistingLocation},
+  {"Vm.AllocationFailuresRestoreAndDoNotLeak", testvmallocationFailuresRestoreAndDoNotLeak},
+  {"Vm.TargetedAllocationFailuresSetOom", testvmtargetedAllocationFailuresSetOom},
+  {"Vm.StateCreationOomEventuallySucceeds", testvmstateCreationOomEventuallySucceeds},
+  {"Vm.LocationFormattingOomReturnsOom", testvmlocationFormattingOomReturnsOom},
+  {"Vm.DeepEvaluationStackGrowsInSingleProto", testvmdeepEvaluationStackGrowsInSingleProto},
+  {"Vm.DiagnosticUsesMatchingLineSegment", testvmdiagnosticUsesMatchingLineSegment},
+  {"Vm.BooleanIdentityUsesSingletons", testvmbooleanIdentityUsesSingletons},
+  {"Vm.InstructionPointerOutsideCodeRestores", testvminstructionPointerOutsideCodeRestores},
+#ifdef NDEBUG
+  {"Vm.UnsupportedOpcodeRestores", testvmunsupportedOpcodeRestores},
+#endif
 };
 
 MS_TEST_MAIN(msTestCases)
