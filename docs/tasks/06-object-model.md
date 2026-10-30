@@ -179,8 +179,8 @@ const char* msTypeTagName(MsTypeTag tag);                          // static nam
 
 - int 驻留是规范明确点名的实现细节（02-types §6：`is` 不得依赖）；缓存命中判定集中在 `msIntNew` 一处，无二处路径。
 - v0.1 的 `MsInt` 就是 int64：溢出提升为大整数由任务 31 在保持本接口的前提下替换表示（「统一走 MsInt 接口」，08-vm-internals §3）；届时 `msIntIsWord` 由恒真变为真实谓词，调用方（任务 08 快路径）无需改动。
-- 与任务 08 的接口互洽：任务 08（VM 执行核心）假定本模块提供 `msIntIsWord`、`msIntWordValue`、`msFloatValue(const struct MsObject*)` 与 `msObjectValueEquals`（不取堆上下文的形态），本文按同名同签名落地，两处文档无歧义衔接；其假定的 `msObjectBinaryOp`/`msObjectUnaryOp`/`msLen` 与最小 `MsState` 属任务 08/09 的职责（见「设计依据」第 3 条），不在本模块。
-- 机器字 int 的运算溢出策略在此定稿（任务 08 的慢路径按其执行）：本模块不含算术；任务 31 落地前，检出 int64 溢出即报运行时错误（整数溢出，不允许静默截断）；任务 31 落地后改为自动提升为大整数，该策略切换只发生在慢路径内部。
+- 与任务 08 的接口互洽：任务 08（VM 执行核心）假定本模块提供 `msIntIsWord`、`msIntWordValue`、`msFloatValue(const struct MsObject*)` 与 `msObjectValueEquals`（不取堆上下文的形态），本文按同名同签名落地，两处文档无歧义衔接。`msObjectBinaryOp`/`msObjectUnaryOp` 已由任务 08 在 `src/object/ms_operator.{h,c}` 落地，承载 VM 快路径之外的内建类型运算；`msLen` 与最小 `MsState` 仍不属于本模块。
+- 机器字 int 的运算溢出策略在此定稿（任务 08 的慢路径按其执行）：本模块不含算术；当前任务 31 尚未落地，检出 int64 溢出即由 `ms_operator` 报运行时错误（整数溢出，不允许静默截断）；任务 31 落地后改为自动提升为大整数，该策略切换只发生在慢路径内部。
 
 ### MsString 与驻留表（ms_string）
 

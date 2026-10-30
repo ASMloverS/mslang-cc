@@ -139,7 +139,7 @@ v0.1 子集共 63 条（枚举中标注 v0.1 的全部条目），格式与操�
 | 算术 | `ADD` `SUB` `MUL` `DIV` `FLOORDIV` `MOD` `POW` `BITAND` `BITOR` `BITXOR` `SHL` `SHR` | ABC | 无（弹二压一） |
 | | `NEG` `NOT` `INVERT` | ABC | 无（弹一压一） |
 | 比较 | `EQ` `NE` `LT` `LE` `GT` `GE` `IS` `IN` | ABC | 无（弹二压一布尔） |
-| | `CMP_CHAIN` | ABC | `A` = 链中剩余比较段数（链式比较 `a < b < c` 的操作数排列由任务 07/08 约定） |
+| | `CMP_CHAIN` | ABC | `A` = 本段比较操作码（`EQ`..`GE`），`Bx` = 失败时相对下一条指令的前向跳转偏移 |
 | 跳转 | `JUMP` `JUMP_IF_FALSE` `JUMP_IF_TRUE` `JUMP_IF_NIL` | sAx | 相对偏移；条件跳转弹栈顶测试 |
 | 容器 | `BUILD_LIST` `BUILD_DICT` | ABC | `Bx` = 元素数（dict 为键值对数），自栈弹出 |
 | | `INDEX` `SET_INDEX` `DEL_INDEX` | ABC | 无（容器与下标自栈弹出） |

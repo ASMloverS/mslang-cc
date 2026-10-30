@@ -8,12 +8,12 @@
 
 交付 mslang 的函数定义与调用机制，打通「`func` 定义 → `MsFunction` 对象 → `MS_OP_CALL`/`MS_OP_CALL_KW`/`MS_OP_TAIL_CALL`/`MS_OP_RETURN` 执行」的完整链路：
 
-- 函数是一等值：可赋值、可作实参传递、可作返回值（[03-syntax.md](../language/03-syntax.md) §4）；本任务落地 `MS_TYPE_FUNCTION` 函数对象与 `MAKE_FUNCTION`/`MAKE_LAMBDA` 两条造函数指令的运行时语义。
+- 函数是一等值：可赋值、可作实参传递、可作返回值（[03-syntax.md](../language/03-syntax.md) §4）；任务 08 已在 `src/vm/ms_function.{h,c}` 落地最小 `MS_TYPE_FUNCTION`/C 函数对象，本任务扩展 defaults 并实现 `MAKE_FUNCTION`/`MAKE_LAMBDA` 两条造函数指令的运行时语义，不另建对象类型。
 - 完整调用约定：参数压栈次序、帧建立/拆除、返回值回传；参数绑定算法覆盖位置参数、默认参数（**定义时求值一次**、绑定共享引用）、关键字实参、`*args` 打包、`**kwargs` 打包及全部参数错误路径（TypeError 系列）。
 - `lambda` 单表达式体编译为匿名子 Proto，运行时语义与 `func` 一致。
 - `return` 的零值/单值/多值形态；`return f(...)` 形态编译为 `TAIL_CALL`，帧复用不增长调用栈。
 
-本任务定稿任务 05 预留的 `hasVarArgs`/`hasKwArgs` 调用约定（[05-bytecode-proto.md](05-bytecode-proto.md) 明确「由任务 13 定稿」），并定稿任务 10 假定的 C 函数关键字参数约定。完成后任务 14（闭包与 upvalue）只需在 `MsFunction` 上挂接 upvalue 数组、在帧退出时补 `CLOSE_UPVALS`，不再改动本任务的调用约定。
+本任务定稿任务 05 预留的 `hasVarArgs`/`hasKwArgs` 调用约定（[05-bytecode-proto.md](05-bytecode-proto.md) 明确「由任务 13 定稿」），并定稿任务 10 假定的 C 函数关键字参数约定。完成后任务 14（闭包与 upvalue）只需填充任务 08 已有的 upvalue 字段、在帧退出时补 `CLOSE_UPVALS`，不再改动本任务的调用约定。
 
 明确不在本任务范围：闭包/upvalue 捕获（任务 14，嵌套函数引用外层局部变量在本任务为编译错误）；方法调用与 `self`（任务 15）；`__call__` 协议（任务 25）；`async func` 的调用语义（任务 43，本任务 `isAsync` 函数被调用时按运行错误处理）；异常对象体系（任务 23，本任务错误仍以错误槽消息 + `MS_ERROR_RUNTIME` 呈现）。
 
@@ -40,28 +40,28 @@
 5. **`MsProto` 增补 `paramNames` 与 `defaultCount` 两个字段**（任务 05 结构的扩展，见「详细设计」第 2 节）；任务 14 将再增 `upvalueCount`。实现时与任务 05 代码对齐。
 6. **嵌套函数引用外层局部变量暂为编译错误。** 名字解析的「闭包外层」段依赖 upvalue（任务 14）；本任务中嵌套函数只可引用自身局部与模块全局，编译器解析到外层局部名时报编译错误并在任务 14 解除。
 
-以下接口名在依赖任务文档（06 对象模型、07 编译器、08 VM 执行核心）中尚未定稿，本文为其假定命名：`msNewFunction` 等对象创建原语、`msNewList`/`msListAppend`/`msNewDict`/`msDictSet`、`struct MsCoroutine` 的帧栈字段与 `msVmPushFrame` 等帧原语、编译器入口 `struct MsCompiler` 及其发射助手。**实现时以对应任务文档定名为准。**
+任务 08 已定名并提供 `msNewFunction`/`msNewCFunction`、`struct MsCoroutine` 的帧栈字段与 `msVmPushFrame` 等帧原语，本任务必须复用。`msNewList`/`msListAppend`/`msNewDict`/`msDictSet`、编译器入口 `struct MsCompiler` 及其发射助手仍以对应任务文档定名为准。
 
 ## 详细设计
 
 ### 1. 文件与模块边界
 
-- 新建 `src/vm/ms_function.h`（include guard `MSLANG_SRC_VM_MS_FUNCTION_H_`）与 `src/vm/ms_function.c`：函数对象 `struct MsFunction`、创建/装配接口、可调用判定、参数绑定算法。头文件自包含（include `<stdbool.h>`、`<mslang/state.h>`，前向声明 `struct MsProto`/`struct MsString`/`struct MsUpvalue`）。
+- 扩展任务 08 已提供的 `src/vm/ms_function.h`（include guard `MSLANG_SRC_VM_MS_FUNCTION_H_`）与 `src/vm/ms_function.c`：保留最小函数对象与 `msNewFunction`/`msNewCFunction`，追加 defaults 装配、可调用判定与参数绑定算法，不新建第二套函数对象。
 - 编译器侧（任务 07 的 `src/compiler/`）新增：`funcDecl`/`lambda`/调用表达式/`return` 的字节码生成（见第 9 节），不新增文件。
-- VM 侧（任务 08 的 `src/vm/ms_vm.c`）新增：`MS_OP_CALL`/`MS_OP_CALL_KW`/`MS_OP_TAIL_CALL`/`MS_OP_RETURN`/`MS_OP_MAKE_FUNCTION`/`MS_OP_MAKE_LAMBDA` 六个分派分支，帧原语沿用任务 08。
-- 堆分配纪律：函数对象经任务 06 的 GC 对象分配原语（假定名 `msObjectNewFunction`，内部走 `msAlloc` 系）；绑定用的 scratch 缓冲区挂在协程结构上、经 `msRealloc` 增长、随协程销毁释放。
+- VM 侧（任务 08 的 `src/vm/ms_vm.c`）在已有 `CALL`/`RETURN` 上新增 `MS_OP_CALL_KW`/`MS_OP_TAIL_CALL`/`MS_OP_MAKE_FUNCTION`/`MS_OP_MAKE_LAMBDA` 四个分派分支，帧原语沿用任务 08。
+- 堆分配纪律：函数对象继续经任务 08 的 `msNewFunction`/`msNewCFunction`（内部走任务 06 的 `msObjectAlloc`）；绑定用的 scratch 缓冲区挂在协程结构上、经 `msRealloc` 增长、随协程销毁释放。
 
 ### 2. 函数对象与 MsProto 增补
 
 ```c
 // src/vm/ms_function.h
 struct MsFunction {
-  MsObjectHeader header;         // object model (task 06)
+  struct MsObjectHeader header;  // object model (task 06)
   struct MsProto* proto;         // compiled body (constants, code, metadata)
   struct MsObject** defaults;    // default values, evaluated once at the definition site
   int defaultsLen;               // == proto->defaultCount
   struct MsUpvalue** upvalues;   // task 14; NULL/0 in this task
-  int upvaluesLen;
+  int upvalueCount;              // existing field name from task 08
 };
 
 // Creates a function object wrapping proto with empty defaults/upvalues.
@@ -209,9 +209,9 @@ callee 为 `MS_TYPE_C_FUNCTION` 时不建帧，VM 把实参整理为连续 `argv
 ## 实现步骤
 
 1. 扩展 `MsProto`：追加 `paramNames`/`defaultCount` 字段并接通构建器/释放路径（与任务 05 实现对齐）。验证：任务 05 既有 C 单元测试无回归，新字段随 Proto 正确移交。
-2. 建 `src/vm/ms_function.{h,c}`：`struct MsFunction`、`msNewFunction`/`msFunctionAttachDefaults`/`msFunctionIsCallable`。验证：创建/装配后经任务 02 分配统计断言无泄漏。
+2. 扩展任务 08 的 `src/vm/ms_function.{h,c}`：复用 `struct MsFunction`、`msNewFunction`/C 函数对象，追加 defaults 字段、`msFunctionAttachDefaults`/`msFunctionIsCallable`。验证：创建/装配后经任务 02 分配统计断言无泄漏。
 3. 编译器生成 `funcDecl`：子 Proto 编译（参数槽位约定、`paramNames`/`defaultCount` 填写）、定义点默认值表达式发射、`MAKE_FUNCTION` + `STORE_GLOBAL`/`STORE_LOCAL`。验证：ms 脚本 `func add(a, b) { return a + b }; assert(add(1, 2) == 3)`。
-4. VM 实现 `CALL`/`RETURN` 与帧建立/拆除（第 3 节）、非可调用 TypeError、深度上限。验证：位置参数、缺省返回 nil（无 `return` 的函数返回 nil）、嵌套调用链、递归阶乘。
+4. 在任务 08 已有的 `CALL`/`RETURN` 与帧建立/拆除上扩展完整绑定（第 3 节）、非可调用 TypeError、深度上限。验证：位置参数、缺省返回 nil（无 `return` 的函数返回 nil）、嵌套调用链、递归阶乘。
 5. 实现 `msFunctionBindArgs` 全算法（默认值、`*args` 打包、缺参/超参错误）。验证：默认参数各组合、`*args` 收集与空收集、错误消息断言。
 6. 实现 `CALL_KW`：名表读取、关键字匹配/查重/未知名、`**kwargs` 打包、C 函数交错 argv 通道；回头对齐任务 10 `print` 的 kwarg 扫描。验证：关键字实参乱序绑定、`print("a", "b", sep=", ")` 输出比对。
 7. 实现 `return` 三形态与 `TAIL_CALL`（含 C 函数退化路径）。验证：多值返回解包、尾调用深递归不溢出。

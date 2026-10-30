@@ -62,14 +62,14 @@ MsResult  msEvalFile(MsState* L, const char* path);
 #endif  // MSLANG_INCLUDE_MSLANG_STATE_H_
 ```
 
-本任务中 `MsState` 的最小职责（其余字段随 GC、调度器任务逐步填充）：
+任务 08 已在 `src/vm/ms_state_internal.h` / `src/vm/ms_state.c` 提供 `msNewState`/`msCloseState` 与最小 `MsState`，本任务直接复用以下既有能力，不重复实现生命周期：
 
-- **全局命名空间**：一张 `名字 → MsObject*` 的表，承载临时内建（`print`、`assert`）与脚本顶层 `:=` 声明的全局变量；`MS_OP_LOAD_GLOBAL` / `MS_OP_STORE_GLOBAL` 在此表上读写。
-- **主协程**：持有一个主协程（调用栈 + 求值栈，任务 08 产物），`msEvalFile` 在其上执行顶层 Proto；本任务不创建额外线程与调度器。
-- **错误槽**：保存最近一次失败的消息对象（含文件/行/列），供 CLI 经 `msErrorGet` 取出。
-- **分配统计**：所有堆内存经 `msAlloc`/`msRealloc`/`msFree`（任务 02），`MsState` 记录分配计数，为 GC 阈值触发留口。
+- **线性全局命名空间**：一张 `名字 → MsObject*` 的线性表，承载临时内建（`print`、`assert`）与脚本顶层 `:=` 声明的全局变量；`MS_OP_LOAD_GLOBAL` / `MS_OP_STORE_GLOBAL` 已在此表上读写。
+- **主协程**：`MsState` 内嵌主协程（调用栈 + 求值栈），`msEvalFile` 在其上执行顶层 Proto；本任务不创建额外线程与调度器。
+- **错误槽**：保存最近一次失败的消息对象与 `MsResult`，供 CLI 取出；位置诊断由对应编译/执行路径补充。
+- **堆与分配**：`MsState` 内嵌 `MsHeap`，所有堆内存经 `msAlloc`/`msRealloc`/`msFree`（任务 02），销毁路径已经负责主协程、全局表、存活对象与状态本体。
 
-`msNewState` 流程：分配并零初始化 `MsState` → 初始化全局命名空间 → 挂接临时内建（见第 4 节）→ 初始化主协程。`msCloseState` 按获取的逆序释放：销毁协程 → 释放全局命名空间与全部存活对象（本任务允许采用「关闭时遍历全对象链表全部回收」的简化策略，正式 GC 在后续任务落地）→ 释放 `MsState` 本体。
+任务 09 只新增求值入口 `msEvalFile`、临时内建及其注册挂接、CLI。内建需要在创建后立即可用时，仅在既有 `msNewState` 流程中接入注册调用；heap、主协程、全局表、错误槽与 `msCloseState` 的所有权和销毁逻辑仍复用任务 08，不建第二套状态实现。
 
 ### 3. 模块顶层编译为 MsProto 的约定
 
@@ -126,9 +126,9 @@ mslang --version        # 打印版本（MS_VERSION_MAJOR/MINOR/PATCH）
 
 ## 实现步骤
 
-1. 在 `include/mslang/state.h` 落定 `msNewState` / `msCloseState` / `msEvalFile` 声明，并在 `src/` 内部头文件中给出本任务所需的 `MsState` 最小结构（全局命名空间、主协程、错误槽、分配统计）。
+1. 复用任务 08 的 `include/mslang/state.h`、`src/vm/ms_state_internal.h` 与最小 `MsState`，只在公开头中补充 `msEvalFile` 声明，不重复定义状态布局。
 2. 实现 `src/vm/ms_builtin.c`：`msBuiltinPrint` / `msBuiltinAssert` 两个 `MsCFunction` 与 `msBuiltinRegisterMinimal`。
-3. 实现 `msNewState` / `msCloseState`：初始化与逆序销毁，调用 `msBuiltinRegisterMinimal` 挂接临时内建。
+3. 把 `msBuiltinRegisterMinimal` 挂接到既有状态初始化路径；复用任务 08 的 `msNewState` / `msCloseState` 及其逆序销毁，不另写生命周期。
 4. 实现 `msEvalFile`：读取文件内容 → lexer → parser → compiler → 顶层 MsProto → 主协程执行 → 返回 `MsResult`；每步失败早返回并填充错误槽（含文件/行/列）。
 5. 在编译器中确认顶层 Proto 约定（第 3 节）：`name = "<main>"`、末尾补 `MS_OP_RETURN`、顶层 `:=` 走全局命名空间。
 6. 实现 `src/cli/main.c`：参数处理、文件预检、退出码映射（第 5 节）；接入 CMake `mslang-cli` 目标并链接 `mslang` 库。

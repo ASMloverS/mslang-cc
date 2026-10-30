@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [05 字节码格式与 MsProto](05-bytecode-proto.md)、[06 对象模型基础](06-object-model.md) |
+| v0.1 | ✅ | [05 字节码格式与 MsProto](05-bytecode-proto.md)、[06 对象模型基础](06-object-model.md) |
 
 ## 任务目标
 
@@ -37,7 +37,7 @@
   - 值相等：`bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b)`（沿用任务 05 的同名假定）；
   - 函数对象访问：`struct MsProto* msFunctionProto(const struct MsObject* fn)`、`MsCFunction msAsCFunction(const struct MsObject* fn)`；
   - 全局命名空间：`struct MsObject* msStateGetGlobal(MsState* L, const struct MsString* name)`（未定义返回 `NULL`）、`MsResult msStateSetGlobal(MsState* L, const struct MsString* name, struct MsObject* value)`；
-  - 最小 `MsState` 的创建/销毁（`msNewState` / `msCloseState`，供 C 单元测试构造环境；本任务负责对象模型所需的最小形态（`MsState` 内嵌任务 06 的 `MsHeap`），[09 最小可运行解释器](09-minimal-interpreter.md) 再扩展全局命名空间挂接与错误槽）。
+  - 最小 `MsState` 的创建/销毁（`msNewState` / `msCloseState`）：本任务已在 `src/vm/ms_state_internal.h` / `src/vm/ms_state.c` 落地 `MsHeap`、主协程、线性全局表与错误槽；[09 最小可运行解释器](09-minimal-interpreter.md) 只扩展求值入口、内建注册和 CLI，不重复生命周期。
   - 错误报告沿用 [09-c-api.md](../language/09-c-api.md) §8 已定名的 `void msRaiseRuntimeError(MsState* L, const char* fmt, ...)`。
 
 对规范的三处显式处理（实现与评审时以此为据）：
@@ -50,10 +50,13 @@
 
 ### 文件与模块边界
 
-- `src/vm/ms_vm.h`（guard `MSLANG_SRC_VM_MS_VM_H_`）：`struct MsCallFrame`、`struct MsCoroutine`、容量常量与公开函数声明；自包含，include `<stdbool.h>`、`<stdint.h>`、任务 02 的 `"core/ms_result.h"`（假定名）与 `"vm/ms_proto.h"`；前向声明 `struct MsObject`、`struct MsString`、`struct MsUpvalue`、`MsState`。
+- `src/vm/ms_vm.h`（guard `MSLANG_SRC_VM_MS_VM_H_`）：`struct MsCallFrame`、`struct MsCoroutine`、容量常量与公开函数声明；自包含，include `<mslang/error.h>` 与 `"vm/ms_proto.h"`，并前向声明 `struct MsUpvalue`、`MsState`。
 - `src/vm/ms_vm.c`：分派主循环与全部栈/帧管理实现；辅助函数一律文件内 `static`。
-- 模块的堆分配仅四处：协程的帧数组、求值栈数组及其增长，全部经 `msAlloc/msRealloc/msFree`，所有者为协程对象（`msCoroutineDestroy` 释放）。帧的 `upvalues` 指针是**借用**（指向函数对象持有的 upvalue 数组），VM 不释放。
-- 协程对象本体（`struct MsCoroutine`）v0.1 由调用方经 `msCoroutineInit` / `msCoroutineDestroy` 管理（可内嵌于 `MsState` 的主协程字段）；GC 对象化（挂 `MsObjectHeader`、加调度字段）属任务 43，本文结构为其预留兼容形态。
+- `src/vm/ms_state_internal.h` / `src/vm/ms_state.c`：最小 `MsState` 布局与生命周期、主协程、线性全局表、格式化错误槽及 heap 值构造包装。
+- `src/vm/ms_function.h` / `src/vm/ms_function.c`：最小 `MsFunction` 与 C 函数对象、构造器及访问接口；defaults 与完整参数绑定由任务 13 扩展。
+- `src/object/ms_operator.h` / `src/object/ms_operator.c`：`msObjectBinaryOp`/`msObjectUnaryOp` 慢路径，覆盖溢出、浮点、字符串与类型错误语义。
+- VM 协程模块的堆分配仅四处：协程的帧数组、求值栈数组及其增长，全部经 `msAlloc/msRealloc/msFree`，所有者为协程对象（`msCoroutineDestroy` 释放）。帧的 `upvalues` 指针是**借用**（指向函数对象持有的 upvalue 数组），VM 不释放。
+- 协程对象本体（`struct MsCoroutine`）v0.1 由调用方经 `msCoroutineInit` / `msCoroutineDestroy` 管理（已内嵌于 `MsState.main`）；GC 对象化（挂 `MsObjectHeader`、加调度字段）属任务 43，本文结构为其预留兼容形态。
 
 ### 协程执行上下文：调用栈与求值栈
 
@@ -91,6 +94,7 @@ stack:  ... | callable | arg0 ... arg_{paramCount-1} | nil-filled locals ... | s
 ```
 
 - 前 `paramCount` 槽由调用方以实参初始化；其余局部槽在压帧时填充 nil（`LOAD_LOCAL` 读到未赋值槽不产生未定义值）。
+- `msVmPushFrame`/`msCallProto` 直接压入 Proto 时，在 `baseIndex - 1` 写入 **nil callee 哨兵**，使顶层直接调用与脚本 `CALL` 共用同一窗口和 `RETURN` 落栈机制；哨兵不是可调用对象，也不参与实参计数。
 - `baseIndex + localCount` 起是该帧的求值暂存区，深度由编译期算出的 `proto->stackSize` 封顶；压帧时一次性确保整块窗口容量，帧内指令的 push/pop 因此不再做容量检查（仅 debug 构建以 `MS_ASSERT` 守 `stackSize` 不变量）。
 
 ### 求值栈增长与重定位
@@ -264,12 +268,12 @@ Lend:                        // 链尾：Bx 指向这里
 
 ## 验收标准
 
-- [ ] `src/vm/ms_vm.h` / `ms_vm.c` 存在，guard 为 `MSLANG_SRC_VM_MS_VM_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、`struct MsCallFrame`/`struct MsCoroutine` 不 typedef）。
-- [ ] 每个协程独立的调用栈（帧数组）与求值栈，均堆上分配、倍增伸缩；`MsCallFrame` 含 proto/返回地址（`pc`）/求值栈基址（`baseIndex` 偏移）/upvalue 数组四要素；求值栈基址以偏移表示，扩容重定位后结果正确。
-- [ ] 分派为单一 `msVmRun` 函数内的 switch；无 computed goto、无 `#ifdef` 分派分支；`default` 覆盖全部未实现指令；回边与 `CALL` 处留有 safepoint 注释标记。
-- [ ] 本任务实现的 39 条指令语义与本文一致；算术快路径满足：双机器字 int 直接计算、溢出检出转慢路径、无符号运算规避 UB、`FLOORDIV`/`MOD` 为 Python 取整语义、`int / int` 得 float。
-- [ ] `CMP_CHAIN` 操作数约定（A = 比较操作码、Bx = 失败前向偏移、真压回右操作数、假压 false 跳链尾）按本文定稿并与任务 07 对齐。
-- [ ] `CALL`/`RETURN` 的帧压弹、实参布局、nil 填充、C 函数直调、深度上限与错误恢复语义如文所述；`msVmRun` 错误后协程恢复到进入深度。
-- [ ] 运行时错误经错误槽记录且含源文件与行号（`msProtoLineAt`）；全部堆分配经 `msAlloc/msRealloc/msFree`，任务 02 分配统计显示无泄漏。
-- [ ] `tests/c/test_vm.c` 覆盖「测试方案」全部清单项并全部通过；`ctest` 全绿；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；对任务 02/06 的接口假定（`msAlloc`、`MS_ASSERT`、`msIntIsWord`、`msObjectBinaryOp`、`msStateGetGlobal`、`msRaiseRuntimeError` 等）在实现时已按对应任务文档对齐；「指令实现范围」表的归属与 [README.md](README.md) 依赖图无冲突。
+- [x] `src/vm/ms_vm.h` / `ms_vm.c` 存在，guard 为 `MSLANG_SRC_VM_MS_VM_H_`，头文件自包含，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、`struct MsCallFrame`/`struct MsCoroutine` 不 typedef）。
+- [x] 每个协程独立的调用栈（帧数组）与求值栈，均堆上分配、倍增伸缩；`MsCallFrame` 含 proto/返回地址（`pc`）/求值栈基址（`baseIndex` 偏移）/upvalue 数组四要素；求值栈基址以偏移表示，扩容重定位后结果正确。
+- [x] 分派为单一 `msVmRun` 函数内的 switch；无 computed goto、无 `#ifdef` 分派分支；`default` 覆盖全部未实现指令；回边与 `CALL` 处留有 safepoint 注释标记。
+- [x] 本任务实现的 39 条指令语义与本文一致；算术快路径满足：双机器字 int 直接计算、溢出检出转慢路径、无符号运算规避 UB、`FLOORDIV`/`MOD` 为 Python 取整语义、`int / int` 得 float。
+- [x] `CMP_CHAIN` 操作数约定（A = 比较操作码、Bx = 失败前向偏移、真压回右操作数、假压 false 跳链尾）按本文定稿并与任务 07 对齐。
+- [x] `CALL`/`RETURN` 的帧压弹、实参布局、nil 填充、C 函数直调、深度上限与错误恢复语义如文所述；`msVmRun` 错误后协程恢复到进入深度。
+- [x] 运行时错误经错误槽记录且含源文件与行号（`msProtoLineAt`）；全部堆分配经 `msAlloc/msRealloc/msFree`，任务 02 分配统计显示无泄漏。
+- [x] `tests/c/test_vm.c` 覆盖「测试方案」全部清单项并全部通过；`ctest` 全绿；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；对任务 02/06 的接口假定（`msAlloc`、`MS_ASSERT`、`msIntIsWord`、`msObjectBinaryOp`、`msStateGetGlobal`、`msRaiseRuntimeError` 等）在实现时已按对应任务文档对齐；「指令实现范围」表的归属与 [README.md](README.md) 依赖图无冲突。
