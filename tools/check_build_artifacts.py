@@ -26,8 +26,15 @@ def find_build_artifacts(root: Path) -> list[Path]:
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [name for name in dirnames if name not in EXCLUDED_DIRS]
         for filename in filenames:
-            if Path(filename).suffix.lower() in ARTIFACT_SUFFIXES:
-                artifacts.append(Path(dirpath) / filename)
+            candidate = Path(dirpath) / filename
+            if candidate.suffix.lower() not in ARTIFACT_SUFFIXES:
+                continue
+            is_expected_output = (
+                candidate.suffix.lower() == ".out"
+                and candidate.is_relative_to(root / "tests" / "ms")
+            )
+            if not is_expected_output:
+                artifacts.append(candidate)
     return sorted(artifacts)
 
 

@@ -10,4 +10,11 @@ typedef enum {
   MS_ERROR_OOM        // allocation failure
 } MsResult;
 
+typedef struct MsObject MsObject;
+typedef struct MsState MsState;
+
+// Returns the current error object and clears L's error slot. The object remains owned by L; NULL means no
+// error was pending. L itself may be NULL, in which case the function returns NULL.
+MsObject* msErrorGet(MsState* L);
+
 #endif  // MSLANG_INCLUDE_MSLANG_ERROR_H_

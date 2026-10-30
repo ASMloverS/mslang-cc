@@ -49,6 +49,7 @@ MS_TEST(vm, stateLifecycleGlobalsAndErrors) {
     return;
   }
 
+  int initialGlobals = L->globalsLen;
   MS_ASSERT_TRUE(msNewNil(L) == msNewNil(L));
   MS_ASSERT_TRUE(msNewBool(L, true) == msNewBool(L, true));
   MS_ASSERT_TRUE(msNewBool(L, false) != msNewBool(L, true));
@@ -71,12 +72,12 @@ MS_TEST(vm, stateLifecycleGlobalsAndErrors) {
     MS_ASSERT_TRUE(globalName != NULL);
     MS_ASSERT_EQ(MS_OK, msStateSetGlobal(L, globalName, answer));
   }
-  MS_ASSERT_EQ(10, L->globalsLen);
+  MS_ASSERT_EQ(initialGlobals + 10, L->globalsLen);
   MS_ASSERT_EQ(16, L->globalsCap);
   MS_ASSERT_TRUE(msStateGetGlobal(L, name) == answer);
   MS_ASSERT_TRUE(msStateGetGlobal(L, msStringFromCStr(&L->heap, "global_0")) == answer);
   MS_ASSERT_EQ(MS_OK, msStateSetGlobal(L, name, ratio));
-  MS_ASSERT_EQ(10, L->globalsLen);
+  MS_ASSERT_EQ(initialGlobals + 10, L->globalsLen);
   MS_ASSERT_TRUE(msStateGetGlobal(L, name) == ratio);
 
   msRaiseTypeError(L, "bad %s", "value");
@@ -1547,14 +1548,22 @@ MS_TEST(vm, targetedAllocationFailuresSetOom) {
   MS_ASSERT_TRUE(lhs != NULL);
   MS_ASSERT_TRUE(rhs != NULL);
 
+  int filler = 0;
+  while (L->globalsLen < L->globalsCap) {
+    char fillerName[32];
+    snprintf(fillerName, sizeof(fillerName), "filler_%d", filler++);
+    struct MsString* name = msStringFromCStr(&L->heap, fillerName);
+    MS_ASSERT_TRUE(name != NULL);
+    MS_ASSERT_EQ(MS_OK, msStateSetGlobal(L, name, value));
+  }
   msMemSetFailAfter(0);
   MsResult status = msStateSetGlobal(L, globalName, value);
   msMemSetFailAfter(-1);
   MS_ASSERT_EQ(MS_ERROR_OOM, status);
   MS_ASSERT_EQ(MS_ERROR_OOM, msStateErrorResult(L));
   MS_ASSERT_TRUE(msStateErrorMessage(L) == NULL);
-  MS_ASSERT_EQ(0, L->globalsLen);
-  MS_ASSERT_EQ(0, L->globalsCap);
+  MS_ASSERT_EQ(L->globalsCap, L->globalsLen);
+  MS_ASSERT_TRUE(L->globalsCap > 0);
   msStateClearError(L);
 
   msMemSetFailAfter(0);
@@ -1606,7 +1615,7 @@ MS_TEST(vm, targetedAllocationFailuresSetOom) {
 
 MS_TEST(vm, stateCreationOomEventuallySucceeds) {
   bool sawSuccess = false;
-  for (int64_t failAfter = 0; failAfter <= 39; ++failAfter) {
+  for (int64_t failAfter = 0; failAfter <= 64; ++failAfter) {
     msMemResetStats();
     msMemSetFailAfter(failAfter);
     MsState* L = msNewState();

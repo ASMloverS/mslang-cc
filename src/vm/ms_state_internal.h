@@ -27,6 +27,8 @@ MsResult msStateSetGlobal(MsState* L, const struct MsString* name, struct MsObje
 const char* msStateErrorMessage(const MsState* L);
 MsResult msStateErrorResult(const MsState* L);
 void msStateClearError(MsState* L);
+void msStateSetOom(MsState* L);
+void msStateSetError(MsState* L, MsResult result, const char* message, size_t messageLen);
 void msRaiseRuntimeError(MsState* L, const char* fmt, ...);
 void msRaiseTypeError(MsState* L, const char* fmt, ...);
 struct MsObject* msNewNil(MsState* L);

@@ -6,11 +6,24 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "core/ms_memory.h"
+#include <mslang/object.h>
 
-static void msStateSetOom(MsState* L) {
+#include "core/ms_memory.h"
+#include "vm/ms_builtin.h"
+
+void msStateSetOom(MsState* L) {
   L->error = NULL;
   L->errorResult = MS_ERROR_OOM;
+}
+
+void msStateSetError(MsState* L, MsResult result, const char* message, size_t messageLen) {
+  struct MsString* error = msStringNew(&L->heap, message, messageLen);
+  if (error == NULL) {
+    msStateSetOom(L);
+    return;
+  }
+  L->error = error;
+  L->errorResult = result;
 }
 
 static void msStateRaiseV(MsState* L, const char* prefix, const char* fmt, va_list args) {
@@ -69,6 +82,11 @@ MsState* msNewState(void) {
     return NULL;
   }
   msCoroutineInit(&L->main);
+  msBuiltinRegisterMinimal(L);
+  if (L->errorResult != MS_OK) {
+    msCloseState(L);
+    return NULL;
+  }
   return L;
 }
 
@@ -137,6 +155,25 @@ MsResult msStateErrorResult(const MsState* L) {
 void msStateClearError(MsState* L) {
   L->error = NULL;
   L->errorResult = MS_OK;
+}
+
+MsObject* msErrorGet(MsState* L) {
+  if (L == NULL) {
+    return NULL;
+  }
+  struct MsString* error = L->error;
+  msStateClearError(L);
+  return (struct MsObject*)error;
+}
+
+const char* msAsCString(MsState* L, MsObject* obj) {
+  if (L == NULL || obj == NULL || msObjectTag(obj) != MS_TYPE_STRING) {
+    if (L != NULL) {
+      msRaiseTypeError(L, "msAsCString() requires a string");
+    }
+    return NULL;
+  }
+  return msStringData((struct MsString*)obj);
 }
 
 void msRaiseRuntimeError(MsState* L, const char* fmt, ...) {

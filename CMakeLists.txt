@@ -50,6 +50,7 @@ add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/lexer/ms_lexer.c
     src/parser/ms_ast.c
     src/parser/ms_parser.c
+    src/vm/ms_builtin.c
     src/vm/ms_function.c
     src/vm/ms_opcode.c
     src/vm/ms_proto.c
