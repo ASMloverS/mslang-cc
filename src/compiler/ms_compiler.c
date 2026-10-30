@@ -308,6 +308,9 @@ static void msCompilerEmitStringLiteral(struct MsCompiler* c, const struct MsAst
 
 static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node);
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node);
+static void msCompilerCompileIf(struct MsCompiler* c, const struct MsAst* node);
+static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node);
+static void msCompilerCompileAugAssign(struct MsCompiler* c, const struct MsAst* node);
 static void msCompilerCompileReturn(struct MsCompiler* c, const struct MsAst* node);
 static void msCompilerCompileFunction(struct MsCompiler* c, const struct MsAst* node);
 
@@ -666,18 +669,29 @@ static void msCompilerCompileCall(struct MsCompiler* c, const struct MsAst* node
 
 static MsOpCode msCompilerBinaryOp(MsTokenType token) {
   switch (token) {
-    case MS_TOKEN_PLUS: return MS_OP_ADD;
-    case MS_TOKEN_MINUS: return MS_OP_SUB;
-    case MS_TOKEN_STAR: return MS_OP_MUL;
-    case MS_TOKEN_SLASH: return MS_OP_DIV;
+    case MS_TOKEN_PLUS:
+    case MS_TOKEN_PLUS_EQUAL: return MS_OP_ADD;
+    case MS_TOKEN_MINUS:
+    case MS_TOKEN_MINUS_EQUAL: return MS_OP_SUB;
+    case MS_TOKEN_STAR:
+    case MS_TOKEN_STAR_EQUAL: return MS_OP_MUL;
+    case MS_TOKEN_SLASH:
+    case MS_TOKEN_SLASH_EQUAL: return MS_OP_DIV;
     case MS_TOKEN_KW_DIV: return MS_OP_FLOORDIV;
-    case MS_TOKEN_PERCENT: return MS_OP_MOD;
-    case MS_TOKEN_DOUBLE_STAR: return MS_OP_POW;
-    case MS_TOKEN_SHIFT_LEFT: return MS_OP_SHL;
-    case MS_TOKEN_SHIFT_RIGHT: return MS_OP_SHR;
-    case MS_TOKEN_AMP: return MS_OP_BITAND;
-    case MS_TOKEN_PIPE: return MS_OP_BITOR;
-    case MS_TOKEN_CARET: return MS_OP_BITXOR;
+    case MS_TOKEN_PERCENT:
+    case MS_TOKEN_PERCENT_EQUAL: return MS_OP_MOD;
+    case MS_TOKEN_DOUBLE_STAR:
+    case MS_TOKEN_DOUBLE_STAR_EQUAL: return MS_OP_POW;
+    case MS_TOKEN_SHIFT_LEFT:
+    case MS_TOKEN_SHIFT_LEFT_EQUAL: return MS_OP_SHL;
+    case MS_TOKEN_SHIFT_RIGHT:
+    case MS_TOKEN_SHIFT_RIGHT_EQUAL: return MS_OP_SHR;
+    case MS_TOKEN_AMP:
+    case MS_TOKEN_AMP_EQUAL: return MS_OP_BITAND;
+    case MS_TOKEN_PIPE:
+    case MS_TOKEN_PIPE_EQUAL: return MS_OP_BITOR;
+    case MS_TOKEN_CARET:
+    case MS_TOKEN_CARET_EQUAL: return MS_OP_BITXOR;
     default: return MS_OP_COUNT;
   }
 }
@@ -869,6 +883,27 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
   }
 }
 
+static void msCompilerCompileAugAssign(struct MsCompiler* c, const struct MsAst* node) {
+  const struct MsAst* target = node->as.augAssign.target;
+  if (target == NULL || target->kind != MS_AST_IDENT) {
+    msCompilerReport(c, node, 307, "non-identifier augmented assignment belongs to task 11");
+    return;
+  }
+  MsOpCode op = msCompilerBinaryOp(node->as.augAssign.op);
+  if (op == MS_OP_COUNT) {
+    msCompilerReport(c, node, 307, "augmented assignment operator is not implemented");
+    return;
+  }
+  struct MsString* name = msCompilerNameFromSlice(c, target->as.literal.start, target->as.literal.length);
+  if (name == NULL) {
+    return;
+  }
+  msCompilerEmitLoadName(c, name);
+  msCompilerCompileExpr(c, node->as.augAssign.value);
+  msCompilerEmitABC(c, op, 0, 0, -1);
+  msCompilerEmitStoreName(c, name);
+}
+
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node) {
   if (!msCompilerEnterNode(c, node)) {
     return;
@@ -938,6 +973,43 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
   --c->nodeDepth;
 }
 
+static void msCompilerCompileIf(struct MsCompiler* c, const struct MsAst* node) {
+  int baseDepth = c->fn->stackDepth;
+  msCompilerCompileExpr(c, node->as.ifStmt.cond);
+  int elseJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
+  msCompilerCompileStmt(c, node->as.ifStmt.thenBlock);
+  if (node->as.ifStmt.elseBranch != NULL) {
+    int endJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+    msCompilerPatchToCurrent(c, elseJump, baseDepth);
+    msCompilerCompileStmt(c, node->as.ifStmt.elseBranch);
+    msCompilerPatchToCurrent(c, endJump, baseDepth);
+  } else {
+    msCompilerPatchToCurrent(c, elseJump, baseDepth);
+  }
+}
+
+static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node) {
+  if (node->as.forStmt.forKind != MS_FOR_CLAUSE) {
+    msCompilerReport(c, node, 307, "only three-part for is implemented in task 09");
+    return;
+  }
+  msCompilerCompileStmt(c, node->as.forStmt.init);
+  int loopHead = msCompilerCurrentPc(c);
+  int baseDepth = c->fn->stackDepth;
+  msCompilerCompileExpr(c, node->as.forStmt.cond);
+  int exitJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
+  msCompilerCompileStmt(c, node->as.forStmt.body);
+  msCompilerCompileStmt(c, node->as.forStmt.post);
+  int backJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+  if (backJump >= 0 && c->sticky == MS_OK) {
+    MsResult result = msProtoPatchSAx(&c->fn->builder, backJump, loopHead - (backJump + 1));
+    if (result != MS_OK) {
+      msCompilerSyncBuilder(c);
+    }
+  }
+  msCompilerPatchToCurrent(c, exitJump, baseDepth);
+}
+
 static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node) {
   if (!msCompilerEnterNode(c, node)) {
     return;
@@ -970,6 +1042,9 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
     case MS_AST_ASSIGN:
       msCompilerCompileDeclOrAssign(c, node);
       break;
+    case MS_AST_AUG_ASSIGN:
+      msCompilerCompileAugAssign(c, node);
+      break;
     case MS_AST_BLOCK: {
       int oldDepth = c->fn->scopeDepth;
       msCompilerPushScope(c);
@@ -981,6 +1056,12 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
       }
       break;
     }
+    case MS_AST_IF:
+      msCompilerCompileIf(c, node);
+      break;
+    case MS_AST_FOR:
+      msCompilerCompileFor(c, node);
+      break;
     case MS_AST_PASS:
       break;
     case MS_AST_RETURN:
