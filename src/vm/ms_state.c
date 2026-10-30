@@ -60,15 +60,9 @@ static void msStateRaiseV(MsState* L, const char* prefix, const char* fmt, va_li
   }
   memcpy(message, prefix, prefixLen);
   memcpy(message + prefixLen, body, (size_t)bodyLen + 1);
-  struct MsString* error = msStringNew(&L->heap, message, prefixLen + (size_t)bodyLen);
+  msStateSetError(L, MS_ERROR_RUNTIME, message, prefixLen + (size_t)bodyLen);
   msFree(message);
   msFree(body);
-  if (error == NULL) {
-    msStateSetOom(L);
-    return;
-  }
-  L->error = error;
-  L->errorResult = MS_ERROR_RUNTIME;
 }
 
 MsState* msNewState(void) {

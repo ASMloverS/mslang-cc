@@ -7,20 +7,20 @@
 #include "vm/ms_function.h"
 #include "vm/ms_state_internal.h"
 
-static int msBuiltinFormatValue(struct MsObject* value, char* out, size_t outSize) {
+static int msBuiltinFormatValue(const struct MsObject* value, char* out, size_t outSize) {
   switch (msObjectTag(value)) {
     case MS_TYPE_NIL: return snprintf(out, outSize, "nil");
     case MS_TYPE_BOOL: return snprintf(out, outSize, "%s", msBoolValue(value) ? "true" : "false");
     case MS_TYPE_INT: return snprintf(out, outSize, "%lld", (long long)msIntWordValue(value));
     case MS_TYPE_FLOAT: return snprintf(out, outSize, "%.17g", msFloatValue(value));
-    case MS_TYPE_STRING: return snprintf(out, outSize, "%s", msStringData((struct MsString*)value));
+    case MS_TYPE_STRING: return snprintf(out, outSize, "%s", msStringData((const struct MsString*)value));
     default: return snprintf(out, outSize, "<%s>", msTypeTagName(msObjectTag(value)));
   }
 }
 
-static bool msBuiltinPrintValue(struct MsObject* value) {
+static bool msBuiltinPrintValue(const struct MsObject* value) {
   if (msObjectTag(value) == MS_TYPE_STRING) {
-    struct MsString* string = (struct MsString*)value;
+    const struct MsString* string = (const struct MsString*)value;
     return fwrite(msStringData(string), 1, msStringLen(string), stdout) == msStringLen(string);
   }
   char buffer[128];

@@ -122,6 +122,7 @@ MsResult msEvalFile(MsState* L, const char* path) {
   msCompilerDestroy(&compiler);
   msAstArenaDestroy(&arena);
   msLexerDestroy(&lexer);
+  msFree(source);
 
   if (result == MS_ERROR_SYNTAX) {
     msEvalSetDiagnostics(L, &diags);
@@ -129,12 +130,11 @@ MsResult msEvalFile(MsState* L, const char* path) {
   } else if (result != MS_OK && msStateErrorResult(L) == MS_OK) {
     msStateSetOom(L);
   }
+  msDiagListDestroy(&diags);
   if (result == MS_OK) {
     struct MsObject* ignored = NULL;
     result = msCallProto(L, &L->main, proto, 0, NULL, &ignored);
   }
   msProtoFree(proto);
-  msDiagListDestroy(&diags);
-  msFree(source);
   return result;
 }
