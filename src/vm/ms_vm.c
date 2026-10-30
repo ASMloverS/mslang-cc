@@ -37,25 +37,16 @@ static MsResult msVmErrorAt(MsState* L, const struct MsCallFrame* frame, const c
   return msStateErrorResult(L) == MS_ERROR_OOM ? MS_ERROR_OOM : MS_ERROR_RUNTIME;
 }
 
-static bool msVmMessageHasLocation(const char* message, const char* sourceFile) {
-  size_t sourceLen = strlen(sourceFile);
-  if (strncmp(message, sourceFile, sourceLen) != 0 || message[sourceLen] != ':') {
+static bool msVmMessageHasLocation(const char* message) {
+  const char* locationEnd = strstr(message, ": ");
+  if (locationEnd == NULL) {
     return false;
   }
-  const char* cursor = message + sourceLen + 1;
-  if (*cursor < '0' || *cursor > '9') {
-    return false;
+  const char* lineStart = locationEnd;
+  while (lineStart > message && lineStart[-1] >= '0' && lineStart[-1] <= '9') {
+    --lineStart;
   }
-  uint32_t parsedLine = 0;
-  while (*cursor >= '0' && *cursor <= '9') {
-    uint32_t digit = (uint32_t)(*cursor - '0');
-    if (parsedLine > (UINT32_MAX - digit) / 10) {
-      return false;
-    }
-    parsedLine = parsedLine * 10 + digit;
-    ++cursor;
-  }
-  return cursor[0] == ':' && cursor[1] == ' ';
+  return lineStart < locationEnd && lineStart > message + 1 && lineStart[-1] == ':';
 }
 
 static MsResult msVmWrapErrorAt(MsState* L, const struct MsCallFrame* frame) {
@@ -66,11 +57,7 @@ static MsResult msVmWrapErrorAt(MsState* L, const struct MsCallFrame* frame) {
   if (message == NULL) {
     message = "operation failed";
   }
-  const char* sourceFile = "<unknown>";
-  if (frame->proto != NULL && frame->proto->sourceFile != NULL) {
-    sourceFile = msStringData(frame->proto->sourceFile);
-  }
-  if (msVmMessageHasLocation(message, sourceFile)) {
+  if (msVmMessageHasLocation(message)) {
     return MS_ERROR_RUNTIME;
   }
   return msVmErrorAt(L, frame, message);
