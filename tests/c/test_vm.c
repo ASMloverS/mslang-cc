@@ -1453,12 +1453,13 @@ MS_TEST(vm, cFunctionCallPreservesExistingLocation) {
 }
 
 MS_TEST(vm, allocationFailuresRestoreAndDoNotLeak) {
+  bool sawResultAllocationOom = false;
   bool sawSuccess = false;
   for (int64_t failAfter = 0; failAfter <= 39; ++failAfter) {
     struct MsVmFixture fixture;
     msVmFixtureInit(&fixture);
-    MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 40)));
-    MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 2)));
+    MS_ASSERT_EQ(0, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 4095)));
+    MS_ASSERT_EQ(1, msProtoAddConst(&fixture.builder, msVmFixtureTestInt(&fixture, 1)));
     MS_ASSERT_EQ(0, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 0));
     MS_ASSERT_EQ(1, msProtoEmitABC(&fixture.builder, MS_OP_LOAD_CONST, 0, 1));
     MS_ASSERT_EQ(2, msProtoEmitABC(&fixture.builder, MS_OP_ADD, 0, 0));
@@ -1469,11 +1470,15 @@ MS_TEST(vm, allocationFailuresRestoreAndDoNotLeak) {
     fixture.status = msCallProto(fixture.L, &fixture.co, fixture.proto, 0, NULL, &fixture.result);
     msMemSetFailAfter(-1);
     MS_ASSERT_TRUE(fixture.status == MS_OK || fixture.status == MS_ERROR_OOM);
+    if (failAfter == 2) {
+      MS_ASSERT_EQ(MS_ERROR_OOM, fixture.status);
+      sawResultAllocationOom = fixture.status == MS_ERROR_OOM;
+    }
     if (fixture.status == MS_OK) {
       sawSuccess = true;
       MS_ASSERT_TRUE(fixture.result != NULL);
       if (fixture.result != NULL) {
-        MS_ASSERT_EQ(42, msIntWordValue(fixture.result));
+        MS_ASSERT_EQ(4096, msIntWordValue(fixture.result));
       }
       MS_ASSERT_EQ(0, fixture.co.frameCount);
       MS_ASSERT_EQ(1, fixture.co.stackTop);
@@ -1486,6 +1491,7 @@ MS_TEST(vm, allocationFailuresRestoreAndDoNotLeak) {
     }
     msVmFixtureDestroy(&fixture);
   }
+  MS_ASSERT_TRUE(sawResultAllocationOom);
   MS_ASSERT_TRUE(sawSuccess);
 }
 
