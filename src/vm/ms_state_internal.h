@@ -31,6 +31,8 @@ void msStateSetOom(MsState* L);
 void msStateSetError(MsState* L, MsResult result, const char* message, size_t messageLen);
 void msRaiseRuntimeError(MsState* L, const char* fmt, ...);
 void msRaiseTypeError(MsState* L, const char* fmt, ...);
+void msRaiseValueError(MsState* L, const char* fmt, ...);
+void msRaiseAssertionError(MsState* L, const char* fmt, ...);
 struct MsObject* msNewNil(MsState* L);
 struct MsObject* msNewBool(MsState* L, bool value);
 struct MsObject* msNewInt(MsState* L, int64_t value);

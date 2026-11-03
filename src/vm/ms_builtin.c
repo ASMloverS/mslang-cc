@@ -51,17 +51,17 @@ static struct MsObject* msBuiltinAssert(MsState* L, int64_t argc, struct MsObjec
     return msNewNil(L);
   }
   if (argc == 1) {
-    msRaiseRuntimeError(L, "assertion failed");
+    msRaiseAssertionError(L, "assertion failed");
     return NULL;
   }
   if (msObjectTag(argv[1]) == MS_TYPE_STRING) {
     struct MsString* message = (struct MsString*)argv[1];
-    msStateSetError(L, MS_ERROR_RUNTIME, msStringData(message), msStringLen(message));
+    msRaiseAssertionError(L, "%s", msStringData(message));
     return NULL;
   }
   char buffer[128];
   msBuiltinFormatValue(argv[1], buffer, sizeof(buffer));
-  msRaiseRuntimeError(L, "%s", buffer);
+  msRaiseAssertionError(L, "%s", buffer);
   return NULL;
 }
 

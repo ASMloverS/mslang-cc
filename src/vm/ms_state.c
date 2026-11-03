@@ -184,6 +184,20 @@ void msRaiseTypeError(MsState* L, const char* fmt, ...) {
   va_end(args);
 }
 
+void msRaiseValueError(MsState* L, const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  msStateRaiseV(L, "ValueError: ", fmt, args);
+  va_end(args);
+}
+
+void msRaiseAssertionError(MsState* L, const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  msStateRaiseV(L, "AssertionError: ", fmt, args);
+  va_end(args);
+}
+
 struct MsObject* msNewNil(MsState* L) {
   return msHeapNil(&L->heap);
 }

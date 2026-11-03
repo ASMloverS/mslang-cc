@@ -74,6 +74,13 @@ def run_test(mslang: Path, script: Path) -> tuple[bool, str]:
                 )
             )
             failures.append(f"stdout difference:\n{diff}")
+    error_companion = script.with_suffix(".err")
+    if error_companion.is_file():
+        expected_error = error_companion.read_text(encoding="utf-8").strip()
+        if expected_error not in result.stderr:
+            failures.append(
+                f"stderr: expected substring {expected_error!r}, got {result.stderr!r}"
+            )
     if failures and result.stderr:
         failures.append(f"stderr:\n{result.stderr}")
     return not failures, "\n".join(failures)
