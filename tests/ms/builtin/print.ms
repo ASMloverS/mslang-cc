@@ -1,0 +1,6 @@
+assert(print() == nil)
+assert(print(1, "two", true, nil, 2.5, 3.0) == nil)
+print(-0.0)
+print(print)
+print(type(1))
+print("print ok")
