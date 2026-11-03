@@ -478,11 +478,19 @@ static struct MsObject* msBuiltinFloat(MsState* L, int64_t argc, struct MsObject
   if (text == NULL) {
     return NULL;
   }
+  const char* number = text;
+  while (*number == ' ' || (*number >= '\t' && *number <= '\r')) {
+    ++number;
+  }
+  if (*number == '+' || *number == '-') {
+    ++number;
+  }
+  bool isHexFloat = number[0] == '0' && (number[1] == 'x' || number[1] == 'X');
   char* end = NULL;
   errno = 0;
   double value = strtod(text, &end);
   bool isOverflow = errno == ERANGE;
-  bool isValid = end != text && *end == '\0' && (size_t)(end - text) == len;
+  bool isValid = !isHexFloat && end != text && *end == '\0' && (size_t)(end - text) == len;
   msFree(text);
   if (isOverflow) {
     msRaiseValueError(L, "float() overflow");
