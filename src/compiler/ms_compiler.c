@@ -904,6 +904,23 @@ static void msCompilerCompileAugAssign(struct MsCompiler* c, const struct MsAst*
   msCompilerEmitStoreName(c, name);
 }
 
+static void msCompilerCompileContainer(struct MsCompiler* c, const struct MsAst* node) {
+  bool isDict = node->kind == MS_AST_DICT_LIT;
+  size_t count = node->as.block.count;
+  MS_ASSERT(!isDict || count % 2 == 0);
+  size_t items = isDict ? count / 2 : count;
+  if (items > 255) {
+    msCompilerReport(c, node, 312, "more than 255 container items");
+    msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+    return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    msCompilerCompileExpr(c, node->as.block.items[i]);
+  }
+  MsOpCode op = isDict ? MS_OP_BUILD_DICT : MS_OP_BUILD_LIST;
+  msCompilerEmitABC(c, op, (uint8_t)items, 0, 1 - (int)count);
+}
+
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node) {
   if (!msCompilerEnterNode(c, node)) {
     return;
@@ -924,6 +941,10 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
       break;
     case MS_AST_NIL:
       msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+      break;
+    case MS_AST_LIST_LIT:
+    case MS_AST_DICT_LIT:
+      msCompilerCompileContainer(c, node);
       break;
     case MS_AST_IDENT: {
       struct MsString* name = msCompilerNameFromSlice(c, node->as.literal.start, node->as.literal.length);

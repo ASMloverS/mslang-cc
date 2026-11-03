@@ -10,6 +10,8 @@
 
 #include "core/ms_common.h"
 #include "core/ms_memory.h"
+#include "object/ms_dict.h"
+#include "object/ms_list.h"
 #include "object/ms_string.h"
 #include "vm/ms_function.h"
 #include "vm/ms_state_internal.h"
@@ -148,6 +150,37 @@ static bool msBuiltinWriteValue(MsState* L, struct MsBuiltinBuffer* buffer,
       return msBuiltinWriteFloat(L, buffer, msFloatValue(value));
     case MS_TYPE_STRING:
       return msBuiltinWriteString(L, buffer, (const struct MsString*)value, repr);
+    case MS_TYPE_LIST: {
+      const struct MsList* list = (const struct MsList*)value;
+      if (!msBuiltinBufferAppendChar(L, buffer, '[')) {
+        return false;
+      }
+      for (int64_t i = 0; i < msListLen(list); ++i) {
+        if ((i > 0 && !msBuiltinBufferAppend(L, buffer, ", ", 2))
+            || !msBuiltinWriteValue(L, buffer, list->items[i], true)) {
+          return false;
+        }
+      }
+      return msBuiltinBufferAppendChar(L, buffer, ']');
+    }
+    case MS_TYPE_DICT: {
+      const struct MsDict* dict = (const struct MsDict*)value;
+      if (!msBuiltinBufferAppendChar(L, buffer, '{')) {
+        return false;
+      }
+      int64_t cursor = 0;
+      struct MsObject* key = NULL;
+      struct MsObject* item = NULL;
+      while (msDictNext(dict, &cursor, &key, &item)) {
+        if ((cursor > 1 && !msBuiltinBufferAppend(L, buffer, ", ", 2))
+            || !msBuiltinWriteValue(L, buffer, key, true)
+            || !msBuiltinBufferAppend(L, buffer, ": ", 2)
+            || !msBuiltinWriteValue(L, buffer, item, true)) {
+          return false;
+        }
+      }
+      return msBuiltinBufferAppendChar(L, buffer, '}');
+    }
     case MS_TYPE_C_FUNCTION: {
       const struct MsCFunctionObject* function = (const struct MsCFunctionObject*)value;
       return msBuiltinBufferAppend(L, buffer, "<builtin function ", 18)
@@ -345,17 +378,28 @@ static struct MsObject* msBuiltinLen(MsState* L, int64_t argc, struct MsObject**
   if (!msBuiltinCheckArgc(L, "len", argc, 1, 1)) {
     return NULL;
   }
-  if (msObjectTag(argv[0]) != MS_TYPE_STRING) {
-    const struct MsString* name = msHeapType(&L->heap, msObjectTag(argv[0]))->name;
-    msRaiseTypeError(L, "object of type '%s' has no len()", msStringData(name));
-    return NULL;
-  }
-  const struct MsString* string = (const struct MsString*)argv[0];
-  const unsigned char* data = (const unsigned char*)msStringData(string);
   int64_t length = 0;
-  for (size_t i = 0; i < msStringLen(string); ++i) {
-    if ((data[i] & 0xC0) != 0x80) {
-      ++length;
+  switch (msObjectTag(argv[0])) {
+    case MS_TYPE_STRING: {
+      const struct MsString* string = (const struct MsString*)argv[0];
+      const unsigned char* data = (const unsigned char*)msStringData(string);
+      for (size_t i = 0; i < msStringLen(string); ++i) {
+        if ((data[i] & 0xC0) != 0x80) {
+          ++length;
+        }
+      }
+      break;
+    }
+    case MS_TYPE_LIST:
+      length = msListLen((const struct MsList*)argv[0]);
+      break;
+    case MS_TYPE_DICT:
+      length = msDictLen((const struct MsDict*)argv[0]);
+      break;
+    default: {
+      const struct MsString* name = msHeapType(&L->heap, msObjectTag(argv[0]))->name;
+      msRaiseTypeError(L, "object of type '%s' has no len()", msStringData(name));
+      return NULL;
     }
   }
   return msNewInt(L, length);

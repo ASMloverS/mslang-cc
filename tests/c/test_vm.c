@@ -1733,7 +1733,7 @@ MS_TEST(vm, instructionPointerOutsideCodeRestores) {
 
 #ifdef NDEBUG
 MS_TEST(vm, unsupportedOpcodeRestores) {
-  const MsOpCode ops[] = {MS_OP_BUILD_LIST, MS_OP_MAKE_FUNCTION, MS_OP_GET_ITER};
+  const MsOpCode ops[] = {MS_OP_MAKE_FUNCTION, MS_OP_GET_ITER};
   for (size_t i = 0; i < sizeof(ops) / sizeof(ops[0]); ++i) {
     struct MsVmFixture fixture;
     msVmFixtureInit(&fixture);

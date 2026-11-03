@@ -135,9 +135,8 @@ bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b);
 // MS_ASSERT in debug (identity hashing for instances is a later task).
 uint32_t msObjectHash(const struct MsObject* obj);
 
-// Truthiness per 02-types section 2, scalar subset: nil, false, numeric zero
-// and the empty string are falsy. Container emptiness joins in task 16; heap
-// objects of other tags are truthy.
+// Truthiness per 02-types section 2: nil, false, numeric zero and empty
+// strings, lists and dicts are falsy. Heap objects of other tags are truthy.
 bool msObjectIsTruthy(const struct MsObject* obj);
 
 #endif  // MSLANG_SRC_OBJECT_MS_OBJECT_H_

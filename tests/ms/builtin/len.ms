@@ -1,4 +1,8 @@
 assert(len("") == 0)
 assert(len("hello") == 5)
 assert(len("中文字符") == 4)
+assert(len([]) == 0)
+assert(len([1, 2, 3]) == 3)
+assert(len({}) == 0)
+assert(len({"a": 1, "b": 2}) == 2)
 print("len ok")

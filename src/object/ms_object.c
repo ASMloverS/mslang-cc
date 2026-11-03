@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "core/ms_memory.h"
+#include "object/ms_dict.h"
+#include "object/ms_list.h"
 #include "object/ms_string.h"
 
 static const char* const msTypeTagNames[MS_TYPE_COUNT] = {
@@ -48,6 +50,19 @@ struct MsObject* msObjectAlloc(struct MsHeap* heap, MsTypeTag tag, size_t size) 
   return obj;
 }
 
+static void msObjectReleaseStorage(struct MsObject* obj) {
+  switch (obj->header.tag) {
+    case MS_TYPE_LIST:
+      msListReleaseStorage((struct MsList*)obj);
+      break;
+    case MS_TYPE_DICT:
+      msDictReleaseStorage((struct MsDict*)obj);
+      break;
+    default:
+      break;
+  }
+}
+
 void msObjectFree(struct MsHeap* heap, struct MsObject* obj) {
   MS_ASSERT(heap != NULL);
   MS_ASSERT(obj != NULL);
@@ -64,6 +79,7 @@ void msObjectFree(struct MsHeap* heap, struct MsObject* obj) {
   if (obj->header.tag == MS_TYPE_STRING) {
     msStringInternRemove(heap, (const struct MsString*)obj);
   }
+  msObjectReleaseStorage(obj);
   msFree(obj);
 }
 
@@ -74,6 +90,7 @@ void msHeapDestroy(struct MsHeap* heap) {
   struct MsObject* obj = heap->allObjects;
   while (obj != NULL) {
     struct MsObject* next = obj->header.gcNext;
+    msObjectReleaseStorage(obj);
     msFree(obj);
     obj = next;
   }
@@ -310,8 +327,11 @@ bool msObjectIsTruthy(const struct MsObject* obj) {
       return ((const struct MsFloat*)obj)->value != 0.0;
     case MS_TYPE_STRING:
       return ((const struct MsString*)obj)->byteLen != 0;
+    case MS_TYPE_LIST:
+      return msListLen((const struct MsList*)obj) != 0;
+    case MS_TYPE_DICT:
+      return msDictLen((const struct MsDict*)obj) != 0;
     default:
-      // Container emptiness joins in task 16; other heap objects are truthy.
       return true;
   }
 }

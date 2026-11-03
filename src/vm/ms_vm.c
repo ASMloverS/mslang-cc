@@ -8,6 +8,8 @@
 
 #include "core/ms_common.h"
 #include "core/ms_memory.h"
+#include "object/ms_dict.h"
+#include "object/ms_list.h"
 #include "object/ms_operator.h"
 #include "object/ms_string.h"
 #include "vm/ms_function.h"
@@ -775,6 +777,46 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
           }
           msVmJumpBy(frame, offset);
         }
+        break;
+      }
+      case MS_OP_BUILD_LIST:
+      case MS_OP_BUILD_DICT: {
+        bool isDict = msOpDecodeOp(instr) == MS_OP_BUILD_DICT;
+        int items = msOpDecodeA(instr);
+        int count = isDict ? items * 2 : items;
+        int base = co->stackTop - count;
+        if (base < frame->baseIndex + frame->proto->localCount) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        if (count == 0 && !msVmCanPush(co, frame, windowEnd)) {
+          result = msVmErrorAt(L, frame, "evaluation stack overflow");
+          break;
+        }
+        struct MsObject* container = isDict ? msNewDict(L) : msNewList(L, items);
+        if (container == NULL) {
+          result = msVmPropagatedErrorAt(L, frame);
+          break;
+        }
+        for (int i = 0; i < count; ++i) {
+          if (isDict) {
+            if (i % 2 != 0) {
+              continue;
+            }
+            result = msDictSet(L, (struct MsDict*)container, co->stack[base + i], co->stack[base + i + 1]);
+          } else {
+            result = msListAppend(L, (struct MsList*)container, co->stack[base + i]);
+          }
+          if (result != MS_OK) {
+            result = msVmPropagatedErrorAt(L, frame);
+            break;
+          }
+        }
+        if (result != MS_OK) {
+          break;
+        }
+        co->stackTop = base;
+        co->stack[co->stackTop++] = container;
         break;
       }
       case MS_OP_CALL: {
