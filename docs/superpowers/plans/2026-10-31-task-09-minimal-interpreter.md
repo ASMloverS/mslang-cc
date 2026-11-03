@@ -32,7 +32,7 @@
 - Create: `tests/ms/smoke/assert_failure.ms`, `assert_failure.exit`
 - Modify: `run_tests.py`
 
-- [ ] **Step 1: Add the positive smoke scripts**
+- [x] **Step 1: Add the positive smoke scripts**
 
 `hello.ms`:
 ```ms
@@ -78,7 +78,7 @@ print("control flow ok")
 control flow ok
 ```
 
-- [ ] **Step 2: Add the negative smoke scripts**
+- [x] **Step 2: Add the negative smoke scripts**
 
 `syntax_error.ms`:
 ```ms
@@ -100,7 +100,7 @@ assert(false, "expected failure")
 1
 ```
 
-- [ ] **Step 3: Implement companion files, environment selection, and failure details in `run_tests.py`**
+- [x] **Step 3: Implement companion files, environment selection, and failure details in `run_tests.py`**
 
 Replace the file with:
 ```python
@@ -233,12 +233,12 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Run the script tests and verify the old CLI fails**
+- [x] **Step 4: Run the script tests and verify the old CLI fails**
 
 Run: `python run_tests.py --mslang build/Debug/mslang.exe`
 Expected: the suite fails; the old CLI rejects all positive scripts, and its accidental exit-2 match for the syntax fixture does not constitute end-to-end coverage.
 
-- [ ] **Step 5: Commit the test fixtures and driver**
+- [x] **Step 5: Commit the test fixtures and driver**
 
 ```bash
 git add run_tests.py tests/ms
@@ -253,7 +253,7 @@ git commit -m '✅ test(cli): add interpreter smoke scripts'
 - Modify: `src/vm/ms_state_internal.h`, `src/vm/ms_state.c`, `CMakeLists.txt`
 - Test: `tests/c/test_vm.c`
 
-- [ ] **Step 1: Declare the public and internal interfaces**
+- [x] **Step 1: Declare the public and internal interfaces**
 
 Add to `state.h` after the lifecycle declarations:
 ```c
@@ -294,7 +294,7 @@ void msStateSetOom(MsState* L);
 void msStateSetError(MsState* L, MsResult result, const char* message, size_t messageLen);
 ```
 
-- [ ] **Step 2: Implement state error access and minimal builtins**
+- [x] **Step 2: Implement state error access and minimal builtins**
 
 Make `msStateSetOom` non-static and add to `ms_state.c`:
 ```c
@@ -418,7 +418,7 @@ void msBuiltinRegisterMinimal(MsState* L) {
 ```
 Include `vm/ms_builtin.h` in `ms_state.c`, call `msBuiltinRegisterMinimal(L)` after `msCoroutineInit`, and close/return `NULL` when registration sets an error. Register `src/vm/ms_builtin.c` in the `mslang` library.
 
-- [ ] **Step 3: Adjust VM tests for preinstalled builtins**
+- [x] **Step 3: Adjust VM tests for preinstalled builtins**
 
 In `stateLifecycleGlobalsAndErrors`, capture `int initialGlobals = L->globalsLen;` after the null check and replace both `MS_ASSERT_EQ(10, L->globalsLen)` assertions with:
 ```c
@@ -443,12 +443,12 @@ MS_ASSERT_TRUE(L->globalsCap > 0);
 ```
 Increase the `stateCreationOomEventuallySucceeds` injection bound from 39 to 64.
 
-- [ ] **Step 4: Build and run internal regression tests**
+- [x] **Step 4: Build and run internal regression tests**
 
 Run: `cmake -B build && cmake --build build --config Debug && ctest --test-dir build -C Debug --output-on-failure`
 Expected: all 13 existing CTests pass; script fixtures still fail because evaluation/CLI are not connected.
 
-- [ ] **Step 5: Commit the runtime slice**
+- [x] **Step 5: Commit the runtime slice**
 
 ```bash
 git add CMakeLists.txt include/mslang src/vm tests/c/test_vm.c
@@ -461,7 +461,7 @@ git commit -m '✨ feat(vm): add minimal builtins and error access'
 - Create: `src/vm/ms_eval.c`
 - Modify: `CMakeLists.txt`
 
-- [ ] **Step 1: Implement file reading and diagnostic aggregation**
+- [x] **Step 1: Implement file reading and diagnostic aggregation**
 
 Create `ms_eval.c` with these helpers:
 ```c
@@ -550,7 +550,7 @@ static void msEvalSetDiagnostics(MsState* L, const struct MsDiagList* diags) {
 }
 ```
 
-- [ ] **Step 2: Implement `msEvalFile` with reverse-order cleanup**
+- [x] **Step 2: Implement `msEvalFile` with reverse-order cleanup**
 
 Append:
 ```c
@@ -613,12 +613,12 @@ MsResult msEvalFile(MsState* L, const char* path) {
 ```
 Register `src/vm/ms_eval.c` in `CMakeLists.txt`.
 
-- [ ] **Step 3: Build and exercise the public pipeline through the next CLI task**
+- [x] **Step 3: Build and exercise the public pipeline through the next CLI task**
 
 Run: `cmake -B build && cmake --build build --config Debug`
 Expected: build succeeds with `/W4 /WX`; `run_tests.py` still fails until the CLI accepts paths.
 
-- [ ] **Step 4: Commit evaluation**
+- [x] **Step 4: Commit evaluation**
 
 ```bash
 git add CMakeLists.txt src/vm/ms_eval.c
@@ -630,7 +630,7 @@ git commit -m '✨ feat(vm): connect file evaluation pipeline'
 **Files:**
 - Modify: `src/cli/main.c`, `CMakeLists.txt`
 
-- [ ] **Step 1: Implement script/version handling and exit mapping**
+- [x] **Step 1: Implement script/version handling and exit mapping**
 
 Replace `main.c` with:
 ```c
@@ -703,7 +703,7 @@ int main(int argc, char** argv) {
 }
 ```
 
-- [ ] **Step 2: Register the script test layer**
+- [x] **Step 2: Register the script test layer**
 
 Add inside `if(MSLANG_BUILD_TESTS)` after the C test registrations:
 ```cmake
@@ -712,12 +712,12 @@ Add inside `if(MSLANG_BUILD_TESTS)` after the C test registrations:
           --mslang "$<TARGET_FILE:mslang-cli>")
 ```
 
-- [ ] **Step 3: Run script tests and verify only control flow is blocked**
+- [x] **Step 3: Run script tests and verify only control flow is blocked**
 
 Run: `python run_tests.py --mslang build/Debug/mslang.exe`
 Expected: hello, arithmetic, syntax error, and assertion failure pass; control flow fails with exit 2/E307 because its compiler path is Task 5.
 
-- [ ] **Step 4: Verify CLI-only acceptance cases**
+- [x] **Step 4: Verify CLI-only acceptance cases**
 
 Run each command and inspect its status:
 ```bash
@@ -727,7 +727,7 @@ build/Debug/mslang.exe does-not-exist.ms
 ```
 Expected: version prints `mslang 0.1.0`/status 0; no arguments prints usage to stderr/status 64; missing file prints an OS error to stderr/status 74.
 
-- [ ] **Step 5: Commit the CLI slice**
+- [x] **Step 5: Commit the CLI slice**
 
 ```bash
 git add CMakeLists.txt src/cli/main.c
@@ -740,7 +740,7 @@ git commit -m '✨ feat(cli): execute mslang script files'
 - Modify: `src/compiler/ms_compiler.c`
 - Test: `tests/ms/smoke/control_flow.ms`
 
-- [ ] **Step 1: Add control-flow generation helpers**
+- [x] **Step 1: Add control-flow generation helpers**
 
 Add forward declarations beside the existing statement helpers:
 ```c
@@ -798,7 +798,7 @@ Add these cases to the statement switch before `MS_AST_PASS`:
       break;
 ```
 
-- [ ] **Step 2: Run the smoke suite and full Debug tests**
+- [x] **Step 2: Run the smoke suite and full Debug tests**
 
 Run:
 ```bash
@@ -808,7 +808,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ```
 Expected: 5 of 5 scripts pass; all 14 CTests pass, including `test_ms_scripts`.
 
-- [ ] **Step 3: Commit minimal control flow**
+- [x] **Step 3: Commit minimal control flow**
 
 ```bash
 git add src/compiler/ms_compiler.c
@@ -821,16 +821,16 @@ git commit -m '✨ feat(compiler): add minimal interpreter control flow'
 - Modify: `docs/tasks/09-minimal-interpreter.md`, `docs/tasks/README.md`
 - Modify: `docs/superpowers/specs/2026-10-31-task-09-minimal-interpreter-design.md` only if final behavior differs from the approved design
 
-- [ ] **Step 1: Update completion status without claiming untested platforms**
+- [x] **Step 1: Update completion status without claiming untested platforms**
 
 Mark locally verified acceptance boxes complete. Change the task 09 index status to ✅ only after the following commands pass; retain a note that Linux/macOS were not executed in this Windows-only environment.
 
-- [ ] **Step 2: Verify direct CLI behavior and stdout/stderr**
+- [x] **Step 2: Verify direct CLI behavior and stdout/stderr**
 
 Run the three success scripts individually, the two negative scripts, no-argument invocation, missing-file invocation, and `--version`.
 Expected outputs/statuses: `hello`/0, `arithmetic ok`/0, `control flow ok`/0, syntax status 2, assert status 1, usage status 64, missing file status 74, version 0. Every failure message goes to stderr.
 
-- [ ] **Step 3: Run the Release suite**
+- [x] **Step 3: Run the Release suite**
 
 Run:
 ```bash
@@ -839,7 +839,7 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 Expected: all 14 Release tests pass.
 
-- [ ] **Step 4: Check formatting, artifacts, and repository state**
+- [x] **Step 4: Check formatting, artifacts, and repository state**
 
 Run:
 ```bash
@@ -849,9 +849,16 @@ git status --short --branch
 ```
 Expected: no whitespace errors or root artifacts; only intentional source/document changes are uncommitted.
 
-- [ ] **Step 5: Commit documentation and completion metadata**
+- [x] **Step 5: Commit documentation and completion metadata**
 
 ```bash
 git add docs/tasks docs/superpowers
 git commit -m '📝 docs(tasks): complete minimal interpreter'
 ```
+
+## Execution notes
+
+- Track MS `.out` companions and exempt only `tests/ms/*.out` from the build-artifact check so the script runner can verify stdout.
+- Use numeric `errno` values in CLI I/O errors to keep MSVC `/WX` builds warning-free.
+- Add a minimal `MS_AST_AUG_ASSIGN` compiler path because the arithmetic fixture uses identifier compound assignment.
+- Verify the final sources with clean full Debug and Release builds; all 14 tests pass in both configurations.

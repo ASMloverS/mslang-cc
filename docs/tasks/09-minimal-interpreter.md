@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [07 编译器](07-compiler.md)、[08 VM 执行核心](08-vm-core.md) |
+| v0.1 | ✅ | [07 编译器](07-compiler.md)、[08 VM 执行核心](08-vm-core.md) |
 
 ## 任务目标
 
@@ -162,11 +162,12 @@ mslang --version        # 打印版本（MS_VERSION_MAJOR/MINOR/PATCH）
 
 ## 验收标准
 
-- [ ] `mslang tests/ms/smoke/hello.ms` 输出 `hello` 且退出码为 0。
-- [ ] `mslang tests/ms/smoke/arithmetic.ms` 断言全部通过，输出 `arithmetic ok`，退出码为 0。
-- [ ] `mslang tests/ms/smoke/control_flow.ms` 断言全部通过，输出 `control flow ok`，退出码为 0。
-- [ ] 语法错误脚本退出码为 2，`assert(false)` 脚本退出码为 1，不存在的文件退出码为 74，用法错误退出码为 64，且错误信息均输出到 stderr。
-- [ ] `python run_tests.py` 发现全部 `tests/ms/**/*.ms` 并全数通过，进程退出码为 0。
-- [ ] `ctest --test-dir build` 包含并跑通脚本测试层。
-- [ ] Win/Linux/macOS 三平台 Debug/Release 构建通过，Debug 构建（ASAN / `/RTC`）无内存错误与泄漏报告（`msCloseState` 后无残余分配计数）。
-- [ ] `mslang --version` 打印 `MS_VERSION_MAJOR.MINOR.PATCH` 且退出码为 0。
+- [x] `mslang tests/ms/smoke/hello.ms` 输出 `hello` 且退出码为 0。
+- [x] `mslang tests/ms/smoke/arithmetic.ms` 断言全部通过，输出 `arithmetic ok`，退出码为 0。
+- [x] `mslang tests/ms/smoke/control_flow.ms` 断言全部通过，输出 `control flow ok`，退出码为 0。
+- [x] 语法错误脚本退出码为 2，`assert(false)` 脚本退出码为 1，不存在的文件退出码为 74，用法错误退出码为 64，且错误信息均输出到 stderr。
+- [x] `python run_tests.py` 发现全部 `tests/ms/**/*.ms` 并全数通过，进程退出码为 0。
+- [x] `ctest --test-dir build` 包含并跑通脚本测试层。
+- [x] Windows Debug/Release 构建与测试通过，Debug 构建无内存错误与泄漏报告（`msCloseState` 后无残余分配计数）。
+- [ ] Linux/macOS Debug/Release 构建与测试通过（当前 Windows 环境未执行）。
+- [x] `mslang --version` 打印 `MS_VERSION_MAJOR.MINOR.PATCH` 且退出码为 0。
