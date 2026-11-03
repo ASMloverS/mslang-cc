@@ -73,7 +73,7 @@ MS_TEST(vm, stateLifecycleGlobalsAndErrors) {
     MS_ASSERT_EQ(MS_OK, msStateSetGlobal(L, globalName, answer));
   }
   MS_ASSERT_EQ(initialGlobals + 10, L->globalsLen);
-  MS_ASSERT_EQ(16, L->globalsCap);
+  MS_ASSERT_EQ(32, L->globalsCap);
   MS_ASSERT_TRUE(msStateGetGlobal(L, name) == answer);
   MS_ASSERT_TRUE(msStateGetGlobal(L, msStringFromCStr(&L->heap, "global_0")) == answer);
   MS_ASSERT_EQ(MS_OK, msStateSetGlobal(L, name, ratio));

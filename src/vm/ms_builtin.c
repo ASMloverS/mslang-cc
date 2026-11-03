@@ -1,5 +1,6 @@
 #include "vm/ms_builtin.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -374,6 +375,126 @@ static struct MsObject* msBuiltinBool(MsState* L, int64_t argc, struct MsObject*
   return msNewBool(L, msObjectIsTruthy(argv[0]));
 }
 
+static char* msBuiltinCopyString(MsState* L, const struct MsString* string) {
+  size_t len = msStringLen(string);
+  if (len == SIZE_MAX) {
+    msStateSetOom(L);
+    return NULL;
+  }
+  char* text = (char*)msAlloc(len + 1);
+  if (text == NULL) {
+    msStateSetOom(L);
+    return NULL;
+  }
+  memcpy(text, msStringData(string), len);
+  text[len] = '\0';
+  return text;
+}
+
+static struct MsObject* msBuiltinInt(MsState* L, int64_t argc, struct MsObject** argv) {
+  if (!msBuiltinCheckArgc(L, "int", argc, 1, 2)) {
+    return NULL;
+  }
+  int64_t base = 10;
+  if (argc == 2) {
+    if (msObjectTag(argv[0]) != MS_TYPE_STRING) {
+      msRaiseTypeError(L, "int() can't convert non-string with explicit base");
+      return NULL;
+    }
+    if (msObjectTag(argv[1]) != MS_TYPE_INT) {
+      msRaiseTypeError(L, "int() base must be int");
+      return NULL;
+    }
+    base = msIntWordValue(argv[1]);
+    if (base != 2 && base != 8 && base != 10 && base != 16) {
+      msRaiseValueError(L, "int() base must be 2, 8, 10, or 16");
+      return NULL;
+    }
+  }
+  switch (msObjectTag(argv[0])) {
+    case MS_TYPE_INT:
+      return argv[0];
+    case MS_TYPE_BOOL:
+      return msNewInt(L, msBoolValue(argv[0]) ? 1 : 0);
+    case MS_TYPE_FLOAT: {
+      double value = msFloatValue(argv[0]);
+      if (!isfinite(value) || value < -9223372036854775808.0 || value >= 9223372036854775808.0) {
+        msRaiseValueError(L, "cannot convert float to int");
+        return NULL;
+      }
+      return msNewInt(L, (int64_t)value);
+    }
+    case MS_TYPE_STRING:
+      break;
+    default:
+      msRaiseTypeError(L, "int() argument must be str, int, float, or bool, not '%s'",
+          msTypeTagName(msObjectTag(argv[0])));
+      return NULL;
+  }
+  const struct MsString* string = (const struct MsString*)argv[0];
+  size_t len = msStringLen(string);
+  char* text = msBuiltinCopyString(L, string);
+  if (text == NULL) {
+    return NULL;
+  }
+  char* end = NULL;
+  errno = 0;
+  long long value = strtoll(text, &end, (int)base);
+  bool isOverflow = errno == ERANGE || value < (long long)INT64_MIN || value > (long long)INT64_MAX;
+  bool isValid = end != text && *end == '\0' && (size_t)(end - text) == len;
+  msFree(text);
+  if (isOverflow) {
+    msRaiseValueError(L, "int() overflow");
+    return NULL;
+  }
+  if (!isValid) {
+    msRaiseValueError(L, "invalid literal for int()");
+    return NULL;
+  }
+  return msNewInt(L, (int64_t)value);
+}
+
+static struct MsObject* msBuiltinFloat(MsState* L, int64_t argc, struct MsObject** argv) {
+  if (!msBuiltinCheckArgc(L, "float", argc, 1, 1)) {
+    return NULL;
+  }
+  switch (msObjectTag(argv[0])) {
+    case MS_TYPE_FLOAT:
+      return argv[0];
+    case MS_TYPE_INT:
+      return msNewFloat(L, (double)msIntWordValue(argv[0]));
+    case MS_TYPE_BOOL:
+      return msNewFloat(L, msBoolValue(argv[0]) ? 1.0 : 0.0);
+    case MS_TYPE_STRING:
+      break;
+    default:
+      msRaiseTypeError(L, "float() argument must be str, int, float, or bool, not '%s'",
+          msTypeTagName(msObjectTag(argv[0])));
+      return NULL;
+  }
+  const struct MsString* string = (const struct MsString*)argv[0];
+  size_t len = msStringLen(string);
+  char* text = msBuiltinCopyString(L, string);
+  if (text == NULL) {
+    return NULL;
+  }
+  char* end = NULL;
+  errno = 0;
+  double value = strtod(text, &end);
+  bool isOverflow = errno == ERANGE;
+  bool isValid = end != text && *end == '\0' && (size_t)(end - text) == len;
+  msFree(text);
+  if (isOverflow) {
+    msRaiseValueError(L, "float() overflow");
+    return NULL;
+  }
+  if (!isValid) {
+    msRaiseValueError(L, "invalid literal for float()");
+    return NULL;
+  }
+  return msNewFloat(L, value);
+}
+
 static struct MsObject* msBuiltinStr(MsState* L, int64_t argc, struct MsObject** argv) {
   if (!msBuiltinCheckArgc(L, "str", argc, 1, 1)) {
     return NULL;
@@ -391,6 +512,8 @@ static const struct MsBuiltinEntry msBuiltinTable[] = {
   {"assert", msBuiltinAssert},
   {"len", msBuiltinLen},
   {"type", msBuiltinType},
+  {"int", msBuiltinInt},
+  {"float", msBuiltinFloat},
   {"bool", msBuiltinBool},
   {"str", msBuiltinStr},
 };
