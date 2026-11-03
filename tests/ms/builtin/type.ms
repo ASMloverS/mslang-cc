@@ -1,0 +1,5 @@
+assert(type(1) == type(2))
+assert(type(1) != type(1.0))
+assert(type("s") != type(true))
+assert(type(nil) == type(nil))
+print("type ok")

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "core/ms_common.h"
 #include "object/ms_string.h"
 #include "vm/ms_function.h"
 #include "vm/ms_state_internal.h"
@@ -42,9 +43,20 @@ static struct MsObject* msBuiltinPrint(MsState* L, int64_t argc, struct MsObject
   return msNewNil(L);
 }
 
+static bool msBuiltinCheckArgc(MsState* L, const char* name, int64_t argc, int64_t min, int64_t max) {
+  if (argc >= min && (max < 0 || argc <= max)) {
+    return true;
+  }
+  if (argc < min) {
+    msRaiseTypeError(L, "%s() takes at least %lld argument(s)", name, (long long)min);
+  } else {
+    msRaiseTypeError(L, "%s() takes at most %lld argument(s)", name, (long long)max);
+  }
+  return false;
+}
+
 static struct MsObject* msBuiltinAssert(MsState* L, int64_t argc, struct MsObject** argv) {
-  if (argc < 1 || argc > 2) {
-    msRaiseRuntimeError(L, "assert() expects one or two arguments");
+  if (!msBuiltinCheckArgc(L, "assert", argc, 1, 2)) {
     return NULL;
   }
   if (msObjectIsTruthy(argv[0])) {
@@ -65,6 +77,53 @@ static struct MsObject* msBuiltinAssert(MsState* L, int64_t argc, struct MsObjec
   return NULL;
 }
 
+static struct MsObject* msBuiltinLen(MsState* L, int64_t argc, struct MsObject** argv) {
+  if (!msBuiltinCheckArgc(L, "len", argc, 1, 1)) {
+    return NULL;
+  }
+  if (msObjectTag(argv[0]) != MS_TYPE_STRING) {
+    const struct MsString* name = msHeapType(&L->heap, msObjectTag(argv[0]))->name;
+    msRaiseTypeError(L, "object of type '%s' has no len()", msStringData(name));
+    return NULL;
+  }
+  const struct MsString* string = (const struct MsString*)argv[0];
+  const unsigned char* data = (const unsigned char*)msStringData(string);
+  int64_t length = 0;
+  for (size_t i = 0; i < msStringLen(string); ++i) {
+    if ((data[i] & 0xC0) != 0x80) {
+      ++length;
+    }
+  }
+  return msNewInt(L, length);
+}
+
+static struct MsObject* msBuiltinType(MsState* L, int64_t argc, struct MsObject** argv) {
+  if (!msBuiltinCheckArgc(L, "type", argc, 1, 1)) {
+    return NULL;
+  }
+  return (struct MsObject*)argv[0]->header.type;
+}
+
+static struct MsObject* msBuiltinBool(MsState* L, int64_t argc, struct MsObject** argv) {
+  if (!msBuiltinCheckArgc(L, "bool", argc, 1, 1)) {
+    return NULL;
+  }
+  return msNewBool(L, msObjectIsTruthy(argv[0]));
+}
+
+struct MsBuiltinEntry {
+  const char* name;
+  MsCFunction func;
+};
+
+static const struct MsBuiltinEntry msBuiltinTable[] = {
+  {"print", msBuiltinPrint},
+  {"assert", msBuiltinAssert},
+  {"len", msBuiltinLen},
+  {"type", msBuiltinType},
+  {"bool", msBuiltinBool},
+};
+
 static void msBuiltinRegister(MsState* L, const char* name, MsCFunction function) {
   struct MsString* nameString = msStringFromCStr(&L->heap, name);
   if (nameString == NULL) {
@@ -77,9 +136,11 @@ static void msBuiltinRegister(MsState* L, const char* name, MsCFunction function
   }
 }
 
-void msBuiltinRegisterMinimal(MsState* L) {
-  msBuiltinRegister(L, "print", msBuiltinPrint);
-  if (L->errorResult == MS_OK) {
-    msBuiltinRegister(L, "assert", msBuiltinAssert);
+void msBuiltinRegisterAll(MsState* L) {
+  for (size_t i = 0; i < MS_ARRAY_LEN(msBuiltinTable); ++i) {
+    msBuiltinRegister(L, msBuiltinTable[i].name, msBuiltinTable[i].func);
+    if (L->errorResult != MS_OK) {
+      return;
+    }
   }
 }

@@ -76,7 +76,7 @@ MsState* msNewState(void) {
     return NULL;
   }
   msCoroutineInit(&L->main);
-  msBuiltinRegisterMinimal(L);
+  msBuiltinRegisterAll(L);
   if (L->errorResult != MS_OK) {
     msCloseState(L);
     return NULL;

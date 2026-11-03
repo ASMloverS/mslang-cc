@@ -3,6 +3,6 @@
 
 #include <mslang/state.h>
 
-void msBuiltinRegisterMinimal(MsState* L);
+void msBuiltinRegisterAll(MsState* L);
 
 #endif  // MSLANG_SRC_VM_MS_BUILTIN_H_
