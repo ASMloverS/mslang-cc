@@ -1,5 +1,7 @@
 
 1 two true nil 2.5 3.0
+sep x
+a b
 -0.0
 <builtin function print>
 <type 'int'>

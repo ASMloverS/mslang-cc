@@ -95,7 +95,7 @@ static bool msBuiltinTruthy(MsObject* obj);
 - 语义：逐个把 `*values` 经 `msObjectStr`（值的 str 表示，见第 5 节）转为字符串，以 `sep` 连接写入输出目标，末尾追加 `end`；返回 nil。
 - `file`：`nil`（默认）表示 stdout；非 nil 要求实现 `io.Writer` 协议（`write`/`flush`），v0.1 尚无 io 模块（任务 37），本阶段对非 nil 的 `file` 一律报 `TypeError`，协议分派在 io 落地后补齐。
 - `flush`：为真时对输出目标冲刷；stdout 路径即 `fflush(stdout)`。
-- 关键字参数通道：`MsCFunction` 签名（[09-c-api.md](../language/09-c-api.md) §9）本身不携带关键字参数；`MS_OP_CALL_KW` 的调用约定由任务 13 定义。本任务的假定约定：VM 以 `CALL_KW` 调用 C 函数时，把关键字参数以「名字字符串对象、值对象」交错追加在 `argv` 尾部并计入 `argc`；`msBuiltinPrint` 从尾部扫描名字为 `sep`/`end`/`file`/`flush` 的对并消费，其余条目作为 `*values`。未知名字报 `TypeError: print() got an unexpected keyword argument 'x'`。**该约定以实现时任务 13 文档定名为准**；在 `CALL_KW` 落地前，脚本侧只能使用位置参数与默认 `sep`/`end`。
+- 关键字参数通道：公开 `MsCFunction` 签名（[09-c-api.md](../language/09-c-api.md) §9）保持不变，内部 `MsState.cKeywordCount` 显式携带关键字个数 `k`。普通 `CALL` 时 `k=0`；`CALL_KW` 仍把关键字参数以「名字字符串对象、值对象」交错追加在 `argv` 尾部并计入 `argc`，同时由 VM 在回调前保存旧值、设置 `cKeywordCount=k`，回调后恢复旧值以支持嵌套调用。`msBuiltinPrint` 以 `argc-2k` 为位置参数数，只读取这 `k` 对名字和值，识别 `sep`/`end`/`file`/`flush`，其余条目全部作为 `*values`；未知名字报 `TypeError: print() got an unexpected keyword argument 'x'`。显式计数避免把普通位置字符串误猜为关键字；在 `CALL_KW` 落地前，脚本侧只能使用位置参数与默认 `sep`/`end`。
 - 与 fmt 的分工（[07-stdlib.md](../language/07-stdlib.md) §1）：常规输出只用 `print`；宽度、精度、进制、对齐等格式控制属于任务 19 的 `fmt.printf`/`fmt.sprintf`/`fmt.fprintf`；fmt 不提供 `print`/`println`（与内建重叠，刻意删除）。本任务不在 print 内实现任何格式动词——`print` 只输出 str 表示。
 
 ### 5. 值的字符串表示（str 表示层）
@@ -149,7 +149,7 @@ float 的最短往返算法：从 `%.17g` 起步逐步降低精度，取第一�
 1. 建 `src/vm/ms_builtin.h`（guard `MSLANG_SRC_VM_MS_BUILTIN_H_`）与注册表骨架：`struct MsBuiltinEntry`、`msBuiltinTable`（先只含 `print`/`assert`）、`msBuiltinRegisterAll`；`msNewState` 改调 `msBuiltinRegisterAll` 取代任务 09 的 `msBuiltinRegisterMinimal`。验证：任务 09 的冒烟脚本（`hello.ms`/`arithmetic.ms`）全部保持通过。
 2. 实现公共辅助 `msBuiltinCheckArgc`/`msBuiltinCheckType`/`msBuiltinTruthy`，统一错误消息格式（`TypeError: ...`/`ValueError: ...` 前缀）。验证：`assert` 走新真值入口后冒烟脚本仍通过。
 3. 实现 str 表示层：nil/bool/int/float/str 的基础表示（含 float 最短往返）与 list/dict 的容器表示（元素 repr 风格）；`str` 内建落地。验证：ms 脚本断言 `str` 各类型输出与容器格式。
-4. 升级 `print` 至完整签名：`sep`/`end`/`file`/`flush` 解析（含假定的 kwarg 尾部扫描），`file != nil` 报 TypeError，`flush` 冲刷 stdout。验证：`.out` 同伴文件比对多值、`sep`/`end` 默认行为的 stdout 全文。
+4. 升级 `print` 至完整签名：按 `MsState.cKeywordCount` 解析尾部 `sep`/`end`/`file`/`flush` 名字和值，`file != nil` 报 TypeError，`flush` 冲刷 stdout。验证：`.out` 同伴文件比对多值、普通位置字符串、`sep`/`end` 默认行为的 stdout 全文。
 5. 实现 `len` 与 `type`：str 码点计数（UTF-8 解码逐码点）、list/dict 长度；`type` 返回类型对象并保证 `<type 'int'>` 表示。验证：多字节字符串的 `len` 断言、`print(type(x))` 输出比对。
 6. 实现 `int`/`float`/`bool`：全部分支与错误路径（含 `int("0x1F", 16)`、`int(3.9)`、`int(nan)` 报 ValueError、溢出报 ValueError）。验证：转换矩阵逐格断言。
 7. 实现 `range` 物化：参数形态判定、`step == 0` 检查、负 step、预计算个数、list 入根后逐项填充。验证：1/2/3 参与负 step 的内容断言，`range(1, 10, 0)` 负例退出码。

@@ -241,7 +241,7 @@ git commit -m '✨ feat(builtins): add len type and bool'
 ### Task 3: shared value representation and print
 
 **Files:**
-- Modify: `src/vm/ms_builtin.c`
+- Modify: `src/vm/ms_builtin.c`, `src/vm/ms_state_internal.h`
 - Test: `tests/ms/builtin/print.ms`, `print.out`, `type.ms`, `type.out`, `convert.ms`
 
 - [ ] **Step 1: Add failing representation tests**
@@ -251,6 +251,8 @@ Create `print.ms`:
 ```ms
 assert(print() == nil)
 assert(print(1, "two", true, nil, 2.5, 3.0) == nil)
+print("sep", "x")
+print("a", "b")
 print(-0.0)
 print(print)
 print(type(1))
@@ -262,6 +264,8 @@ Create `print.out` with exactly:
 ```text
 
 1 two true nil 2.5 3.0
+sep x
+a b
 -0.0
 <builtin function print>
 <type 'int'>
@@ -347,9 +351,9 @@ Add `{"str", msBuiltinStr}` to the registry after `bool` to match the planned fi
 
 - [ ] **Step 5: Add the documented keyword parser entry**
 
-Keep positional behavior as the only script-callable path. Add a file-local print option parser that recognizes trailing interleaved name/value entries for `sep`, `end`, `file`, and `flush`; defaults are `" "`, `"\n"`, nil, and false. Reject unknown or repeated names with TypeError, require string `sep`/`end`, reject non-nil `file`, and use `msObjectIsTruthy` for `flush`. Write `sep` and `end` with their explicit lengths and call `fflush(stdout)` when requested.
+Keep positional behavior as the only script-callable path. Add `MsState.cKeywordCount` without changing the public `MsCFunction` signature. The file-local print option parser reads exactly `cKeywordCount` trailing interleaved name/value entries for `sep`, `end`, `file`, and `flush`; ordinary `CALL` leaves the count at zero. Validate the count before indexing, reject unknown or repeated names with TypeError, require string `sep`/`end`, reject non-nil `file`, and use `msObjectIsTruthy` for `flush`. Defaults are `" "`, `"\n"`, nil, and false. Write `sep` and `end` with their explicit lengths and call `fflush(stdout)` when requested.
 
-This entry follows the approved task 10 contract; executable keyword-call coverage remains in task 13 with `CALL_KW`, as explicitly allowed by the task document.
+The explicit count keeps ordinary positional strings such as `print("sep", "x")` unambiguous. Task 13 will set and restore the count around C callbacks when implementing `CALL_KW`; executable keyword-call coverage remains in task 13, as explicitly allowed by the task document.
 
 - [ ] **Step 6: Verify output byte-for-byte and commit**
 

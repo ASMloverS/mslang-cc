@@ -232,20 +232,31 @@ static bool msBuiltinParsePrintOptions(MsState* L, int64_t argc, struct MsObject
     .endLen = 1,
     .flush = false,
   };
-  *valueCount = argc;
+  int64_t keywordCount = L->cKeywordCount;
+  if (argc < 0 || keywordCount < 0 || keywordCount > argc / 2) {
+    msRaiseRuntimeError(L, "print() invalid C keyword argument count");
+    return false;
+  }
+  *valueCount = argc - 2 * keywordCount;
   bool seen[MS_BUILTIN_PRINT_OPTION_COUNT] = {false};
-  while (*valueCount >= 2 && msObjectTag(argv[*valueCount - 2]) == MS_TYPE_STRING) {
-    const struct MsString* name = (const struct MsString*)argv[*valueCount - 2];
+  for (int64_t i = 0; i < keywordCount; ++i) {
+    struct MsObject* nameObject = argv[*valueCount + 2 * i];
+    if (msObjectTag(nameObject) != MS_TYPE_STRING) {
+      msRaiseRuntimeError(L, "print() C keyword name must be str");
+      return false;
+    }
+    const struct MsString* name = (const struct MsString*)nameObject;
     enum MsBuiltinPrintOption option = msBuiltinPrintOption(name);
     if (option == MS_BUILTIN_PRINT_OPTION_UNKNOWN) {
-      break;
+      msRaiseTypeError(L, "print() got an unexpected keyword argument '%s'", msStringData(name));
+      return false;
     }
     if (seen[option]) {
       msRaiseTypeError(L, "print() got multiple values for argument '%s'", msStringData(name));
       return false;
     }
     seen[option] = true;
-    struct MsObject* value = argv[*valueCount - 1];
+    struct MsObject* value = argv[*valueCount + 2 * i + 1];
     if (option == MS_BUILTIN_PRINT_SEP || option == MS_BUILTIN_PRINT_END) {
       if (msObjectTag(value) != MS_TYPE_STRING) {
         msRaiseTypeError(L, "print() %s must be str", msStringData(name));
@@ -267,7 +278,6 @@ static bool msBuiltinParsePrintOptions(MsState* L, int64_t argc, struct MsObject
     } else {
       options->flush = msObjectIsTruthy(value);
     }
-    *valueCount -= 2;
   }
   return true;
 }

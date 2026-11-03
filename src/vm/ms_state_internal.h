@@ -20,6 +20,7 @@ struct MsState {
   int globalsCap;
   struct MsString* error;
   MsResult errorResult;
+  int64_t cKeywordCount;
 };
 
 struct MsObject* msStateGetGlobal(MsState* L, const struct MsString* name);

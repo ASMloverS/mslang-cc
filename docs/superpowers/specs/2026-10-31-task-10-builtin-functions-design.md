@@ -64,7 +64,7 @@ float 格式化从精度 1 到 17 使用 `%.*g`，选取首个经 `strtod` 往�
 
 `print(*values, sep=" ", end="\n", file=nil, flush=false)` 将值依次转为 str 表示，以 `sep` 连接并追加 `end`，返回 nil。`sep`/`end` 必须是字符串；`file` 非 nil 报 TypeError；`flush` 按真值决定是否调用 `fflush(stdout)`。所有写入和冲刷失败均设置运行时错误。
 
-实现任务 10/13 文档约定的 C 函数关键字尾部扫描：名字字符串和值交错追加在 `argv` 尾部。识别 `sep`、`end`、`file`、`flush`，拒绝未知名、重复名和位置/关键字重复绑定。任务 13 接通 `CALL_KW` 前，脚本测试只覆盖位置参数和默认行为，不提前实现关键字调用指令。
+实现任务 10/13 文档约定的显式 C 函数关键字通道：公开 `MsCFunction` 签名不变，内部 `MsState.cKeywordCount` 记录关键字个数 `k`，名字字符串和值仍交错追加在 `argv` 尾部。普通 `CALL` 时 `k=0`；`print` 从位置参数末尾读取恰好 `k` 对名字和值，不猜测普通字符串是否为关键字。识别 `sep`、`end`、`file`、`flush`，拒绝未知名、重复名和位置/关键字重复绑定。任务 13 接通 `CALL_KW` 前，脚本测试只覆盖位置参数和默认行为，不提前实现关键字调用指令。
 
 `assert(cond, msg=nil)` 使用统一真值入口。条件为假时产生 `AssertionError:`；有消息时附加其 str 表示，无消息时使用固定断言失败文本。条件为真返回 nil。
 

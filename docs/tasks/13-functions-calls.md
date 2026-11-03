@@ -152,10 +152,11 @@ MsResult msFunctionBindArgs(MsState* L, struct MsFunction* fn,
 
 ### 5. C 函数的关键字参数约定（定稿任务 10 的假定）
 
-callee 为 `MS_TYPE_C_FUNCTION` 时不建帧，VM 把实参整理为连续 `argv` 后直接回调（签名 `MsObject* (*)(MsState* L, int64_t argc, MsObject** argv)`，[09-c-api.md](../language/09-c-api.md) §9）：
+callee 为 `MS_TYPE_C_FUNCTION` 时不建帧，VM 把实参整理为连续 `argv` 后直接回调。公开签名保持 `MsObject* (*)(MsState* L, int64_t argc, MsObject** argv)` 不变（[09-c-api.md](../language/09-c-api.md) §9），关键字个数经内部 `MsState.cKeywordCount` 显式传递：
 
-- `CALL`：`argc = n`，`argv[0..n)` 即位置参数（借用栈区，不复制）。
-- `CALL_KW`：`argc = n + 2k`；`argv[0..n)` 为位置参数；`argv[n + 2j]` 为第 j 个关键字名的 `MsString` 对象，`argv[n + 2j + 1]` 为其值（名字/值交错追加在尾部，与任务 10 §4 的假定一致，此处定稿）。因栈上关键字值连续而约定要求交错，VM 经 scratch 重排后传入。
+- `CALL`：`argc = n`，`argv[0..n)` 即位置参数（借用栈区，不复制），`cKeywordCount=0`。
+- `CALL_KW`：`argc = n + 2k`，`cKeywordCount=k`；`argv[0..n)` 为位置参数；`argv[n + 2j]` 为第 j 个关键字名的 `MsString` 对象，`argv[n + 2j + 1]` 为其值（名字/值交错追加在尾部，与任务 10 §4 的约定一致）。因栈上关键字值连续而约定要求交错，VM 经 scratch 重排后传入。VM 在回调前保存旧计数并设置 `k`，回调后无论成功或失败都恢复旧计数，以保证嵌套 C 调用互不干扰。
+- 显式计数使 C 内建无需从尾部猜测关键字，普通位置字符串（包括 `print("sep", "x")`）不会被误判为名字/值对。
 - 返回值压栈替代 callable 与实参区；返回 `NULL` 表示错误槽已置，VM 中止当前执行（v0.1）或转为异常（任务 23 后）。
 
 ### 6. 默认参数：定义时求值与共享语义
