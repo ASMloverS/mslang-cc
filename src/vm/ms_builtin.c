@@ -405,6 +405,63 @@ static struct MsObject* msBuiltinLen(MsState* L, int64_t argc, struct MsObject**
   return msNewInt(L, length);
 }
 
+static struct MsObject* msBuiltinRange(MsState* L, int64_t argc, struct MsObject** argv) {
+  if (!msBuiltinCheckArgc(L, "range", argc, 1, 3)) {
+    return NULL;
+  }
+  for (int64_t i = 0; i < argc; ++i) {
+    if (msObjectTag(argv[i]) != MS_TYPE_INT) {
+      msRaiseTypeError(L, "range() arguments must be int");
+      return NULL;
+    }
+  }
+  int64_t start = 0;
+  int64_t stop = msIntWordValue(argv[0]);
+  int64_t step = 1;
+  if (argc >= 2) {
+    start = msIntWordValue(argv[0]);
+    stop = msIntWordValue(argv[1]);
+  }
+  if (argc == 3) {
+    step = msIntWordValue(argv[2]);
+  }
+  if (step == 0) {
+    msRaiseValueError(L, "range() step must not be zero");
+    return NULL;
+  }
+  uint64_t count = 0;
+  if (step > 0 && start < stop) {
+    uint64_t delta = (uint64_t)stop - (uint64_t)start;
+    count = 1 + (delta - 1) / (uint64_t)step;
+  } else if (step < 0 && start > stop) {
+    uint64_t delta = (uint64_t)start - (uint64_t)stop;
+    uint64_t distance = (uint64_t)(-(step + 1)) + 1;
+    count = 1 + (delta - 1) / distance;
+  }
+  if (count > (uint64_t)INT64_MAX) {
+    msRaiseValueError(L, "range() result has too many items");
+    return NULL;
+  }
+  struct MsObject* list = msNewList(L, (int64_t)count);
+  if (list == NULL) {
+    return NULL;
+  }
+  int64_t value = start;
+  for (uint64_t i = 0; i < count; ++i) {
+    struct MsObject* item = msNewInt(L, value);
+    if (item == NULL) {
+      return NULL;
+    }
+    if (msListAppend(L, (struct MsList*)list, item) != MS_OK) {
+      return NULL;
+    }
+    if (i + 1 < count) {
+      value += step;
+    }
+  }
+  return list;
+}
+
 static struct MsObject* msBuiltinType(MsState* L, int64_t argc, struct MsObject** argv) {
   if (!msBuiltinCheckArgc(L, "type", argc, 1, 1)) {
     return NULL;
@@ -568,6 +625,7 @@ static const struct MsBuiltinEntry msBuiltinTable[] = {
   {"float", msBuiltinFloat},
   {"bool", msBuiltinBool},
   {"str", msBuiltinStr},
+  {"range", msBuiltinRange},
 };
 
 static void msBuiltinRegister(MsState* L, const char* name, MsCFunction function) {
