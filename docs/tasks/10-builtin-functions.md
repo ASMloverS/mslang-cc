@@ -26,7 +26,7 @@
 - [10-c-style.md](../language/10-c-style.md)：全部 C 接口遵循其规范（2 空格缩进、120 列行宽、K&R 括号、指针星号贴类型、`ms`/`Ms`/`MS_` 命名、include guard、内部结构体不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`）。
 - [11-project-layout.md](../language/11-project-layout.md) §1（内建函数归属 `src/vm/`）、§4（测试策略：任务 09 起脚本测试层）。
 - [09-minimal-interpreter.md](09-minimal-interpreter.md) §4（临时内建 `print`/`assert` 的挂接方式即正式机制的最小样例，本任务将其扩展为完整模块，`msBuiltinRegisterMinimal` 由 `msBuiltinRegisterAll` 取代）。
-- 实现采用任务 06/08 的 `msNewCFunction` 创建 C 函数对象；值的 str/repr 表示与顺序比较由本模块的 static 辅助实现，不新增公共 `msObjectStr`/`msObjectRepr`/`msObjectCompare` API；C 函数关键字参数约定已与任务 13 的 `MsState.cKeywordCount` 设计对齐。
+- 实现采用任务 06/08 的 `msNewCFunction` 创建 C 函数对象；值的 str/repr 表示由本模块的 static 辅助实现，顺序比较由对象运算层的内部 `msObjectCompare` 统一提供，不新增公共 `msObjectStr`/`msObjectRepr` API；C 函数关键字参数约定已与任务 13 的 `MsState.cKeywordCount` 设计对齐。
 
 ## 详细设计
 
@@ -124,7 +124,7 @@ float 的最短往返算法：使用 `%.*g` 从精度 1 递增至 17，取首个
   - v0.1 返回**物化的 int list**（`msNewList` + `msListAppend` 逐项填充）。规范（[02-types.md](../language/02-types.md) §7）要求惰性序列对象，但惰性对象依赖迭代协议（任务 26）；物化 list 在 `len`/下标/`for-in`（任务 26 后）下的脚本可见行为与惰性对象一致，届时以惰性 range 类型替换实现、行为不变。此偏差须在本任务文档显式承认；
   - 物化前计算元素个数，个数为负按 0 处理；分配失败经 `msAlloc` 统一走 `MS_ERROR_OOM`。
 - `abs(x)`：int → 绝对值（`INT64_MIN` 溢出报 `ValueError`，大整数落地后自然解除）；float → 绝对值；其余 `TypeError`。
-- `min(...)` / `max(...)`：两种形态——`min(a, b, ...)`（≥1 个位置参数）或 `min(xs)`（单参为 list，取元素）。空参或空 list 报 `ValueError: <name>() arg is an empty sequence`，其中 `<name>` 分别为 `min` 或 `max`。比较由文件内 `msBuiltinCompare` 实现：v0.1 可比较对为 int/float 精确混合比较（不直接把 int 提升为 float）与 str/str；不可比较的组合报 `TypeError`。返回最大/最小值本身（不复制）。
+- `min(...)` / `max(...)`：两种形态——`min(a, b, ...)`（≥1 个位置参数）或 `min(xs)`（单参为 list，取元素）。空参或空 list 报 `ValueError: <name>() arg is an empty sequence`，其中 `<name>` 分别为 `min` 或 `max`。比较由对象层 `msObjectCompare` 提供，内建仅补充 TypeError：v0.1 可比较对为 int/float 精确混合比较（不直接把 int 提升为 float）与 str/str；不可比较的组合报 `TypeError`。返回最大/最小值本身（不复制）。
 
 ### 7. GC 与内存纪律
 
@@ -165,7 +165,7 @@ float 的最短往返算法：使用 `%.*g` 从精度 1 递增至 17，取首个
 - [x] `len` 对 str 按 Unicode 码点计数；`float` 的 str 表示满足最短往返且整数值带 `.0`；`range` 按本任务边界物化为 int list，元素个数正确，`step == 0` 报 ValueError。
 - [x] 当前无执行中的 GC，内建与容器按既有所有权约定管理对象并由 `msCloseState` 统一回收；Windows Debug `/RTC` 构建与测试无内存错误或残余分配报告。
 - [x] `tests/ms/builtin/` 覆盖「测试方案」全部清单项（含 `.out` 输出比对与 `.exit`/`.err` 负例），Windows 上 `python run_tests.py` 与 `ctest --test-dir build` 全数通过；构建产物只落在 `build/`。
-- [x] 无 TBD/TODO 占位；实际表示与比较辅助为 `ms_builtin.c` 内 static 实现，C 函数创建与 kwarg 调用约定已同任务 06/08/13 文档对齐。
+- [x] 无 TBD/TODO 占位；表示辅助为 `ms_builtin.c` 内 static 实现，共享比较为对象层内部 `msObjectCompare`，C 函数创建与 kwarg 调用约定已同任务 06/08/13 文档对齐。
 
 ### Windows 验证记录
 
