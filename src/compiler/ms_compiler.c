@@ -917,8 +917,7 @@ static void msCompilerCompileContainer(struct MsCompiler* c, const struct MsAst*
   for (size_t i = 0; i < count; ++i) {
     msCompilerCompileExpr(c, node->as.block.items[i]);
   }
-  MsOpCode op = isDict ? MS_OP_BUILD_DICT : MS_OP_BUILD_LIST;
-  msCompilerEmitABC(c, op, (uint8_t)items, 0, 1 - (int)count);
+  msCompilerEmitABC(c, isDict ? MS_OP_BUILD_DICT : MS_OP_BUILD_LIST, (uint8_t)items, 0, 1 - (int)count);
 }
 
 static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node) {

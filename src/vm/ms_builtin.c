@@ -12,6 +12,7 @@
 #include "core/ms_memory.h"
 #include "object/ms_dict.h"
 #include "object/ms_list.h"
+#include "object/ms_operator.h"
 #include "object/ms_string.h"
 #include "vm/ms_function.h"
 #include "vm/ms_state_internal.h"
@@ -71,24 +72,22 @@ static struct MsString* msBuiltinBufferFinish(MsState* L, struct MsBuiltinBuffer
 
 static bool msBuiltinWriteFloat(MsState* L, struct MsBuiltinBuffer* buffer, double value) {
   char candidate[64];
-  char selected[64] = {0};
   for (int precision = 1; precision <= 17; ++precision) {
     int written = snprintf(candidate, sizeof(candidate), "%.*g", precision, value);
     if (written < 0 || (size_t)written >= sizeof(candidate)) {
       msRaiseRuntimeError(L, "failed to format float");
       return false;
     }
-    memcpy(selected, candidate, (size_t)written + 1);
     char* end = NULL;
     double parsed = strtod(candidate, &end);
     if (*end == '\0' && memcmp(&parsed, &value, sizeof(value)) == 0) {
       break;
     }
   }
-  if (!msBuiltinBufferAppend(L, buffer, selected, strlen(selected))) {
+  if (!msBuiltinBufferAppend(L, buffer, candidate, strlen(candidate))) {
     return false;
   }
-  if (isfinite(value) && strpbrk(selected, ".eE") == NULL) {
+  if (isfinite(value) && strpbrk(candidate, ".eE") == NULL) {
     return msBuiltinBufferAppend(L, buffer, ".0", 2);
   }
   return true;
@@ -215,8 +214,14 @@ static bool msBuiltinWriteStdout(const char* data, size_t len) {
 }
 
 static bool msBuiltinPrintValue(MsState* L, const struct MsObject* value) {
-  struct MsString* string = msBuiltinStringValue(L, value);
-  return string != NULL && msBuiltinWriteStdout(msStringData(string), msStringLen(string));
+  struct MsBuiltinBuffer buffer = {0};
+  if (!msBuiltinWriteValue(L, &buffer, value, false)) {
+    msFree(buffer.data);
+    return false;
+  }
+  bool written = buffer.len == 0 || msBuiltinWriteStdout(buffer.data, buffer.len);
+  msFree(buffer.data);
+  return written;
 }
 
 enum MsBuiltinPrintOption {
@@ -633,74 +638,13 @@ static struct MsObject* msBuiltinAbs(MsState* L, int64_t argc, struct MsObject**
   return NULL;
 }
 
-static int msBuiltinCompareIntFloat(int64_t intValue, double floatValue) {
-  if (isnan(floatValue)) {
-    return 2;
-  }
-  if (isinf(floatValue)) {
-    return floatValue > 0.0 ? -1 : 1;
-  }
-  if (floatValue >= 9223372036854775808.0) {
-    return -1;
-  }
-  if (floatValue < -9223372036854775808.0) {
-    return 1;
-  }
-  int64_t truncated = (int64_t)floatValue;
-  if (intValue < truncated) {
-    return -1;
-  }
-  if (intValue > truncated) {
-    return 1;
-  }
-  if ((double)truncated == floatValue) {
-    return 0;
-  }
-  return floatValue > 0.0 ? -1 : 1;
-}
-
 static bool msBuiltinCompare(MsState* L, const char* name, const struct MsObject* lhs,
     const struct MsObject* rhs, int* order) {
-  MsTypeTag lhsTag = msObjectTag(lhs);
-  MsTypeTag rhsTag = msObjectTag(rhs);
-  if (lhsTag == MS_TYPE_INT && rhsTag == MS_TYPE_INT) {
-    int64_t lhsValue = msIntWordValue(lhs);
-    int64_t rhsValue = msIntWordValue(rhs);
-    *order = lhsValue < rhsValue ? -1 : lhsValue > rhsValue ? 1 : 0;
-    return true;
+  if (!msObjectCompare(lhs, rhs, order)) {
+    msRaiseTypeError(L, "%s() cannot compare values", name);
+    return false;
   }
-  if ((lhsTag == MS_TYPE_INT || lhsTag == MS_TYPE_FLOAT)
-      && (rhsTag == MS_TYPE_INT || rhsTag == MS_TYPE_FLOAT)) {
-    if (lhsTag == MS_TYPE_FLOAT && rhsTag == MS_TYPE_FLOAT) {
-      double lhsValue = msFloatValue(lhs);
-      double rhsValue = msFloatValue(rhs);
-      *order = lhsValue < rhsValue ? -1 : lhsValue > rhsValue ? 1 : lhsValue == rhsValue ? 0 : 2;
-    } else if (lhsTag == MS_TYPE_INT) {
-      *order = msBuiltinCompareIntFloat(msIntWordValue(lhs), msFloatValue(rhs));
-    } else {
-      *order = msBuiltinCompareIntFloat(msIntWordValue(rhs), msFloatValue(lhs));
-      if (*order != 2) {
-        *order = -*order;
-      }
-    }
-    return true;
-  }
-  if (lhsTag == MS_TYPE_STRING && rhsTag == MS_TYPE_STRING) {
-    const struct MsString* lhsString = (const struct MsString*)lhs;
-    const struct MsString* rhsString = (const struct MsString*)rhs;
-    size_t lhsLen = msStringLen(lhsString);
-    size_t rhsLen = msStringLen(rhsString);
-    size_t sharedLen = lhsLen < rhsLen ? lhsLen : rhsLen;
-    int comparison = memcmp(msStringData(lhsString), msStringData(rhsString), sharedLen);
-    if (comparison != 0) {
-      *order = comparison < 0 ? -1 : 1;
-    } else {
-      *order = lhsLen < rhsLen ? -1 : lhsLen > rhsLen ? 1 : 0;
-    }
-    return true;
-  }
-  msRaiseTypeError(L, "%s() cannot compare values", name);
-  return false;
+  return true;
 }
 
 static struct MsObject* msBuiltinMinMax(MsState* L, int64_t argc, struct MsObject** argv,

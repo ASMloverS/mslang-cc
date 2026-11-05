@@ -61,6 +61,68 @@ static int msStringCompare(const struct MsString* lhs, const struct MsString* rh
   return 0;
 }
 
+static int msObjectCompareIntFloat(int64_t intValue, double floatValue) {
+  if (isnan(floatValue)) {
+    return MS_OBJECT_COMPARE_UNORDERED;
+  }
+  if (isinf(floatValue)) {
+    return floatValue > 0.0 ? -1 : 1;
+  }
+  if (floatValue >= 9223372036854775808.0) {
+    return -1;
+  }
+  if (floatValue < -9223372036854775808.0) {
+    return 1;
+  }
+  int64_t truncated = (int64_t)floatValue;
+  if (intValue < truncated) {
+    return -1;
+  }
+  if (intValue > truncated) {
+    return 1;
+  }
+  if ((double)truncated == floatValue) {
+    return 0;
+  }
+  return floatValue > 0.0 ? -1 : 1;
+}
+
+bool msObjectCompare(const struct MsObject* lhs, const struct MsObject* rhs, int* order) {
+  MsTypeTag lhsTag = msObjectTag(lhs);
+  MsTypeTag rhsTag = msObjectTag(rhs);
+  if (lhsTag == MS_TYPE_INT && rhsTag == MS_TYPE_INT) {
+    int64_t lhsValue = msIntWordValue(lhs);
+    int64_t rhsValue = msIntWordValue(rhs);
+    *order = lhsValue < rhsValue ? -1 : lhsValue > rhsValue ? 1 : 0;
+    return true;
+  }
+  if ((lhsTag == MS_TYPE_INT || lhsTag == MS_TYPE_FLOAT)
+      && (rhsTag == MS_TYPE_INT || rhsTag == MS_TYPE_FLOAT)) {
+    if (lhsTag == MS_TYPE_FLOAT && rhsTag == MS_TYPE_FLOAT) {
+      double lhsValue = msFloatValue(lhs);
+      double rhsValue = msFloatValue(rhs);
+      *order = lhsValue < rhsValue ? -1
+          : lhsValue > rhsValue ? 1
+          : lhsValue == rhsValue ? 0
+          : MS_OBJECT_COMPARE_UNORDERED;
+    } else if (lhsTag == MS_TYPE_INT) {
+      *order = msObjectCompareIntFloat(msIntWordValue(lhs), msFloatValue(rhs));
+    } else {
+      *order = msObjectCompareIntFloat(msIntWordValue(rhs), msFloatValue(lhs));
+      if (*order != MS_OBJECT_COMPARE_UNORDERED) {
+        *order = -*order;
+      }
+    }
+    return true;
+  }
+  if (lhsTag == MS_TYPE_STRING && rhsTag == MS_TYPE_STRING) {
+    int comparison = msStringCompare((const struct MsString*)lhs, (const struct MsString*)rhs);
+    *order = comparison < 0 ? -1 : comparison > 0 ? 1 : 0;
+    return true;
+  }
+  return false;
+}
+
 static struct MsObject* msObjectStringBinaryOp(MsState* L, MsOpCode op, struct MsObject* lhs,
     struct MsObject* rhs) {
   const struct MsString* lhsString = (const struct MsString*)lhs;

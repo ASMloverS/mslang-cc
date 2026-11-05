@@ -442,35 +442,6 @@ static struct MsObject* msVmUnaryOp(MsState* L, MsOpCode op, struct MsObject* op
   return msObjectUnaryOp(L, op, operand);
 }
 
-#define MS_VM_COMPARE_UNORDERED 2
-
-static int msVmCompareIntFloat(int64_t intValue, double floatValue) {
-  if (isnan(floatValue)) {
-    return MS_VM_COMPARE_UNORDERED;
-  }
-  if (isinf(floatValue)) {
-    return floatValue > 0.0 ? -1 : 1;
-  }
-  if (floatValue >= 9223372036854775808.0) {
-    return -1;
-  }
-  if (floatValue < -9223372036854775808.0) {
-    return 1;
-  }
-
-  int64_t truncated = (int64_t)floatValue;
-  if (intValue < truncated) {
-    return -1;
-  }
-  if (intValue > truncated) {
-    return 1;
-  }
-  if ((double)truncated == floatValue) {
-    return 0;
-  }
-  return floatValue > 0.0 ? -1 : 1;
-}
-
 static bool msVmComparisonFromOrder(MsOpCode op, int order) {
   switch (op) {
     case MS_OP_EQ:
@@ -491,27 +462,9 @@ static bool msVmComparisonFromOrder(MsOpCode op, int order) {
 }
 
 static bool msVmCompareNumeric(MsOpCode op, const struct MsObject* lhs, const struct MsObject* rhs) {
-  if (msObjectTag(lhs) == MS_TYPE_INT && msObjectTag(rhs) == MS_TYPE_INT) {
-    int64_t lhsValue = msIntWordValue(lhs);
-    int64_t rhsValue = msIntWordValue(rhs);
-    int order = lhsValue < rhsValue ? -1 : lhsValue > rhsValue ? 1 : 0;
-    return msVmComparisonFromOrder(op, order);
-  }
-  if (msObjectTag(lhs) == MS_TYPE_FLOAT && msObjectTag(rhs) == MS_TYPE_FLOAT) {
-    double lhsValue = msFloatValue(lhs);
-    double rhsValue = msFloatValue(rhs);
-    int order = lhsValue < rhsValue ? -1 : lhsValue > rhsValue ? 1 : lhsValue == rhsValue ? 0 : 2;
-    return msVmComparisonFromOrder(op, order);
-  }
-
-  int order;
-  if (msObjectTag(lhs) == MS_TYPE_INT) {
-    order = msVmCompareIntFloat(msIntWordValue(lhs), msFloatValue(rhs));
-  } else {
-    order = msVmCompareIntFloat(msIntWordValue(rhs), msFloatValue(lhs));
-    if (order != MS_VM_COMPARE_UNORDERED) {
-      order = -order;
-    }
+  int order = MS_OBJECT_COMPARE_UNORDERED;
+  if (!msObjectCompare(lhs, rhs, &order)) {
+    return false;
   }
   return msVmComparisonFromOrder(op, order);
 }
@@ -798,11 +751,8 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
           result = msVmPropagatedErrorAt(L, frame);
           break;
         }
-        for (int i = 0; i < count; ++i) {
+        for (int i = 0; i < count; i += isDict ? 2 : 1) {
           if (isDict) {
-            if (i % 2 != 0) {
-              continue;
-            }
             result = msDictSet(L, (struct MsDict*)container, co->stack[base + i], co->stack[base + i + 1]);
           } else {
             result = msListAppend(L, (struct MsList*)container, co->stack[base + i]);

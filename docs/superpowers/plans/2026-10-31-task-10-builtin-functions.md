@@ -814,4 +814,5 @@ git commit -m '📝 docs(tasks): complete builtin functions'
 - `float` explicitly rejects hexadecimal strings accepted by the platform's `strtod`; `err_float_hex.ms` and its companions cover this deviation.
 - Existing `tests/c/test_vm.c` was adapted for the larger global capacity and `BUILD_LIST` execution support, in addition to builtin registration assumptions.
 - Final clean verification on Windows passed in both configurations: Debug and Release each built successfully, passed 14/14 CTests and 24/24 MS scripts. Direct Debug CLI checks also passed for all four positive and four negative fixtures, including exact stdout, exit codes, empty negative stdout, and required stderr prefixes.
+- Simplification review unified VM/builtin ordering in `msObjectCompare`, removed redundant formatting state, simplified literal construction loops, and avoided temporary heap strings in `print`; Debug and Release each still pass 14/14 CTests and 24/24 scripts.
 - `range` remains an intentionally materialized int list. No Linux/macOS verification is claimed.
