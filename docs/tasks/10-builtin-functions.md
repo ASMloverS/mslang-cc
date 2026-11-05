@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [09 最小可运行解释器](09-minimal-interpreter.md) |
+| v0.1 | ✅ | [09 最小可运行解释器](09-minimal-interpreter.md) |
 
 ## 任务目标
 
@@ -26,7 +26,7 @@
 - [10-c-style.md](../language/10-c-style.md)：全部 C 接口遵循其规范（2 空格缩进、120 列行宽、K&R 括号、指针星号贴类型、`ms`/`Ms`/`MS_` 命名、include guard、内部结构体不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`）。
 - [11-project-layout.md](../language/11-project-layout.md) §1（内建函数归属 `src/vm/`）、§4（测试策略：任务 09 起脚本测试层）。
 - [09-minimal-interpreter.md](09-minimal-interpreter.md) §4（临时内建 `print`/`assert` 的挂接方式即正式机制的最小样例，本任务将其扩展为完整模块，`msBuiltinRegisterMinimal` 由 `msBuiltinRegisterAll` 取代）。
-- 以下接口名在依赖任务文档（06 对象模型、08 VM 执行核心、13 函数与调用）中尚未定稿，本文为其假定命名：`msNewCFunction`（创建 C 函数对象）、`msObjectStr`/`msObjectRepr`（值的 str/repr 表示）、`msObjectCompare`（值比较）、关键字参数传递到 C 函数的调用约定。**实现时以对应任务文档定名为准。**
+- 实现采用任务 06/08 的 `msNewCFunction` 创建 C 函数对象；值的 str/repr 表示与顺序比较由本模块的 static 辅助实现，不新增公共 `msObjectStr`/`msObjectRepr`/`msObjectCompare` API；C 函数关键字参数约定已与任务 13 的 `MsState.cKeywordCount` 设计对齐。
 
 ## 详细设计
 
@@ -70,29 +70,17 @@ static const struct MsBuiltinEntry msBuiltinTable[] = {
 };
 ```
 
-`msBuiltinRegisterAll` 流程：遍历 `msBuiltinTable`，对每项调用 `msNewCFunction(L, name, func)`（任务 06/08 提供，创建 `MS_TYPE_C_FUNCTION` 对象）得到函数对象，立即经 `msSetGlobal(L, name, fnObj)` 写入全局命名空间；创建失败（OOM）时按任务 09 的 `msNewState` 失败路径向上传播。全局命名空间即「内建」层：脚本用 `:=` 同名声明即可遮蔽内建（[03-syntax.md](../language/03-syntax.md) §8 的解析顺序保证），无需独立的内建表。
+`msBuiltinRegisterAll` 流程：遍历 `msBuiltinTable`，每项先以 `msStringFromCStr` 创建名称，再调用 `msNewCFunction(L, nameString, func)`（任务 06/08 提供）创建 `MS_TYPE_C_FUNCTION` 对象，立即经 `msStateSetGlobal` 写入全局命名空间；创建失败（OOM）时停止注册，按任务 09 的 `msNewState` 失败路径向上传播。全局命名空间即「内建」层：脚本用 `:=` 同名声明即可遮蔽内建（[03-syntax.md](../language/03-syntax.md) §8 的解析顺序保证），无需独立的内建表。
 
 ### 3. 公共辅助函数（文件内 static）
 
-```c
-// Reports "name() takes at least/at most N argument(s)" as TypeError and
-// returns false when argc is outside [min, max]. max < 0 means unbounded.
-static bool msBuiltinCheckArgc(MsState* L, const char* name, int64_t argc, int64_t min, int64_t max);
-
-// Reports "name() argument must be <want>, not <got>" as TypeError, false on mismatch.
-static bool msBuiltinCheckType(MsState* L, const char* name, MsObject* arg, MsTypeTag want);
-
-// Formats the truthiness of any v0.1 value per 02-types.md section 2.
-static bool msBuiltinTruthy(MsObject* obj);
-```
-
-`msBuiltinTruthy` 的 v0.1 判定集：`nil`、`false`、`0`（含驻留小整数）、`0.0`/`-0.0`、`""`、空 list、空 dict 为假，其余为真；`__bool__`/`__len__` 协议随任务 25 接入，此处预留单一入口便于替换。
+`msBuiltinCheckArgc` 统一检查参数个数并以 TypeError 报告越界；各内建按参数语义直接检查类型。真值统一复用对象层的 `msObjectIsTruthy`：`nil`、`false`、`0`（含驻留小整数）、`0.0`/`-0.0`、`""`、空 list、空 dict 为假，其余为真；`__bool__`/`__len__` 协议随任务 25 接入。
 
 ### 4. `print`：完整签名与 fmt 分工
 
 签名对齐 [03-syntax.md](../language/03-syntax.md) §9.1：`print(*values, sep=" ", end="\n", file=nil, flush=false)`。
 
-- 语义：逐个把 `*values` 经 `msObjectStr`（值的 str 表示，见第 5 节）转为字符串，以 `sep` 连接写入输出目标，末尾追加 `end`；返回 nil。
+- 语义：逐个把 `*values` 经本模块的 static 表示函数转为字符串，以 `sep` 连接写入输出目标，末尾追加 `end`；返回 nil。
 - `file`：`nil`（默认）表示 stdout；非 nil 要求实现 `io.Writer` 协议（`write`/`flush`），v0.1 尚无 io 模块（任务 37），本阶段对非 nil 的 `file` 一律报 `TypeError`，协议分派在 io 落地后补齐。
 - `flush`：为真时对输出目标冲刷；stdout 路径即 `fflush(stdout)`。
 - 关键字参数通道：公开 `MsCFunction` 签名（[09-c-api.md](../language/09-c-api.md) §9）保持不变，内部 `MsState.cKeywordCount` 显式携带关键字个数 `k`。普通 `CALL` 时 `k=0`；`CALL_KW` 仍把关键字参数以「名字字符串对象、值对象」交错追加在 `argv` 尾部并计入 `argc`，同时由 VM 在回调前保存旧值、设置 `cKeywordCount=k`，回调后恢复旧值以支持嵌套调用。`msBuiltinPrint` 以 `argc-2k` 为位置参数数，只读取这 `k` 对名字和值，识别 `sep`/`end`/`file`/`flush`，其余条目全部作为 `*values`；未知名字报 `TypeError: print() got an unexpected keyword argument 'x'`。显式计数避免把普通位置字符串误猜为关键字；在 `CALL_KW` 落地前，脚本侧只能使用位置参数与默认 `sep`/`end`。
@@ -100,7 +88,7 @@ static bool msBuiltinTruthy(MsObject* obj);
 
 ### 5. 值的字符串表示（str 表示层）
 
-`str(x)` 内建与 `print` 共用同一表示函数 `msObjectStr(L, obj)`（假定名，任务 06 提供；若任务 06 未覆盖容器表示，本模块以 `static` 函数补齐并随任务 06 对齐）。v0.1 各类型表示：
+`str(x)` 内建与 `print` 共用文件内 static 的 `msBuiltinWriteValue`/`msBuiltinStringValue` 表示层，不引入新的公共对象 API。v0.1 各类型表示：
 
 | 类型 | 表示 | 示例 |
 |---|---|---|
@@ -120,34 +108,34 @@ float 的最短往返算法：从 `%.17g` 起步逐步降低精度，取第一�
 
 统一错误风格：参数个数/类型不符报 `TypeError`，值域错误报 `ValueError`，均以 `msRaiseTypeError`/`msRaiseValueError` 置错误并返回 `NULL`（[09-c-api.md](../language/09-c-api.md) §8）；异常对象体系落地（任务 23）前表现为错误槽消息 + `MS_ERROR_RUNTIME`，CLI 退出码 1。
 
-- `assert(cond, msg=nil)`（沿用任务 09，纳入注册表）：`cond` 按 `msBuiltinTruthy` 判定，为假时报 `AssertionError`（带 `msg` 的 str 表示）；为真返回 nil。
+- `assert(cond, msg=nil)`（沿用任务 09，纳入注册表）：`cond` 按 `msObjectIsTruthy` 判定，为假时报 `AssertionError`（带 `msg` 的 str 表示）；为真返回 nil。
 - `len(x)`：str → Unicode **码点数**（非字节数，[02-types.md](../language/02-types.md) §4）；list → 元素数；dict → 键数。其余类型报 `TypeError: object of type 'int' has no len()`。
 - `type(x)`：返回 `x` 的类型对象（对象头 `type` 字段装箱为脚本可见值，内建类型表由任务 06 维护）。`str(type(1))` 为 `<type 'int'>`，供脚本测试断言。`type` 的结果参与 `==` 比较时按身份（类型对象唯一）。
 - `int(x, base=10)`：
   - int → 原值；bool → `0`/`1`（对齐 Python；规范未明文，此为假定语义）；float → 向零截断，`nan`/`inf` 报 ValueError；
-  - str → 按 `base`（允许 2/8/10/16）解析，允许前导符号，空串或含非法字符报 `ValueError`；解析走 `msNewIntFromString`（[09-c-api.md](../language/09-c-api.md) §5）；v0.1 整数为 int64，溢出报 `ValueError`（任意精度随任务 31 解除该限制）；
+  - str → 按 `base`（允许 2/8/10/16）解析，允许前导符号，空串或含非法字符报 `ValueError`；实现经临时 NUL 终止缓冲与 `strtoll` 完整解析；v0.1 整数为 int64，溢出报 `ValueError`（任意精度随任务 31 解除该限制）；
   - str 以外的类型配合显式 `base` 报 `TypeError`；其余类型报 `TypeError`。
-- `float(x)`：float → 原值；int/bool → 转换；str → 解析（十进制浮点形式），失败报 `ValueError`；其余报 `TypeError`。
+- `float(x)`：float → 原值；int/bool → 转换；str → 解析十进制浮点形式，显式拒绝 `strtod` 额外接受的十六进制字符串，失败报 `ValueError`；其余报 `TypeError`。
 - `str(x)`：第 5 节的表示；永不失败（OOM 除外）。
-- `bool(x)`：`msBuiltinTruthy` 的结果。
+- `bool(x)`：`msObjectIsTruthy` 的结果。
 - `range(start, stop=nil, step=1)`：
   - 1 参表示 `[0, start)`；2 参 `[start, stop)`；3 参带 `step`；`step == 0` 报 `ValueError`；负 `step` 支持（向下计数）；
   - 参数只接受 int（bool 不接受，报 `TypeError`；与 `int()` 的 bool 宽容不同，此处从严，避免 `range(true)` 之类的隐式语义）；
   - v0.1 返回**物化的 int list**（`msNewList` + `msListAppend` 逐项填充）。规范（[02-types.md](../language/02-types.md) §7）要求惰性序列对象，但惰性对象依赖迭代协议（任务 26）；物化 list 在 `len`/下标/`for-in`（任务 26 后）下的脚本可见行为与惰性对象一致，届时以惰性 range 类型替换实现、行为不变。此偏差须在本任务文档显式承认；
   - 物化前计算元素个数，个数为负按 0 处理；分配失败经 `msAlloc` 统一走 `MS_ERROR_OOM`。
 - `abs(x)`：int → 绝对值（`INT64_MIN` 溢出报 `ValueError`，大整数落地后自然解除）；float → 绝对值；其余 `TypeError`。
-- `min(...)` / `max(...)`：两种形态——`min(a, b, ...)`（≥1 个位置参数）或 `min(xs)`（单参为 list，取元素）。空参或空 list 报 `ValueError: min() arg is an empty sequence`。比较经 `msObjectCompare`（假定名，任务 06）：v0.1 可比较对为 int/float 混合（int 提升为 float）与 str/str；不可比较的组合报 `TypeError`。返回最大/最小值本身（不复制）。
+- `min(...)` / `max(...)`：两种形态——`min(a, b, ...)`（≥1 个位置参数）或 `min(xs)`（单参为 list，取元素）。空参或空 list 报 `ValueError: min() arg is an empty sequence`。比较由文件内 `msBuiltinCompare` 实现：v0.1 可比较对为 int/float 精确混合比较（不直接把 int 提升为 float）与 str/str；不可比较的组合报 `TypeError`。返回最大/最小值本身（不复制）。
 
 ### 7. GC 与内存纪律
 
-- 内建实现中，任何可能触发分配的调用（`msNewString`、`msNewList`、`msObjectStr` 等）之间存活的局部 `MsObject*` 必须 `msRootPush`/`msRootPop`（[09-c-api.md](../language/09-c-api.md) §3）；`range` 的逐项填充循环是主要风险点：list 先入根，再循环 append。
-- 函数参数 `argv` 自动是根（调用约定保证），返回值在下一次分配前有效；内建返回新建对象时遵循转移所有权语义。
+- 当前没有执行中的 GC 或根栈 API，本任务不提前实现任务 17；参数按借用处理，返回值立即消费，所有对象由状态统一持有并在 `msCloseState` 回收。
+- 内建返回新建对象时遵循转移所有权语义；list/dict 的内部缓冲在对象释放路径按类型释放。
 - 本模块不直接调用 `malloc`；临时缓冲（如 float 格式化）经 `msAlloc`/`msFree`。
 
 ## 实现步骤
 
 1. 建 `src/vm/ms_builtin.h`（guard `MSLANG_SRC_VM_MS_BUILTIN_H_`）与注册表骨架：`struct MsBuiltinEntry`、`msBuiltinTable`（先只含 `print`/`assert`）、`msBuiltinRegisterAll`；`msNewState` 改调 `msBuiltinRegisterAll` 取代任务 09 的 `msBuiltinRegisterMinimal`。验证：任务 09 的冒烟脚本（`hello.ms`/`arithmetic.ms`）全部保持通过。
-2. 实现公共辅助 `msBuiltinCheckArgc`/`msBuiltinCheckType`/`msBuiltinTruthy`，统一错误消息格式（`TypeError: ...`/`ValueError: ...` 前缀）。验证：`assert` 走新真值入口后冒烟脚本仍通过。
+2. 实现公共辅助 `msBuiltinCheckArgc`/`msBuiltinCheckType`/`msObjectIsTruthy`，统一错误消息格式（`TypeError: ...`/`ValueError: ...` 前缀）。验证：`assert` 走新真值入口后冒烟脚本仍通过。
 3. 实现 str 表示层：nil/bool/int/float/str 的基础表示（含 float 最短往返）与 list/dict 的容器表示（元素 repr 风格）；`str` 内建落地。验证：ms 脚本断言 `str` 各类型输出与容器格式。
 4. 升级 `print` 至完整签名：按 `MsState.cKeywordCount` 解析尾部 `sep`/`end`/`file`/`flush` 名字和值，`file != nil` 报 TypeError，`flush` 冲刷 stdout。验证：`.out` 同伴文件比对多值、普通位置字符串、`sep`/`end` 默认行为的 stdout 全文。
 5. 实现 `len` 与 `type`：str 码点计数（UTF-8 解码逐码点）、list/dict 长度；`type` 返回类型对象并保证 `<type 'int'>` 表示。验证：多字节字符串的 `len` 断言、`print(type(x))` 输出比对。
@@ -170,11 +158,18 @@ float 的最短往返算法：从 `%.17g` 起步逐步降低精度，取第一�
 
 ## 验收标准
 
-- [ ] `src/vm/ms_builtin.h` / `ms_builtin.c` 存在，guard 为 `MSLANG_SRC_VM_MS_BUILTIN_H_`，头文件自包含；代码风格符合 10-c-style（2 空格缩进、120 列、K&R、星号贴类型、`struct MsBuiltinEntry` 不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`）。
-- [ ] 注册机制经 `static const` 表驱动，`msNewState` 调用 `msBuiltinRegisterAll` 一次注册全部 v0.1 内建；任务 09 的冒烟脚本无回归；内建可被脚本同名 `:=` 遮蔽。
-- [ ] v0.1 内建全集 `print`/`assert`/`len`/`type`/`int`/`float`/`str`/`bool`/`range`/`abs`/`min`/`max` 的行为与本文「详细设计」第 4–6 节一致，含错误类型（TypeError/ValueError/AssertionError）与消息前缀。
-- [ ] `print` 实现完整签名的解析入口（含 kwarg 通道假定），`file` 非 nil 报 TypeError；与 fmt 的分工不在 print 内引入任何格式动词。
-- [ ] `len` 对 str 按 Unicode 码点计数；`float` 的 str 表示满足最短往返且整数值带 `.0`；`range` 物化语义与元素个数正确，`step == 0` 报 ValueError。
-- [ ] 内建实现遵守 GC 根纪律（`range` 填充循环等跨分配点的局部对象入根），Debug 构建（ASAN / `/RTC`）无内存错误与泄漏。
-- [ ] `tests/ms/builtin/` 覆盖「测试方案」全部清单项（含 `.out` 输出比对与 `.exit` 负例），`python run_tests.py` 与 `ctest --test-dir build` 全数通过；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；假定接口名（`msNewCFunction`、`msObjectStr`/`msObjectRepr`、`msObjectCompare`、kwarg 调用约定）在实现时已与任务 06/08/13 文档对齐。
+- [x] `src/vm/ms_builtin.h` / `ms_builtin.c` 存在，guard 为 `MSLANG_SRC_VM_MS_BUILTIN_H_`，头文件自包含；代码风格符合 10-c-style（2 空格缩进、120 列、K&R、星号贴类型、`struct MsBuiltinEntry` 不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`）。
+- [x] 注册机制经 `static const` 表驱动，`msNewState` 调用 `msBuiltinRegisterAll` 一次注册全部 v0.1 内建；任务 09 的冒烟脚本无回归；内建可被脚本同名 `:=` 遮蔽。
+- [x] v0.1 内建全集 `print`/`assert`/`len`/`type`/`int`/`float`/`str`/`bool`/`range`/`abs`/`min`/`max` 的行为与本文「详细设计」第 4–6 节一致，含错误类型（TypeError/ValueError/AssertionError）与消息前缀。
+- [x] `print` 实现完整签名的解析入口（含 `MsState.cKeywordCount` kwarg 通道），`file` 非 nil 报 TypeError；与 fmt 的分工不在 print 内引入任何格式动词。脚本侧关键字执行仍属任务 13。
+- [x] `len` 对 str 按 Unicode 码点计数；`float` 的 str 表示满足最短往返且整数值带 `.0`；`range` 按本任务边界物化为 int list，元素个数正确，`step == 0` 报 ValueError。
+- [x] 当前无执行中的 GC，内建与容器按既有所有权约定管理对象并由 `msCloseState` 统一回收；Windows Debug `/RTC` 构建与测试无内存错误或残余分配报告。
+- [x] `tests/ms/builtin/` 覆盖「测试方案」全部清单项（含 `.out` 输出比对与 `.exit`/`.err` 负例），Windows 上 `python run_tests.py` 与 `ctest --test-dir build` 全数通过；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；实际表示与比较辅助为 `ms_builtin.c` 内 static 实现，C 函数创建与 kwarg 调用约定已同任务 06/08/13 文档对齐。
+
+### Windows 验证记录
+
+- 干净 Debug：CMake/Ninja 构建成功，CTest `14/14`，`python run_tests.py` 为 `24/24`。
+- Release：CMake/Ninja 构建成功，CTest `14/14`，`python run_tests.py --mslang build/release/mslang.exe` 为 `24/24`。
+- 直接 CLI：`print.ms`、`type.ms`、`range.ms`、`minmax.ms` 均退出 0 且 stdout 符合预期；`err_int_str.ms`、`err_range_step.ms`、`err_min_mixed.ms`、`err_assert.ms` 均退出 1、stdout 为空，stderr 分别包含 `ValueError`、`ValueError`、`TypeError`、`AssertionError`。
+- 仅声明上述 Windows 结果，未验证 Linux/macOS。

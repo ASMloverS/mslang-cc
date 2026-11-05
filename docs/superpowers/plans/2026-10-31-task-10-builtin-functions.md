@@ -37,7 +37,7 @@ Baseline already verified in this worktree: 14/14 CTests and 5/5 scripts pass. R
 - Modify: `src/vm/ms_builtin.c:45-66`
 - Test: `tests/ms/builtin/err_assert.ms`, `.exit`, `.err`
 
-- [ ] **Step 1: Add the failing assertion fixture**
+- [x] **Step 1: Add the failing assertion fixture**
 
 Create `tests/ms/builtin/err_assert.ms`:
 
@@ -47,7 +47,7 @@ assert(false, "boom")
 
 Create `err_assert.exit` containing `1` and `err_assert.err` containing `AssertionError: boom`, each followed by LF.
 
-- [ ] **Step 2: Add stderr companion checking**
+- [x] **Step 2: Add stderr companion checking**
 
 Insert this block after the stdout check in `run_test`, before the failure stderr dump:
 
@@ -62,12 +62,12 @@ Insert this block after the stdout check in `run_test`, before the failure stder
             )
 ```
 
-- [ ] **Step 3: Run the fixture to expose the missing prefix**
+- [x] **Step 3: Run the fixture to expose the missing prefix**
 
 Run: `python run_tests.py --filter 'builtin/err_assert.ms'`
 Expected: FAIL; exit code is 1 but stderr does not contain `AssertionError: boom`.
 
-- [ ] **Step 4: Add named error prefixes and fix assert**
+- [x] **Step 4: Add named error prefixes and fix assert**
 
 Declare in `ms_state_internal.h`:
 
@@ -96,7 +96,7 @@ void msRaiseAssertionError(MsState* L, const char* fmt, ...) {
 
 In `msBuiltinAssert`, use `msRaiseAssertionError(L, "assertion failed")` for one argument. For a string message use `msRaiseAssertionError(L, "%s", msStringData(message))`; for other values format first and pass the buffer to the same function. Preserve the one-or-two argument check and successful nil return.
 
-- [ ] **Step 5: Verify green and commit**
+- [x] **Step 5: Verify green and commit**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/err_assert.ms'`
 Expected: PASS, 1 of 1.
@@ -114,7 +114,7 @@ git commit -m '✨ feat(builtins): add typed assertion errors'
 - Modify: `src/vm/ms_state.c:79`
 - Test: `tests/ms/builtin/len.ms`, `type.ms`, `convert.ms`
 
-- [ ] **Step 1: Write scalar tests**
+- [x] **Step 1: Write scalar tests**
 
 Create `len.ms`:
 
@@ -153,12 +153,12 @@ assert(bool(print))
 print("convert ok")
 ```
 
-- [ ] **Step 2: Verify undefined-global failures**
+- [x] **Step 2: Verify undefined-global failures**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/{len,type,convert}.ms'`
 Expected: the three fixtures fail because `len`, `type`, and `bool` are not registered. If the Python glob filter does not expand braces, run each with `--filter 'builtin/len.ms'`, `--filter 'builtin/type.ms'`, and `--filter 'builtin/convert.ms'`.
 
-- [ ] **Step 3: Install the table-driven registry**
+- [x] **Step 3: Install the table-driven registry**
 
 Change the public declaration to:
 
@@ -195,7 +195,7 @@ void msBuiltinRegisterAll(MsState* L) {
 
 Include `core/ms_common.h` for `MS_ARRAY_LEN`, and change `msNewState` to call `msBuiltinRegisterAll`.
 
-- [ ] **Step 4: Implement the three builtins**
+- [x] **Step 4: Implement the three builtins**
 
 Add a shared arity helper returning false after `msRaiseTypeError`:
 
@@ -228,7 +228,7 @@ Other tags report `TypeError: object of type '<script-name>' has no len()`. Obta
 
 `msBuiltinType` requires one argument and returns `value->header.type` cast to `struct MsObject*`. `msBuiltinBool` requires one argument and returns `msNewBool(L, msObjectIsTruthy(argv[0]))`.
 
-- [ ] **Step 5: Verify scalar behavior and commit**
+- [x] **Step 5: Verify scalar behavior and commit**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/len.ms' && python run_tests.py --filter 'builtin/type.ms' && python run_tests.py --filter 'builtin/convert.ms' && python run_tests.py --filter 'smoke/*.ms'`
 Expected: all selected scripts pass.
@@ -244,7 +244,7 @@ git commit -m '✨ feat(builtins): add len type and bool'
 - Modify: `src/vm/ms_builtin.c`, `src/vm/ms_state_internal.h`
 - Test: `tests/ms/builtin/print.ms`, `print.out`, `type.ms`, `type.out`, `convert.ms`
 
-- [ ] **Step 1: Add failing representation tests**
+- [x] **Step 1: Add failing representation tests**
 
 Create `print.ms`:
 
@@ -310,12 +310,12 @@ assert(str(3.0) == "3.0")
 assert(str("hello") == "hello")
 ```
 
-- [ ] **Step 2: Run tests to verify the old formatter fails**
+- [x] **Step 2: Run tests to verify the old formatter fails**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/print.ms'`
 Expected: FAIL on missing `str` during convert or stdout differences for float, C function, and type representation.
 
-- [ ] **Step 3: Implement the dynamic representation builder**
+- [x] **Step 3: Implement the dynamic representation builder**
 
 Add a file-local buffer owning `char* data`, `size_t len`, and `size_t cap`. Implement these exact operations:
 
@@ -339,7 +339,7 @@ Implement float formatting by trying precision 1 through 17 with `snprintf(buffe
 
 Add `msBuiltinStr` that checks one argument, builds its non-repr representation, and returns `msBuiltinBufferFinish`.
 
-- [ ] **Step 4: Route print and assert through the shared representation**
+- [x] **Step 4: Route print and assert through the shared representation**
 
 Replace fixed 128-byte value formatting with the builder. `msBuiltinPrintValue` writes the resulting string with `fwrite` and preserves explicit byte lengths. On assertion failure with a message, build the non-repr message and call:
 
@@ -349,13 +349,13 @@ msRaiseAssertionError(L, "%s", msStringData(message));
 
 Add `{"str", msBuiltinStr}` to the registry after `bool` to match the planned final ordering when conversion functions join.
 
-- [ ] **Step 5: Add the documented keyword parser entry**
+- [x] **Step 5: Add the documented keyword parser entry**
 
 Keep positional behavior as the only script-callable path. Add `MsState.cKeywordCount` without changing the public `MsCFunction` signature. The file-local print option parser reads exactly `cKeywordCount` trailing interleaved name/value entries for `sep`, `end`, `file`, and `flush`; ordinary `CALL` leaves the count at zero. Validate the count before indexing, reject unknown or repeated names with TypeError, require string `sep`/`end`, reject non-nil `file`, and use `msObjectIsTruthy` for `flush`. Defaults are `" "`, `"\n"`, nil, and false. Write `sep` and `end` with their explicit lengths and call `fflush(stdout)` when requested.
 
 The explicit count keeps ordinary positional strings such as `print("sep", "x")` unambiguous. Task 13 will set and restore the count around C callbacks when implementing `CALL_KW`; executable keyword-call coverage remains in task 13, as explicitly allowed by the task document.
 
-- [ ] **Step 6: Verify output byte-for-byte and commit**
+- [x] **Step 6: Verify output byte-for-byte and commit**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/print.ms' && python run_tests.py --filter 'builtin/type.ms' && python run_tests.py --filter 'builtin/convert.ms'`
 Expected: all three pass with exact `.out` matches.
@@ -371,7 +371,7 @@ git commit -m '✨ feat(builtins): add shared value formatting'
 - Modify: `src/vm/ms_builtin.c`
 - Test: `tests/ms/builtin/convert.ms`, `err_int_str.ms`, `err_int_overflow.ms`, `err_float_str.ms`, `err_int_nan.ms` and companions
 
-- [ ] **Step 1: Extend conversion tests**
+- [x] **Step 1: Extend conversion tests**
 
 Insert before the final `convert.ms` print:
 
@@ -415,22 +415,22 @@ int(float("nan"))
 
 Each `.ms` file contains only its call, not the descriptive comment above; each companion ends with LF.
 
-- [ ] **Step 2: Verify conversion failures**
+- [x] **Step 2: Verify conversion failures**
 
 Run: `python run_tests.py --filter 'builtin/convert.ms'`
 Expected: FAIL because `int` and `float` are undefined. Run each negative fixture individually and confirm it also fails for that reason rather than its expected ValueError.
 
-- [ ] **Step 3: Implement strict int parsing and numeric conversion**
+- [x] **Step 3: Implement strict int parsing and numeric conversion**
 
 Register `int` and `float`. For string input, copy the explicit-length string into a temporary NUL-terminated `msAlloc` buffer, set `errno = 0`, and call `strtoll(text, &end, (int)base)`. Accept only base 2/8/10/16, require at least one digit and `*end == '\0'`, and reject `ERANGE`. Free the buffer on every return.
 
 Reject an explicit base for non-string input with TypeError. Return int input directly, map bool to 0/1, and truncate float only when finite and within the guarded interval `[-9223372036854775808.0, 9223372036854775808.0)`; all other float values report ValueError.
 
-- [ ] **Step 4: Implement float conversion**
+- [x] **Step 4: Implement float conversion**
 
 Return float input directly, convert int/bool with `(double)`, and parse strings using `strtod` with the same temporary-buffer discipline. Require full consumption and reject `ERANGE` overflow with ValueError; accept the platform's `nan` and `inf` spellings so the negative int conversion is script-testable.
 
-- [ ] **Step 5: Verify the conversion matrix and commit**
+- [x] **Step 5: Verify the conversion matrix and commit**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/convert.ms' && python run_tests.py --filter 'builtin/err_*.ms'`
 Expected: all current builtin tests pass; each negative fixture matches its `.err` substring.
@@ -448,7 +448,7 @@ git commit -m '✨ feat(builtins): add numeric conversions'
 - Modify: `src/vm/ms_builtin.c`
 - Test: `tests/ms/builtin/len.ms`, `type.ms`, `type.out`, `print.ms`, `print.out`, `convert.ms`
 
-- [ ] **Step 1: Add failing container behavior to existing fixtures**
+- [x] **Step 1: Add failing container behavior to existing fixtures**
 
 Append to `len.ms` before its final print:
 
@@ -498,12 +498,12 @@ assert(str([1, "two"]) == "[1, \"two\"]")
 assert(str({"a": 1}) == "{\"a\": 1}")
 ```
 
-- [ ] **Step 2: Confirm literal compilation is the red point**
+- [x] **Step 2: Confirm literal compilation is the red point**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/len.ms'`
 Expected: FAIL with compiler error E307 for the list/dict expression construct.
 
-- [ ] **Step 3: Implement minimal list storage**
+- [x] **Step 3: Implement minimal list storage**
 
 Define the self-contained internal header API:
 
@@ -526,7 +526,7 @@ static inline int64_t msListLen(const struct MsList* list) {
 
 `msNewList` rejects negative capacity with ValueError, allocates through `msObjectAlloc`, and preallocates `capacity` item slots with overflow checks. `msListAppend` grows from 0 to 4 and then doubles with `msRealloc`, preserving the old buffer on OOM and setting `msStateSetOom`. `msListReleaseStorage` frees `items` and resets all storage fields.
 
-- [ ] **Step 4: Implement insertion-ordered dict storage**
+- [x] **Step 4: Implement insertion-ordered dict storage**
 
 Define:
 
@@ -552,7 +552,7 @@ void msDictReleaseStorage(struct MsDict* dict);
 
 `msDictSet` first finds an equal key with `msObjectValueEquals`; replacement only changes value. New keys grow the dense array geometrically and append at the end. `msDictNext` yields entries by increasing index and returns false at `len`. Release frees only the entry array, never the key/value objects.
 
-- [ ] **Step 5: Connect destruction and truthiness**
+- [x] **Step 5: Connect destruction and truthiness**
 
 Add both modules to `add_library(mslang ...)` in CMake. In `ms_object.c`, include both headers and add a storage-release helper:
 
@@ -573,7 +573,7 @@ static void msObjectReleaseStorage(struct MsObject* obj) {
 
 Call it for each heap object in `msHeapDestroy` before `msFree`, and in `msObjectFree` before unlinking/freeing. Extend `msObjectIsTruthy` with `MS_TYPE_LIST` returning `len != 0` and `MS_TYPE_DICT` likewise.
 
-- [ ] **Step 6: Compile and execute literals**
+- [x] **Step 6: Compile and execute literals**
 
 Add a compiler helper:
 
@@ -598,11 +598,11 @@ Dispatch `MS_AST_LIST_LIT` and `MS_AST_DICT_LIT` to this helper. Parser invarian
 
 In the VM, add `BUILD_LIST` and `BUILD_DICT` cases. For list, check `count` stack values, call `msNewList(L, count)`, append in original order, then replace all inputs with the list. For dict, check `2 * count` values, call `msNewDict`, and set each key/value pair in original order. Propagate OOM via `msVmPropagatedErrorAt`.
 
-- [ ] **Step 7: Extend representation, len, and type**
+- [x] **Step 7: Extend representation, len, and type**
 
 Add list/dict cases to `msBuiltinLen`, using the new length accessors. In representation, surround list elements with `[`/`]` and dict entries with `{`/`}`, use `", "` separators, and call `msBuiltinWriteValue(..., true)` for every contained key/value. `type` already works through object headers.
 
-- [ ] **Step 8: Verify all container-enabled fixtures and commit**
+- [x] **Step 8: Verify all container-enabled fixtures and commit**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/len.ms' && python run_tests.py --filter 'builtin/type.ms' && python run_tests.py --filter 'builtin/print.ms' && python run_tests.py --filter 'builtin/convert.ms' && ctest --test-dir build --output-on-failure`
 Expected: all scripts and all 14 CTests pass; no leak is reported by the allocation accounting tests.
@@ -618,7 +618,7 @@ git commit -m '✨ feat(object): add minimal list and dict literals'
 - Modify: `src/vm/ms_builtin.c`
 - Test: `tests/ms/builtin/range.ms`, `err_range_step.ms`, `err_range_bool.ms` and companions
 
-- [ ] **Step 1: Write range tests**
+- [x] **Step 1: Write range tests**
 
 Create `range.ms`:
 
@@ -636,12 +636,12 @@ print("range ok")
 Create `err_range_step.ms` containing `range(1, 10, 0)`, `.exit` containing `1`, and `.err` containing `ValueError: range() step must not be zero`.
 Create `err_range_bool.ms` containing `range(true)`, `.exit` containing `1`, and `.err` containing `TypeError: range() arguments must be int`.
 
-- [ ] **Step 2: Verify range is unavailable**
+- [x] **Step 2: Verify range is unavailable**
 
 Run: `python run_tests.py --filter 'builtin/range.ms'`
 Expected: FAIL with undefined global `range`.
 
-- [ ] **Step 3: Implement count calculation and filling**
+- [x] **Step 3: Implement count calculation and filling**
 
 Register `range`. Require 1–3 arguments and exact `MS_TYPE_INT` tags. Normalize one argument to start 0/stop argument, and default step to 1. Reject zero step with ValueError.
 
@@ -661,7 +661,7 @@ if (step > 0 && start < stop) {
 
 Reject `count > INT64_MAX` with ValueError. Create `msNewList(L, (int64_t)count)`, then append exactly `count` integers. Update the current value with checked signed arithmetic or stop based on the loop index so no signed overflow occurs. Return the list; any constructor/append failure returns NULL with OOM set.
 
-- [ ] **Step 4: Verify all forms and commit**
+- [x] **Step 4: Verify all forms and commit**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/range.ms' && python run_tests.py --filter 'builtin/err_range_*.ms'`
 Expected: all three scripts pass.
@@ -677,7 +677,7 @@ git commit -m '✨ feat(builtins): add materialized range'
 - Modify: `src/vm/ms_builtin.c`
 - Test: `tests/ms/builtin/minmax.ms`, `shadow.ms`, `err_len_int.ms`, `err_abs_min.ms`, `err_min_empty.ms`, `err_min_mixed.ms` and companions
 
-- [ ] **Step 1: Write positive tests**
+- [x] **Step 1: Write positive tests**
 
 Create `minmax.ms`:
 
@@ -705,7 +705,7 @@ assert(len == 42)
 print("shadow ok")
 ```
 
-- [ ] **Step 2: Write remaining negative fixtures**
+- [x] **Step 2: Write remaining negative fixtures**
 
 Create each call with `.exit` content `1` and the listed `.err` substring:
 
@@ -714,12 +714,12 @@ Create each call with `.exit` content `1` and the listed `.err` substring:
 - `err_min_empty.ms`: `min([])`; `ValueError: min() arg is an empty sequence`
 - `err_min_mixed.ms`: `min(1, "a")`; `TypeError: min() cannot compare values`
 
-- [ ] **Step 3: Verify the new functions fail red**
+- [x] **Step 3: Verify the new functions fail red**
 
 Run: `python run_tests.py --filter 'builtin/minmax.ms'`
 Expected: FAIL with undefined `abs`. Run the four negative fixtures and confirm the first three are not yet producing their required error; `err_len_int` already passes and serves as regression coverage.
 
-- [ ] **Step 4: Implement abs and ordered comparison**
+- [x] **Step 4: Implement abs and ordered comparison**
 
 Register `abs`, `min`, and `max`, completing the 12-entry table. `abs` returns int input unchanged when nonnegative, rejects `INT64_MIN`, and uses `fabs` for float.
 
@@ -732,11 +732,11 @@ static bool msBuiltinCompare(MsState* L, const char* name,
 
 Int/int compares without floating conversion. Other numeric pairs use the VM's exact int/float ordering logic: handle NaN as unordered, infinities and out-of-range float bounds before casting, then compare the integer with truncation and fractional direction. String/string compares byte-wise with `memcmp` up to the shorter length, then by length. Unsupported combinations set TypeError and return false.
 
-- [ ] **Step 5: Implement both min/max forms**
+- [x] **Step 5: Implement both min/max forms**
 
 Use one helper with a `wantMax` flag and two public C callbacks. Require at least one argument. If the sole argument is a list, use its items and reject length zero with the specified ValueError; otherwise use `argv` directly. Keep the current winner as a borrowed object and replace it only when `order` indicates a later value is strictly greater for max or smaller for min. Return the winner without copying.
 
-- [ ] **Step 6: Verify all builtin scripts and commit**
+- [x] **Step 6: Verify all builtin scripts and commit**
 
 Run: `cmake --build build && python run_tests.py --filter 'builtin/minmax.ms' && python run_tests.py --filter 'builtin/shadow.ms' && python run_tests.py --filter 'builtin/err_*.ms' && python run_tests.py`
 Expected: every fixture and the complete suite pass.
@@ -754,7 +754,7 @@ git commit -m '✨ feat(builtins): add abs min and max'
 - Modify: `docs/tasks/README.md`
 - Modify: this plan and the design only to record verified implementation deviations
 
-- [ ] **Step 1: Run clean Debug verification**
+- [x] **Step 1: Run clean Debug verification**
 
 Remove only the worktree's generated `build/` directory, then configure and run everything:
 
@@ -767,7 +767,7 @@ python run_tests.py
 
 Expected: build exits 0, all 14 CTests pass, and all smoke/builtin scripts pass.
 
-- [ ] **Step 2: Run Release verification**
+- [x] **Step 2: Run Release verification**
 
 ```bash
 cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -778,11 +778,11 @@ python run_tests.py --mslang build/release/mslang.exe
 
 Expected: the same CTest and script counts pass in Release.
 
-- [ ] **Step 3: Exercise the CLI contract directly**
+- [x] **Step 3: Exercise the CLI contract directly**
 
 Run `build/mslang.exe tests/ms/builtin/print.ms`, `type.ms`, `range.ms`, and `minmax.ms`; confirm exit 0 and expected stdout. Run `err_int_str.ms`, `err_range_step.ms`, `err_min_mixed.ms`, and `err_assert.ms`; confirm exit 1, empty stdout, and the required TypeError/ValueError/AssertionError prefix on stderr.
 
-- [ ] **Step 4: Update task documentation**
+- [x] **Step 4: Update task documentation**
 
 Change task 10 and the index to ✅. Check only acceptance items verified on Windows. Record that `range` is intentionally materialized and keyword-call execution remains task 13. Leave Linux/macOS verification unclaimed.
 
@@ -790,7 +790,7 @@ In task 16, state that task 10 now supplies minimal list/dict storage and litera
 
 Append brief execution notes to this plan for any actual deviations, including test count changes or code structure adjustments.
 
-- [ ] **Step 5: Check repository hygiene and commit documentation**
+- [x] **Step 5: Check repository hygiene and commit documentation**
 
 Run:
 
@@ -806,3 +806,12 @@ Expected: no whitespace errors, no artifacts outside `build/`, and only intentio
 git add docs/tasks docs/superpowers
 git commit -m '📝 docs(tasks): complete builtin functions'
 ```
+
+## Execution notes
+
+- MS fixtures use the language's `not` operator instead of the plan's `!` spelling.
+- `print` disambiguates keyword arguments through `MsState.cKeywordCount`; the calling convention is synchronized with task 13, while executable keyword-call coverage remains in task 13.
+- `float` explicitly rejects hexadecimal strings accepted by the platform's `strtod`; `err_float_hex.ms` and its companions cover this deviation.
+- Existing `tests/c/test_vm.c` was adapted for the larger global capacity and `BUILD_LIST` execution support, in addition to builtin registration assumptions.
+- Final clean verification on Windows passed in both configurations: Debug and Release each built successfully, passed 14/14 CTests and 24/24 MS scripts. Direct Debug CLI checks also passed for all four positive and four negative fixtures, including exact stdout, exit codes, empty negative stdout, and required stderr prefixes.
+- `range` remains an intentionally materialized int list. No Linux/macOS verification is claimed.

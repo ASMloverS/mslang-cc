@@ -6,12 +6,12 @@
 
 ## 任务目标
 
-交付 mslang 的两个可变容器类型——`list`（动态数组）与 `dict`（保持插入序的哈希表）——的对象实现与 VM 语义接线：
+在任务 10 已提供的最小 `list` 动态数组、`dict` 插入序线性表和字面量构建之上，扩展 mslang 的两个可变容器类型——`list` 与保持插入序的哈希 `dict`——不重新创建对象模块：
 
-- 对象模块 `src/object/ms_list.{c,h}` 与 `src/object/ms_dict.{c,h}`：`struct MsList` / `struct MsDict` 的存储结构、扩容策略、查找/插入/删除算法；
-- 公开 C API 的容器部分落地（[09-c-api.md](../language/09-c-api.md) §5 的 `msNewList`/`msNewDict` 与 §6 的 `msLen`/`msListGet`/`msListSet`/`msListAppend`/`msDictGet`/`msDictSet`/`msDictContains`/`msDictDelete`）；
-- VM 容器指令的语义实现：`MS_OP_BUILD_LIST` / `MS_OP_BUILD_DICT` / `MS_OP_APPEND` / `MS_OP_INDEX` / `MS_OP_SET_INDEX` / `MS_OP_DEL_INDEX` / `MS_OP_IN`（[08-vm-internals.md](../language/08-vm-internals.md) §2.2），指令分派骨架属任务 08，本任务填充 list/dict 两个分支；
-- 容器方法集：`xs.append/insert/pop/remove` 与 `m.get/pop/keys/values/items/update`，以及 `len(xs)`、`"a" in m`、按值 `==` 的完整语义。
+- 扩展对象模块 `src/object/ms_list.{c,h}` 与 `src/object/ms_dict.{c,h}`：完善 `struct MsList` / `struct MsDict` 的存储结构、扩容策略、查找/插入/删除算法；
+- 补齐公开 C API 的容器部分（[09-c-api.md](../language/09-c-api.md) §5 的 `msNewList`/`msNewDict` 与 §6 的 `msLen`/`msListGet`/`msListSet`/`msListAppend`/`msDictGet`/`msDictSet`/`msDictContains`/`msDictDelete`）；
+- 在已有 `MS_OP_BUILD_LIST` / `MS_OP_BUILD_DICT` 字面量路径上，接通 `MS_OP_APPEND` / `MS_OP_INDEX` / `MS_OP_SET_INDEX` / `MS_OP_DEL_INDEX` / `MS_OP_IN` 的 list/dict 语义（[08-vm-internals.md](../language/08-vm-internals.md) §2.2）；
+- 增加容器方法集：`xs.append/insert/pop/remove` 与 `m.get/pop/keys/values/items/update`，以及下标、删除、`"a" in m`、按值 `==` 与迭代支持等完整语义；任务 10 已有的 `len(xs)` 和字面量行为保持可用。
 
 完成后，脚本能写 `xs := [1, "two", 3.0]`、`m := {"a": 1}`，做下标读写（含负索引）、`del m["a"]`、键成员测试与方法调用，并通过 `tests/ms/containers/` 的 ms 脚本验证。切片（`xs[1:3]`）属任务 30，bytes/tuple/set 属任务 32，迭代协议（`for x in xs`）属任务 26，均不在本任务范围。
 
@@ -28,17 +28,17 @@
 - [09-c-api.md](../language/09-c-api.md) §3：GC 根纪律（`msRootPush`/`msRootPop`，跨分配的局部 `MsObject*` 必须入根）；§5：值构造；§6：容器操作公开 API 签名；§8：错误处理约定（返回 `NULL` + 错误槽，`msRaiseTypeError` 等）；§9：`MsCFunction` 与 `MsMethodDef` 方法表定义。
 - [10-c-style.md](../language/10-c-style.md)：全部 C 接口遵循其规范（2 空格缩进、120 列行宽、K&R、指针星号贴类型、内部结构体不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`、include guard）。
 - [11-project-layout.md](../language/11-project-layout.md) §1：`src/object/` 与 `tests/ms/` 的目录位置；§5 路线图 v0.1：核心类型含 list/dict，v0.1 的 int 仅 int64（大整数属任务 31）。
-- 任务 02（核心基础设施）提供 `msAlloc`/`msRealloc`/`msFree` 与 `MsResult`；任务 06（对象模型基础）提供 `MsObjectHeader`、`MsType` 类型对象与方法表机制、按值比较 `msObjEqual`、哈希 `msObjHash`、真值判定分派；任务 08（VM 执行核心）提供容器指令的分派点；任务 10（内建函数）提供 `len` 内建与内建方法注册通路。其中任务 06、08、10 的文档尚未定稿，本文引用的接口名（`msObjEqual`、`msObjHash`、类型对象方法表注册函数等）为假定命名，实现时以对应任务文档定名为准。
+- 任务 02（核心基础设施）提供 `msAlloc`/`msRealloc`/`msFree` 与 `MsResult`；任务 06（对象模型基础）提供 `MsObjectHeader`、`MsType` 类型对象与方法表机制、按值比较 `msObjEqual`、哈希 `msObjHash`、真值判定分派；任务 08（VM 执行核心）提供容器指令的分派点；任务 10（内建函数）已提供最小 list 动态数组、dict 插入序线性表、字面量构建及对应的 `len`/真值/表示支持。本任务扩展这些既有模块，不重新创建对象；完整哈希、方法、下标、删除、成员、相等与迭代等能力仍由本任务交付。本文其余接口名（`msObjEqual`、`msObjHash`、类型对象方法表注册函数等）为假定命名，实现时以对应任务文档定名为准。
 
 ## 详细设计
 
 ### 1. 文件与模块边界
 
-- `src/object/ms_list.h`（guard `MSLANG_SRC_OBJECT_MS_LIST_H_`）与 `src/object/ms_list.c`：list 存储结构与全部操作。
-- `src/object/ms_dict.h`（guard `MSLANG_SRC_OBJECT_MS_DICT_H_`）与 `src/object/ms_dict.c`：dict 存储结构与全部操作。
-- 两个头文件均自包含，包含 `<stdbool.h>` `<stdint.h>` 与任务 06 的对象模型头文件（假定 `"object/ms_object.h"`）。公开 C API（`msNewList` 等）声明在 `include/mslang/object.h` / `include/mslang/container.h`，其实现落在本任务的两个 `.c` 文件中。
-- VM 侧只在本任务修改各容器指令的 `case` 分支（任务 08 的分派循环内），调用本模块的语义函数；指令编码、取栈/压栈约定不变。
-- 方法与 `len` 的挂接：list/dict 的类型对象在 `msNewState` 初始化时创建（任务 06），本任务向其方法表注册下述 `MsMethodDef` 数组；`len` 内建（任务 10）对 `MS_TYPE_LIST`/`MS_TYPE_DICT` 的分派在本任务补齐。
+- 扩展任务 10 已有的 `src/object/ms_list.h`（guard `MSLANG_SRC_OBJECT_MS_LIST_H_`）与 `src/object/ms_list.c`：从最小动态数组补齐 list 全部操作。
+- 扩展任务 10 已有的 `src/object/ms_dict.h`（guard `MSLANG_SRC_OBJECT_MS_DICT_H_`）与 `src/object/ms_dict.c`：把插入序线性表升级为哈希表并补齐 dict 全部操作。
+- 两个头文件均自包含，包含 `<stdbool.h>` `<stdint.h>` 与任务 06 的对象模型头文件（假定 `"object/ms_object.h"`）。公开 C API（`msNewList` 等）声明在 `include/mslang/object.h` / `include/mslang/container.h`，本任务在这两个既有 `.c` 文件中补齐完整实现。
+- VM 侧保留任务 10 已接通的字面量构建分支，只补齐其余容器指令的 `case` 分支（任务 08 的分派循环内），调用本模块的语义函数；指令编码、取栈/压栈约定不变。
+- 方法与 `len` 的挂接：list/dict 的类型对象在 `msNewState` 初始化时创建（任务 06），本任务向其方法表注册下述 `MsMethodDef` 数组；任务 10 已实现 `len` 内建对 `MS_TYPE_LIST`/`MS_TYPE_DICT` 的分派，本任务保持其语义并适配扩展后的存储。
 
 ### 2. MsList：动态数组
 
@@ -185,8 +185,8 @@ dict 方法表 `msDictMethods`：
 
 - `keys()`/`values()`/`items()` 返回的是**新 list 快照**（非视图），对结果 list 的修改不影响原 dict；迭代期间修改原 dict 的行为见 3.3 节 `msDictNext` 的约定。
 - 方法实现复用第 2、3 节的模块内函数，自身只做参数校验与装箱/拆箱。
-- `len(xs)`：任务 10 的内建 `len` 增加 `MS_TYPE_LIST`/`MS_TYPE_DICT` 分派，分别取 `len` 与 `used`。
-- 字面量 `[]`/`{}`/`{k: v}` 的词法与语法已属任务 03/04 的范围（`{}` 恒为空 dict，与 [02-types.md](../language/02-types.md) §5.4 一致）；本任务只保证 `MS_OP_BUILD_*` 执行正确。
+- `len(xs)`：任务 10 已实现内建 `len` 的 `MS_TYPE_LIST`/`MS_TYPE_DICT` 分派，本任务在扩展存储后保持其语义。
+- 字面量 `[]`/`{}`/`{k: v}` 的词法与语法已属任务 03/04 的范围（`{}` 恒为空 dict，与 [02-types.md](../language/02-types.md) §5.4 一致）；任务 10 已接通 `MS_OP_BUILD_*`，本任务保持字面量行为并在扩展后的存储上验证。
 
 ### 6. 相等与哈希接线
 
@@ -202,11 +202,11 @@ dict 方法表 `msDictMethods`：
 
 ## 实现步骤
 
-1. 建 `src/object/ms_list.h` / `ms_list.c` 骨架：`struct MsList`、`msNewList`、容量管理（含倍增扩容与 OOM 路径）、`msListGet`/`msListSet`/`msListAppend` 与负索引归一化。验证：ms 脚本 `[1, 2, 3]` 字面量构建 + `xs[0]`/`xs[-1]` 读取 + 越界负例脚本退出码 1。
-2. 接通 `MS_OP_BUILD_LIST`、`MS_OP_INDEX`、`MS_OP_SET_INDEX`、`MS_OP_DEL_INDEX` 的 list 分支与真值/`len` 分派。验证：字面量、下标读写、`del xs[i]`、`len(xs)`、空表真值为假的脚本断言。
+1. 扩展任务 10 的 `src/object/ms_list.h` / `ms_list.c`：保留 `struct MsList`、`msNewList` 与容量管理，补齐 `msListGet`/`msListSet`、负索引归一化及其余操作。验证：既有字面量构建保持通过，并新增 `xs[0]`/`xs[-1]` 读取与越界负例。
+2. 在既有 `MS_OP_BUILD_LIST` 和真值/`len` 分派上，接通 `MS_OP_INDEX`、`MS_OP_SET_INDEX`、`MS_OP_DEL_INDEX` 的 list 分支。验证：字面量、下标读写、`del xs[i]`、`len(xs)`、空表真值为假的脚本断言。
 3. 实现 `msListInsert`/`msListPop`/`msListRemove`/`msListContains` 与 list 方法表注册（`append`/`insert`/`pop`/`remove`）。验证：方法行为与参数错误的脚本断言（含负例退出码 1）。
-4. 建 `src/object/ms_dict.h` / `ms_dict.c` 骨架：`struct MsDict`、组合表的查找/插入/删除/扩容压实算法、`msNewDict` 与四个公开 C API、`msDictNext`。验证：`{"a": 1}` 构建、`m["a"]` 读写、键缺失报错、插入序经 `keys()` 打印比对。
-5. 接通 `MS_OP_BUILD_DICT`、`MS_OP_INDEX`/`MS_OP_SET_INDEX`/`MS_OP_DEL_INDEX`、`MS_OP_IN` 的 dict 分支与 `MS_OP_IN` 的 list 分支。验证：`"a" in m`、`1 in xs`、`not in`、`del m["k"]` 的脚本断言。
+4. 扩展任务 10 的 `src/object/ms_dict.h` / `ms_dict.c`：把线性条目存储升级为组合表，完成查找/插入/删除/扩容压实算法并补齐公开 C API 与 `msDictNext`。验证：既有字面量构建保持通过，并覆盖下标读写、键缺失和插入序输出。
+5. 在既有 `MS_OP_BUILD_DICT` 上，接通 `MS_OP_INDEX`/`MS_OP_SET_INDEX`/`MS_OP_DEL_INDEX`、`MS_OP_IN` 的 dict 分支与 `MS_OP_IN` 的 list 分支。验证：`"a" in m`、`1 in xs`、`not in`、`del m["k"]` 的脚本断言。
 6. 实现 dict 方法表（`get`/`pop`/`keys`/`values`/`items`/`update`）与 `msDictUpdate`/`msDictPop`。验证：每个方法的正常路径、缺省参数形式与错误路径脚本断言。
 7. 注册 `msListEqual`/`msDictEqual` 到 `msObjEqual` 分派，实现同指针快速路径。验证：嵌套容器按值相等/不等、`m1 == m2` 与插入序无关、数值键统一（`m[1]` 与 `m[1.0]` 同键）的脚本断言。
 8. 根纪律复查与内存收尾：构建与方法实现中跨分配的局部对象入根核对；`msCloseState` 后分配计数归零（任务 09 的统计口径）。验证：Debug 构建（ASAN / `/RTC`）跑全部容器测试无报告。

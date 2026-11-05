@@ -81,7 +81,7 @@ float 格式化从精度 1 到 17 使用 `%.*g`，选取首个经 `strtod` 往�
 - str 按 base 2/8/10/16 完整解析，允许正负号，base 16 额外允许 `0x`/`0X` 前缀；非法输入和 int64 溢出报 ValueError。
 - 非字符串配合显式 base，以及其他不支持类型，报 TypeError。
 
-`float(x)` 支持 int/bool/float/str。字符串使用十进制浮点解析并完整消费，支持 `nan`/`inf`；非法输入和溢出报 ValueError。
+`float(x)` 支持 int/bool/float/str。字符串使用十进制浮点解析并完整消费，支持 `nan`/`inf`，显式拒绝 `strtod` 额外接受的十六进制浮点字符串；非法输入和溢出报 ValueError。
 
 `str(x)` 返回表示层构造的字符串对象，只有 OOM 可失败。`bool(x)` 返回统一真值结果。
 
@@ -115,7 +115,7 @@ float 格式化从精度 1 到 17 使用 `%.*g`，选取首个经 `strtod` 往�
 
 每个负例使用 `.exit` 声明预期退出码，并使用 `.err` 声明 stderr 必须包含的错误片段。`run_tests.py` 增加可选 `.err` 检查；无该文件时保持现有行为。
 
-既有 `tests/c/test_vm.c` 只调整内建注册数量假设，不新增 C 行为测试。任务 09 冒烟脚本必须保持通过。
+既有 `tests/c/test_vm.c` 适配全局容量增长与 `BUILD_LIST` 执行支持，不新增独立 C 行为测试。任务 09 冒烟脚本必须保持通过。
 
 最终验证包括完整 Debug/Release 构建、对应 14 项以上的 CTest、全部 MS 脚本、直接 CLI stdout/stderr/退出码检查、`git diff --check` 和产物检查。当前仅验证 Windows，不声称 Linux/macOS 已通过。
 
