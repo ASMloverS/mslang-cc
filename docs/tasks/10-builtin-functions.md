@@ -124,7 +124,7 @@ float 的最短往返算法：使用 `%.*g` 从精度 1 递增至 17，取首个
   - v0.1 返回**物化的 int list**（`msNewList` + `msListAppend` 逐项填充）。规范（[02-types.md](../language/02-types.md) §7）要求惰性序列对象，但惰性对象依赖迭代协议（任务 26）；物化 list 在 `len`/下标/`for-in`（任务 26 后）下的脚本可见行为与惰性对象一致，届时以惰性 range 类型替换实现、行为不变。此偏差须在本任务文档显式承认；
   - 物化前计算元素个数，个数为负按 0 处理；分配失败经 `msAlloc` 统一走 `MS_ERROR_OOM`。
 - `abs(x)`：int → 绝对值（`INT64_MIN` 溢出报 `ValueError`，大整数落地后自然解除）；float → 绝对值；其余 `TypeError`。
-- `min(...)` / `max(...)`：两种形态——`min(a, b, ...)`（≥1 个位置参数）或 `min(xs)`（单参为 list，取元素）。空参或空 list 报 `ValueError: min() arg is an empty sequence`。比较由文件内 `msBuiltinCompare` 实现：v0.1 可比较对为 int/float 精确混合比较（不直接把 int 提升为 float）与 str/str；不可比较的组合报 `TypeError`。返回最大/最小值本身（不复制）。
+- `min(...)` / `max(...)`：两种形态——`min(a, b, ...)`（≥1 个位置参数）或 `min(xs)`（单参为 list，取元素）。空参或空 list 报 `ValueError: <name>() arg is an empty sequence`，其中 `<name>` 分别为 `min` 或 `max`。比较由文件内 `msBuiltinCompare` 实现：v0.1 可比较对为 int/float 精确混合比较（不直接把 int 提升为 float）与 str/str；不可比较的组合报 `TypeError`。返回最大/最小值本身（不复制）。
 
 ### 7. GC 与内存纪律
 

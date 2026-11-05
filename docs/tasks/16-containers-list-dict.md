@@ -11,7 +11,7 @@
 - 扩展对象模块 `src/object/ms_list.{c,h}` 与 `src/object/ms_dict.{c,h}`：完善 `struct MsList` / `struct MsDict` 的存储结构、扩容策略、查找/插入/删除算法；
 - 补齐公开 C API 的容器部分（[09-c-api.md](../language/09-c-api.md) §5 的 `msNewList`/`msNewDict` 与 §6 的 `msLen`/`msListGet`/`msListSet`/`msListAppend`/`msDictGet`/`msDictSet`/`msDictContains`/`msDictDelete`）；
 - 在已有 `MS_OP_BUILD_LIST` / `MS_OP_BUILD_DICT` 字面量路径上，接通 `MS_OP_APPEND` / `MS_OP_INDEX` / `MS_OP_SET_INDEX` / `MS_OP_DEL_INDEX` / `MS_OP_IN` 的 list/dict 语义（[08-vm-internals.md](../language/08-vm-internals.md) §2.2）；
-- 增加容器方法集：`xs.append/insert/pop/remove` 与 `m.get/pop/keys/values/items/update`，以及下标、删除、`"a" in m`、按值 `==` 与迭代支持等完整语义；任务 10 已有的 `len(xs)` 和字面量行为保持可用。
+- 增加容器方法集：`xs.append/insert/pop/remove` 与 `m.get/pop/keys/values/items/update`，以及下标、删除、`"a" in m` 与按值 `==` 的完整语义；维护并扩展内部 `msDictNext`/msList 只读遍历原语，脚本 `for-in` 迭代协议仍属任务 26。任务 10 已有的 `len(xs)` 和字面量行为保持可用。
 
 完成后，脚本能写 `xs := [1, "two", 3.0]`、`m := {"a": 1}`，做下标读写（含负索引）、`del m["a"]`、键成员测试与方法调用，并通过 `tests/ms/containers/` 的 ms 脚本验证。切片（`xs[1:3]`）属任务 30，bytes/tuple/set 属任务 32，迭代协议（`for x in xs`）属任务 26，均不在本任务范围。
 
@@ -28,7 +28,7 @@
 - [09-c-api.md](../language/09-c-api.md) §3：GC 根纪律（`msRootPush`/`msRootPop`，跨分配的局部 `MsObject*` 必须入根）；§5：值构造；§6：容器操作公开 API 签名；§8：错误处理约定（返回 `NULL` + 错误槽，`msRaiseTypeError` 等）；§9：`MsCFunction` 与 `MsMethodDef` 方法表定义。
 - [10-c-style.md](../language/10-c-style.md)：全部 C 接口遵循其规范（2 空格缩进、120 列行宽、K&R、指针星号贴类型、内部结构体不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`、include guard）。
 - [11-project-layout.md](../language/11-project-layout.md) §1：`src/object/` 与 `tests/ms/` 的目录位置；§5 路线图 v0.1：核心类型含 list/dict，v0.1 的 int 仅 int64（大整数属任务 31）。
-- 任务 02（核心基础设施）提供 `msAlloc`/`msRealloc`/`msFree` 与 `MsResult`；任务 06（对象模型基础）提供 `MsObjectHeader`、`MsType` 类型对象与方法表机制、按值比较 `msObjEqual`、哈希 `msObjHash`、真值判定分派；任务 08（VM 执行核心）提供容器指令的分派点；任务 10（内建函数）已提供最小 list 动态数组、dict 插入序线性表、字面量构建及对应的 `len`/真值/表示支持。本任务扩展这些既有模块，不重新创建对象；完整哈希、方法、下标、删除、成员、相等与迭代等能力仍由本任务交付。本文其余接口名（`msObjEqual`、`msObjHash`、类型对象方法表注册函数等）为假定命名，实现时以对应任务文档定名为准。
+- 任务 02（核心基础设施）提供 `msAlloc`/`msRealloc`/`msFree` 与 `MsResult`；任务 06（对象模型基础）提供 `MsObjectHeader`、`MsType` 类型对象与方法表机制、按值比较 `msObjEqual`、哈希 `msObjHash`、真值判定分派；任务 08（VM 执行核心）提供容器指令的分派点；任务 10（内建函数）已提供最小 list 动态数组、dict 插入序线性表、字面量构建及对应的 `len`/真值/表示支持。本任务扩展这些既有模块，不重新创建对象；完整哈希、方法、下标、删除、成员与相等能力，以及内部 `msDictNext`/msList 只读遍历原语的维护和扩展仍由本任务交付，脚本 `for-in` 迭代协议不在本任务范围。本文其余接口名（`msObjEqual`、`msObjHash`、类型对象方法表注册函数等）为假定命名，实现时以对应任务文档定名为准。
 
 ## 详细设计
 
