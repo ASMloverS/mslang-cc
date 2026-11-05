@@ -41,6 +41,7 @@ endfunction()
 add_library(mslang ${MSLANG_LIBRARY_TYPE}
     src/ms_version.c
     src/compiler/ms_compiler.c
+    src/compiler/ms_scope.c
     src/object/ms_dict.c
     src/object/ms_list.c
     src/object/ms_object.c
