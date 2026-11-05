@@ -611,6 +611,136 @@ static struct MsObject* msBuiltinStr(MsState* L, int64_t argc, struct MsObject**
   return (struct MsObject*)msBuiltinStringValue(L, argv[0]);
 }
 
+static struct MsObject* msBuiltinAbs(MsState* L, int64_t argc, struct MsObject** argv) {
+  if (!msBuiltinCheckArgc(L, "abs", argc, 1, 1)) {
+    return NULL;
+  }
+  if (msObjectTag(argv[0]) == MS_TYPE_INT) {
+    int64_t value = msIntWordValue(argv[0]);
+    if (value >= 0) {
+      return argv[0];
+    }
+    if (value == INT64_MIN) {
+      msRaiseValueError(L, "abs() overflow");
+      return NULL;
+    }
+    return msNewInt(L, -value);
+  }
+  if (msObjectTag(argv[0]) == MS_TYPE_FLOAT) {
+    return msNewFloat(L, fabs(msFloatValue(argv[0])));
+  }
+  msRaiseTypeError(L, "abs() argument must be int or float");
+  return NULL;
+}
+
+static int msBuiltinCompareIntFloat(int64_t intValue, double floatValue) {
+  if (isnan(floatValue)) {
+    return 2;
+  }
+  if (isinf(floatValue)) {
+    return floatValue > 0.0 ? -1 : 1;
+  }
+  if (floatValue >= 9223372036854775808.0) {
+    return -1;
+  }
+  if (floatValue < -9223372036854775808.0) {
+    return 1;
+  }
+  int64_t truncated = (int64_t)floatValue;
+  if (intValue < truncated) {
+    return -1;
+  }
+  if (intValue > truncated) {
+    return 1;
+  }
+  if ((double)truncated == floatValue) {
+    return 0;
+  }
+  return floatValue > 0.0 ? -1 : 1;
+}
+
+static bool msBuiltinCompare(MsState* L, const char* name, const struct MsObject* lhs,
+    const struct MsObject* rhs, int* order) {
+  MsTypeTag lhsTag = msObjectTag(lhs);
+  MsTypeTag rhsTag = msObjectTag(rhs);
+  if (lhsTag == MS_TYPE_INT && rhsTag == MS_TYPE_INT) {
+    int64_t lhsValue = msIntWordValue(lhs);
+    int64_t rhsValue = msIntWordValue(rhs);
+    *order = lhsValue < rhsValue ? -1 : lhsValue > rhsValue ? 1 : 0;
+    return true;
+  }
+  if ((lhsTag == MS_TYPE_INT || lhsTag == MS_TYPE_FLOAT)
+      && (rhsTag == MS_TYPE_INT || rhsTag == MS_TYPE_FLOAT)) {
+    if (lhsTag == MS_TYPE_FLOAT && rhsTag == MS_TYPE_FLOAT) {
+      double lhsValue = msFloatValue(lhs);
+      double rhsValue = msFloatValue(rhs);
+      *order = lhsValue < rhsValue ? -1 : lhsValue > rhsValue ? 1 : lhsValue == rhsValue ? 0 : 2;
+    } else if (lhsTag == MS_TYPE_INT) {
+      *order = msBuiltinCompareIntFloat(msIntWordValue(lhs), msFloatValue(rhs));
+    } else {
+      *order = msBuiltinCompareIntFloat(msIntWordValue(rhs), msFloatValue(lhs));
+      if (*order != 2) {
+        *order = -*order;
+      }
+    }
+    return true;
+  }
+  if (lhsTag == MS_TYPE_STRING && rhsTag == MS_TYPE_STRING) {
+    const struct MsString* lhsString = (const struct MsString*)lhs;
+    const struct MsString* rhsString = (const struct MsString*)rhs;
+    size_t lhsLen = msStringLen(lhsString);
+    size_t rhsLen = msStringLen(rhsString);
+    size_t sharedLen = lhsLen < rhsLen ? lhsLen : rhsLen;
+    int comparison = memcmp(msStringData(lhsString), msStringData(rhsString), sharedLen);
+    if (comparison != 0) {
+      *order = comparison < 0 ? -1 : 1;
+    } else {
+      *order = lhsLen < rhsLen ? -1 : lhsLen > rhsLen ? 1 : 0;
+    }
+    return true;
+  }
+  msRaiseTypeError(L, "%s() cannot compare values", name);
+  return false;
+}
+
+static struct MsObject* msBuiltinMinMax(MsState* L, int64_t argc, struct MsObject** argv,
+    const char* name, bool wantMax) {
+  if (argc == 0) {
+    msRaiseValueError(L, "%s() arg is an empty sequence", name);
+    return NULL;
+  }
+  struct MsObject** candidates = argv;
+  int64_t count = argc;
+  if (argc == 1 && msObjectTag(argv[0]) == MS_TYPE_LIST) {
+    const struct MsList* list = (const struct MsList*)argv[0];
+    candidates = list->items;
+    count = msListLen(list);
+    if (count == 0) {
+      msRaiseValueError(L, "%s() arg is an empty sequence", name);
+      return NULL;
+    }
+  }
+  struct MsObject* winner = candidates[0];
+  for (int64_t i = 1; i < count; ++i) {
+    int order = 0;
+    if (!msBuiltinCompare(L, name, winner, candidates[i], &order)) {
+      return NULL;
+    }
+    if (order != 2 && ((wantMax && order < 0) || (!wantMax && order > 0))) {
+      winner = candidates[i];
+    }
+  }
+  return winner;
+}
+
+static struct MsObject* msBuiltinMin(MsState* L, int64_t argc, struct MsObject** argv) {
+  return msBuiltinMinMax(L, argc, argv, "min", false);
+}
+
+static struct MsObject* msBuiltinMax(MsState* L, int64_t argc, struct MsObject** argv) {
+  return msBuiltinMinMax(L, argc, argv, "max", true);
+}
+
 struct MsBuiltinEntry {
   const char* name;
   MsCFunction func;
@@ -626,6 +756,9 @@ static const struct MsBuiltinEntry msBuiltinTable[] = {
   {"bool", msBuiltinBool},
   {"str", msBuiltinStr},
   {"range", msBuiltinRange},
+  {"abs", msBuiltinAbs},
+  {"min", msBuiltinMin},
+  {"max", msBuiltinMax},
 };
 
 static void msBuiltinRegister(MsState* L, const char* name, MsCFunction function) {
