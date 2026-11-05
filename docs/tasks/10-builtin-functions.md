@@ -102,7 +102,7 @@ static const struct MsBuiltinEntry msBuiltinTable[] = {
 | C 函数 | `<builtin function print>` | — |
 | 类型对象 | `<type 'int'>` | — |
 
-float 的最短往返算法：从 `%.17g` 起步逐步降低精度，取第一个 `strtod` 往返相等的表示；若结果无小数点与指数标记则补 `.0`（对齐 `strconv.formatFloat(f, prec=-1)` 的目标行为，正式实现随任务 35 收敛）。
+float 的最短往返算法：使用 `%.*g` 从精度 1 递增至 17，取首个经 `strtod` 解析后位级往返相等的候选；若结果无小数点与指数标记则补 `.0`（对齐 `strconv.formatFloat(f, prec=-1)` 的目标行为，正式实现随任务 35 收敛）。
 
 ### 6. 逐个内建的语义与错误行为
 
@@ -135,13 +135,13 @@ float 的最短往返算法：从 `%.17g` 起步逐步降低精度，取第一�
 ## 实现步骤
 
 1. 建 `src/vm/ms_builtin.h`（guard `MSLANG_SRC_VM_MS_BUILTIN_H_`）与注册表骨架：`struct MsBuiltinEntry`、`msBuiltinTable`（先只含 `print`/`assert`）、`msBuiltinRegisterAll`；`msNewState` 改调 `msBuiltinRegisterAll` 取代任务 09 的 `msBuiltinRegisterMinimal`。验证：任务 09 的冒烟脚本（`hello.ms`/`arithmetic.ms`）全部保持通过。
-2. 实现公共辅助 `msBuiltinCheckArgc`/`msBuiltinCheckType`/`msObjectIsTruthy`，统一错误消息格式（`TypeError: ...`/`ValueError: ...` 前缀）。验证：`assert` 走新真值入口后冒烟脚本仍通过。
+2. 实现参数个数辅助 `msBuiltinCheckArgc`，各内建按参数语义直接检查类型，真值复用 `msObjectIsTruthy`，统一错误消息格式（`TypeError: ...`/`ValueError: ...` 前缀）。验证：`assert` 走统一真值入口后冒烟脚本仍通过。
 3. 实现 str 表示层：nil/bool/int/float/str 的基础表示（含 float 最短往返）与 list/dict 的容器表示（元素 repr 风格）；`str` 内建落地。验证：ms 脚本断言 `str` 各类型输出与容器格式。
 4. 升级 `print` 至完整签名：按 `MsState.cKeywordCount` 解析尾部 `sep`/`end`/`file`/`flush` 名字和值，`file != nil` 报 TypeError，`flush` 冲刷 stdout。验证：`.out` 同伴文件比对多值、普通位置字符串、`sep`/`end` 默认行为的 stdout 全文。
 5. 实现 `len` 与 `type`：str 码点计数（UTF-8 解码逐码点）、list/dict 长度；`type` 返回类型对象并保证 `<type 'int'>` 表示。验证：多字节字符串的 `len` 断言、`print(type(x))` 输出比对。
 6. 实现 `int`/`float`/`bool`：全部分支与错误路径（含 `int("0x1F", 16)`、`int(3.9)`、`int(nan)` 报 ValueError、溢出报 ValueError）。验证：转换矩阵逐格断言。
-7. 实现 `range` 物化：参数形态判定、`step == 0` 检查、负 step、预计算个数、list 入根后逐项填充。验证：1/2/3 参与负 step 的内容断言，`range(1, 10, 0)` 负例退出码。
-8. 实现 `abs`/`min`/`max`：两种调用形态、空序列 ValueError、混合数值提升、不可比较 TypeError。验证：各形态正例与负例。
+7. 实现 `range` 物化：参数形态判定、`step == 0` 检查、负 step、预计算个数；当前无根栈 API，list 由堆接管并在状态关闭时回收，任务 17 再接入根保护。验证：1/2/3 参与负 step 的内容断言，`range(1, 10, 0)` 负例退出码。
+8. 实现 `abs`/`min`/`max`：两种调用形态、空序列 ValueError、精确混合数值比较（避免 >2^53 整数精度丢失）、不可比较 TypeError。验证：各形态正例与负例。
 9. 全量回归：任务 09 冒烟脚本 + 本任务全部 `tests/ms/builtin/` 脚本经 `run_tests.py` 与 `ctest --test-dir build` 通过；Debug 构建（ASAN / `/RTC`）无内存错误，`msCloseState` 后无残余分配计数。
 
 ## 测试方案

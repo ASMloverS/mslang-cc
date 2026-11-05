@@ -156,7 +156,7 @@ bool      msDictNext(struct MsDict* dict, int64_t* cursor, MsObject** key, MsObj
 | `MS_OP_APPEND` | `msListAppend`（推导式构建用，本任务接通指令，推导式语法属任务 27） | — |
 
 - 越界、缺键、不可哈希键、类型错误（如对 int 下标）在 v0.1 均无异常对象：经 `msRaise*` 置错误槽，VM 中止执行返回 `MS_ERROR_RUNTIME`，CLI 退出码 1（任务 09 约定）。异常系统落地（任务 23）后这些错误点改为抛出对应异常对象，错误消息文本保持不变。
-- 真值接线：任务 06 的真值分派对 `MS_TYPE_LIST`/`MS_TYPE_DICT` 分别以 `len == 0` / `used == 0` 判定，本任务提供 `msListLen`/`msDictLen` 内联访问器（头文件 `static inline`，直接读字段）。
+- 真值接线：任务 06 的真值分派对 `MS_TYPE_LIST`/`MS_TYPE_DICT` 分别以 `len == 0` / `used == 0` 判定；本任务保留并适配任务 10 已有的 `msListLen`/`msDictLen` 内联访问器（头文件 `static inline`，直接读字段）。
 - 切片操作数（`MS_OP_SLICE`）遇到 list 时分派到任务 30 的实现；本任务中该指令对 list/dict 一律报 "not subscriptable with slice" 占位错误，任务 30 落地后替换。
 
 ### 5. 容器方法集
