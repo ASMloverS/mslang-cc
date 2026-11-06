@@ -18,12 +18,18 @@
 
 #define MS_COMPILER_MAX_NODE_DEPTH 512
 
+struct MsGlobalDecl {
+  struct MsGlobalDecl* next;
+  struct MsString* name;
+};
+
 struct MsFuncCtx {
   struct MsFuncCtx* parent;
   struct MsProtoBuilder builder;
   const struct MsAst* funcNode;
   const struct MsAst* currentNode;
   struct MsScopeCtx scope;
+  struct MsGlobalDecl* pendingGlobalDecls;
   int stackDepth;
   int stackMax;
   bool isModule;
@@ -725,6 +731,51 @@ static struct MsString* msCompilerNameFromSlice(struct MsCompiler* c, const char
   return name;
 }
 
+static bool msCompilerHasPendingGlobalDecl(const struct MsFuncCtx* fn, const struct MsString* name) {
+  for (struct MsGlobalDecl* decl = fn->pendingGlobalDecls; decl != NULL; decl = decl->next) {
+    if (msStringEquals(decl->name, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void msCompilerAddPendingGlobalDecl(struct MsCompiler* c, struct MsString* name) {
+  if (msCompilerHasPendingGlobalDecl(c->fn, name)) {
+    return;
+  }
+  struct MsGlobalDecl* decl = msAlloc(sizeof(*decl));
+  if (decl == NULL) {
+    msCompilerFail(c, c->fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+    return;
+  }
+  decl->name = name;
+  decl->next = c->fn->pendingGlobalDecls;
+  c->fn->pendingGlobalDecls = decl;
+}
+
+static bool msCompilerConsumePendingGlobalDecl(struct MsFuncCtx* fn, const struct MsString* name) {
+  struct MsGlobalDecl** link = &fn->pendingGlobalDecls;
+  while (*link != NULL) {
+    struct MsGlobalDecl* decl = *link;
+    if (msStringEquals(decl->name, name)) {
+      *link = decl->next;
+      msFree(decl);
+      return true;
+    }
+    link = &decl->next;
+  }
+  return false;
+}
+
+static void msCompilerFreePendingGlobalDecls(struct MsFuncCtx* fn) {
+  while (fn->pendingGlobalDecls != NULL) {
+    struct MsGlobalDecl* decl = fn->pendingGlobalDecls;
+    fn->pendingGlobalDecls = decl->next;
+    msFree(decl);
+  }
+}
+
 static int msCompilerResolveLocalInFunc(const struct MsFuncCtx* fn, const struct MsString* name) {
   return msScopeResolveLocal(&fn->scope, name);
 }
@@ -733,6 +784,9 @@ static MsResolveKind msCompilerResolveName(struct MsCompiler* c, const struct Ms
   *slot = msCompilerResolveLocalInFunc(c->fn, name);
   if (*slot >= 0) {
     return MS_RESOLVE_LOCAL;
+  }
+  if (msScopeIsMarkedGlobal(&c->fn->scope, name)) {
+    return MS_RESOLVE_GLOBAL;
   }
   for (struct MsFuncCtx* parent = c->fn->parent; parent != NULL; parent = parent->parent) {
     if (msCompilerResolveLocalInFunc(parent, name) >= 0) {
@@ -919,6 +973,8 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
             return;
           }
           declaredAny = true;
+        } else if (msCompilerConsumePendingGlobalDecl(c->fn, name)) {
+          declaredAny = true;
         }
         continue;
       }
@@ -1101,6 +1157,27 @@ static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node)
   msCompilerPatchToCurrent(c, exitJump, baseDepth);
 }
 
+static void msCompilerCompileGlobal(struct MsCompiler* c, const struct MsAst* node) {
+  for (size_t i = 0; i < node->as.globalStmt.names.count && c->sticky == MS_OK; ++i) {
+    const struct MsAst* item = node->as.globalStmt.names.items[i];
+    struct MsString* name = msCompilerNameFromSlice(c,
+        item->as.literal.start, item->as.literal.length);
+    if (name == NULL) {
+      return;
+    }
+    bool isNewModuleGlobal = c->fn->isModule && c->fn->scope.scopeDepth == 0
+        && !msScopeIsMarkedGlobal(&c->fn->scope, name);
+    MsResult result = msScopeMarkGlobal(&c->fn->scope, name);
+    if (result == MS_ERROR_SYNTAX) {
+      msCompilerFail(c, item, result, 304, "name is local before global declaration");
+    } else if (result != MS_OK) {
+      msCompilerFail(c, item, result, 0, "out of memory");
+    } else if (isNewModuleGlobal) {
+      msCompilerAddPendingGlobalDecl(c, name);
+    }
+  }
+}
+
 static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node) {
   if (!msCompilerEnterNode(c, node)) {
     return;
@@ -1153,6 +1230,9 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
     case MS_AST_FOR:
       msCompilerCompileFor(c, node);
       break;
+    case MS_AST_GLOBAL:
+      msCompilerCompileGlobal(c, node);
+      break;
     case MS_AST_PASS:
       break;
     case MS_AST_RETURN:
@@ -1173,6 +1253,7 @@ static void msCompilerAbortFunc(struct MsCompiler* c) {
   MS_ASSERT(fn != NULL);
   c->fn = fn->parent;
   msProtoBuilderDestroy(&fn->builder);
+  msCompilerFreePendingGlobalDecls(fn);
   msScopeCtxDestroy(&fn->scope);
   msFree(fn);
 }
@@ -1239,6 +1320,7 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out) {
   }
   if (c->sticky == MS_OK) {
     c->fn = fn->parent;
+    msCompilerFreePendingGlobalDecls(fn);
     msScopeCtxDestroy(&fn->scope);
     msFree(fn);
     *out = proto;
