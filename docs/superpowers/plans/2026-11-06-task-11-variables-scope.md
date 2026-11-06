@@ -37,7 +37,7 @@ Run all commands from the worktree root. The baseline is 14/14 Debug CTests pass
 - Modify: `src/compiler/ms_compiler.c:17-47,154-176,750-805,1100-1176`
 - Modify: `CMakeLists.txt:41-61`
 
-- [ ] **Step 1: Add the self-contained scope interface**
+- [x] **Step 1: Add the self-contained scope interface**
 
 Create `src/compiler/ms_scope.h`:
 
@@ -91,7 +91,7 @@ bool msScopeIsMarkedGlobal(const struct MsScopeCtx* ctx, const struct MsString* 
 #endif  // MSLANG_SRC_COMPILER_MS_SCOPE_H_
 ```
 
-- [ ] **Step 2: Implement local storage and block rewind**
+- [x] **Step 2: Implement local storage and block rewind**
 
 Create `src/compiler/ms_scope.c` with the local/block operations:
 
@@ -175,7 +175,7 @@ bool msScopeHasLocalAtDepth(const struct MsScopeCtx* ctx, const struct MsString*
 }
 ```
 
-- [ ] **Step 3: Add the global-name set**
+- [x] **Step 3: Add the global-name set**
 
 Append to `ms_scope.c`:
 
@@ -217,7 +217,7 @@ MsResult msScopeMarkGlobal(struct MsScopeCtx* ctx, struct MsString* name) {
 }
 ```
 
-- [ ] **Step 4: Move compiler state into `MsScopeCtx`**
+- [x] **Step 4: Move compiler state into `MsScopeCtx`**
 
 Include `compiler/ms_scope.h`, add `src/compiler/ms_scope.c` to the `mslang` target, remove `MsLocalSlot` and `MsScope`, and replace the corresponding `MsFuncCtx` fields with:
 
@@ -252,7 +252,7 @@ Replace the bodies of local/scope wrappers with calls to `msScopeAllocHiddenLoca
 
 Call `msScopeCtxInit(&fn->scope, funcNode == NULL)` after zeroing a new function context, call `msScopeCtxDestroy(&fn->scope)` in `msCompilerAbortFunc` before `msFree(fn)`, and set `fn->builder.proto.localCount = fn->scope.localMax` when finalizing a proto.
 
-- [ ] **Step 5: Verify the behavior-preserving extraction**
+- [x] **Step 5: Verify the behavior-preserving extraction**
 
 Run:
 
@@ -263,7 +263,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: build succeeds and 14/14 tests pass, including zero live allocations in the compiler fixture.
 
-- [ ] **Step 6: Commit the extraction**
+- [x] **Step 6: Commit the extraction**
 
 ```bash
 git add CMakeLists.txt src/compiler/ms_scope.h src/compiler/ms_scope.c src/compiler/ms_compiler.c
@@ -286,7 +286,7 @@ git commit -m '♻️ refactor(compiler): extract scope context'
 - Test: `tests/ms/variables/err_no_new_name.ms`, `.exit`, `.err`
 - Test: `tests/ms/variables/err_aug_multi.ms`, `.exit`, `.err`
 
-- [ ] **Step 1: Write strict declaration and assignment fixtures**
+- [x] **Step 1: Write strict declaration and assignment fixtures**
 
 Create `decl_assign.ms`:
 
@@ -372,11 +372,11 @@ left, right += 1, 2
 
 Use `.err` contents `error E301:`, `error E302: no new variables on left side of :=`, and `error E305: augmented assignment takes a single target` respectively.
 
-- [ ] **Step 2: Establish red negative tests and positive regression baselines**
+- [x] **Step 2: Establish red negative tests and positive regression baselines**
 
 Run each positive and negative fixture through `python run_tests.py --filter 'variables/<name>.ms'`. The three positive scripts already exercise supported single-target behavior and must pass before and after the change. Expected red results: undeclared assignment executes instead of producing E301, undeclared compound assignment exits at runtime instead of compile time, repeated declaration executes instead of E302, and augmented multi-target reports E205 instead of E305.
 
-- [ ] **Step 3: Provide read-only access to registered globals**
+- [x] **Step 3: Provide read-only access to registered globals**
 
 Add `struct MsState* state;` to `MsCompiler`, forward-declare `struct MsState`, initialize it to `NULL`, and declare:
 
@@ -399,7 +399,7 @@ msCompilerSetState(&compiler, L);
 
 Include `vm/ms_state_internal.h` in `ms_compiler.c` for `msStateGetGlobal`.
 
-- [ ] **Step 4: Separate store validation from emission**
+- [x] **Step 4: Separate store validation from emission**
 
 Add a helper that accepts locals, existing upvalue placeholders, marked globals, module declarations, and registered globals:
 
@@ -426,7 +426,7 @@ static bool msCompilerValidateStore(struct MsCompiler* c, struct MsString* name)
 
 Before `msCompilerEmitStoreName` handles a global in `MS_AST_ASSIGN` or `MS_AST_AUG_ASSIGN`, call this helper and return on false. Keep load resolution unchanged so undefined reads remain runtime errors.
 
-- [ ] **Step 5: Implement single-target `:=` checks before generalizing arity**
+- [x] **Step 5: Implement single-target `:=` checks before generalizing arity**
 
 For a single identifier declaration, retain RHS-first generation. At module depth 0, reject a second `:=` only when `globalNames` already contains the name, otherwise mark it with `msScopeMarkGlobal`. In a block or function, use `msScopeHasLocalAtDepth` to distinguish redeclaration from a new local. Existing same-depth targets are stored normally; if none is new, report:
 
@@ -445,7 +445,9 @@ parserErrorAtNode(p, values.items[1], 305, "augmented assignment takes a single 
 
 Also update the adjacent comment to name E305. Update `tests/c/test_parser.c` so `parser.augAssignMultiTarget` expects `{ 305 }` and its two-line comment names E305.
 
-- [ ] **Step 6: Run strict assignment tests and regressions**
+Execution note: module function names are registered as declarations, E301 uses the target node's location, and function redeclaration has compile-only coverage. No `MAKE_FUNCTION` runtime path was added.
+
+- [x] **Step 6: Run strict assignment tests and regressions**
 
 Run:
 
@@ -457,7 +459,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: the new declaration/assignment fixtures pass; no other variable fixtures exist yet; all 14 CTests pass.
 
-- [ ] **Step 7: Commit strict assignment**
+- [x] **Step 7: Commit strict assignment**
 
 ```bash
 git add src/compiler/ms_compiler.c src/compiler/ms_compiler.h src/vm/ms_eval.c src/parser/ms_parser.c tests/c/test_parser.c tests/ms/variables
@@ -473,7 +475,7 @@ git commit -m '✨ feat(scope): enforce declaration and assignment rules'
 - Test: `tests/ms/variables/err_no_new_names.ms`, `.exit`, `.err`
 - Test: `tests/ms/variables/err_arity_mismatch.ms`, `.exit`, `.err`
 
-- [ ] **Step 1: Write multi-assignment fixtures**
+- [x] **Step 1: Write multi-assignment fixtures**
 
 Create `multi_assign.ms`:
 
@@ -513,11 +515,11 @@ Create `err_arity_mismatch.ms` with E303 expectations:
 first, second = 1, 2, 3
 ```
 
-- [ ] **Step 2: Verify multi-target rejection**
+- [x] **Step 2: Verify multi-target rejection**
 
 Run the three scripts. Expected: the positive and no-new-names scripts fail with task-11 E307; the arity script also reaches the old task-11 path instead of E303.
 
-- [ ] **Step 3: Implement shared target metadata and static arity checks**
+- [x] **Step 3: Implement shared target metadata and static arity checks**
 
 Add helpers that unwrap a star target and find its index:
 
@@ -552,7 +554,9 @@ Use a node-local `bool declaredAny = false;` and `int starIndex = msCompilerStar
 
 Remove the `{"a, b := 1, 2;", 307, 1}` case from `compiler.unsupportedAndLimitDiagnostics` in `tests/c/test_compiler.c`; the new `multi_assign.ms` fixture now owns that behavior.
 
-- [ ] **Step 4: Verify multi-assignment and diagnostics**
+Execution note: lone-star targets are rejected, and the fixtures also cover block-local declarations and hidden-slot discard behavior.
+
+- [x] **Step 4: Verify multi-assignment and diagnostics**
 
 Run:
 
@@ -563,7 +567,7 @@ python run_tests.py --filter 'variables/{multi_assign,err_no_new_names,err_arity
 
 If Python's `Path.match` does not accept braces, run each filter separately. Expected: all three pass; swap and rotation assertions succeed.
 
-- [ ] **Step 5: Commit multi-assignment**
+- [x] **Step 5: Commit multi-assignment**
 
 ```bash
 git add src/compiler/ms_compiler.c tests/c/test_compiler.c tests/ms/variables/multi_assign.ms tests/ms/variables/err_no_new_names.ms tests/ms/variables/err_no_new_names.exit tests/ms/variables/err_no_new_names.err tests/ms/variables/err_arity_mismatch.ms tests/ms/variables/err_arity_mismatch.exit tests/ms/variables/err_arity_mismatch.err
@@ -581,7 +585,7 @@ git commit -m '✨ feat(compiler): add multi-target assignment'
 - Test: `tests/ms/variables/err_unpack_few.ms`, `.exit`, `.err`
 - Test: `tests/ms/variables/err_unpack_type.ms`, `.exit`, `.err`
 
-- [ ] **Step 1: Write unpacking fixtures**
+- [x] **Step 1: Write unpacking fixtures**
 
 Create `unpack.ms`:
 
@@ -631,11 +635,11 @@ first, second, *rest := range(1)
 first, second := 1
 ```
 
-- [ ] **Step 2: Verify unpacking is unimplemented**
+- [x] **Step 2: Verify unpacking is unimplemented**
 
 Run the four scripts. Expected: positives fail with the task-11 compiler diagnostic; negative scripts do not produce the required VM errors.
 
-- [ ] **Step 3: Emit `UNPACK` and literal-list star collection**
+- [x] **Step 3: Emit `UNPACK` and literal-list star collection**
 
 Add to `ms_opcode.h`:
 
@@ -656,7 +660,7 @@ if (c->sticky == MS_OK && c->fn->stackMax < c->fn->stackDepth + 1) {
 
 Reject target counts above 255 with E306 before this cast. For multi-RHS with a star, compile values before the star normally, compile the middle expressions followed by `MS_OP_BUILD_LIST` with the middle count, then compile trailing values. The resulting stack contains exactly one value per target and uses the same right-to-left stores.
 
-- [ ] **Step 4: Implement VM validation and value construction**
+- [x] **Step 4: Implement VM validation and value construction**
 
 Add a `MS_OP_UNPACK` case before `MS_OP_CALL`. Use this complete algorithm:
 
@@ -735,7 +739,9 @@ case MS_OP_UNPACK: {
 
 Keep the source at `sourceIndex` throughout allocation. The newly allocated rest list is immediately placed in the frame stack before appending elements.
 
-- [ ] **Step 5: Verify all unpack paths**
+Execution note: list equality received the narrowly required element-wise implementation; unpacking actively roots every partial output by advancing `stackTop`; fixtures cover leading-star and empty-rest collection. The 255-target limit applies only to `UNPACK`, while multi-RHS star expansion uses the existing `BUILD_LIST` path.
+
+- [x] **Step 5: Verify all unpack paths**
 
 Run:
 
@@ -750,7 +756,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: four script tests pass with exact stdout/error fragments and 14/14 CTests pass.
 
-- [ ] **Step 6: Commit unpacking**
+- [x] **Step 6: Commit unpacking**
 
 ```bash
 git add src/vm/ms_opcode.h src/compiler/ms_compiler.c src/vm/ms_vm.c tests/ms/variables/unpack.ms tests/ms/variables/unpack.out tests/ms/variables/err_unpack_count.ms tests/ms/variables/err_unpack_count.exit tests/ms/variables/err_unpack_count.err tests/ms/variables/err_unpack_few.ms tests/ms/variables/err_unpack_few.exit tests/ms/variables/err_unpack_few.err tests/ms/variables/err_unpack_type.ms tests/ms/variables/err_unpack_type.exit tests/ms/variables/err_unpack_type.err
@@ -765,7 +771,7 @@ git commit -m '✨ feat(vm): add list unpacking'
 - Test: `tests/ms/variables/err_global_conflict.ms`, `.exit`, `.err`
 - Test: `tests/ms/variables/err_global_decl_conflict.ms`, `.exit`, `.err`
 
-- [ ] **Step 1: Write global fixtures**
+- [x] **Step 1: Write global fixtures**
 
 Create `global_stmt.ms`:
 
@@ -806,11 +812,11 @@ func conflict() {
 }
 ```
 
-- [ ] **Step 2: Verify `global` currently fails**
+- [x] **Step 2: Verify `global` currently fails**
 
 Run all three scripts. Expected: the positive reports the generic unsupported-statement E307; conflict scripts do not produce E304.
 
-- [ ] **Step 3: Compile global declarations and prioritize marked names**
+- [x] **Step 3: Compile global declarations and prioritize marked names**
 
 Add `msCompilerCompileGlobal`:
 
@@ -835,11 +841,13 @@ static void msCompilerCompileGlobal(struct MsCompiler* c, const struct MsAst* no
 
 Dispatch `MS_AST_GLOBAL` to it. In `msCompilerResolveName`, after the current-local lookup and before walking parent contexts, return `MS_RESOLVE_GLOBAL` when `msScopeIsMarkedGlobal(&c->fn->scope, name)` is true. In declaration handling, reject marked globals only when `!c->fn->isModule`; module `global` and `:=` remain compatible.
 
-- [ ] **Step 4: Verify global behavior and conflicts**
+Execution note: module `global` adds a pending declaration consumed by the first subsequent `:=`, including declarations made in module blocks. Function/global E304 conflicts and repeated module `:=` E302 have compile-only coverage. The positive fixture has no function execution because the `MAKE_FUNCTION` runtime belongs to task 13.
+
+- [x] **Step 4: Verify global behavior and conflicts**
 
 Run the three script filters, then `ctest --test-dir build -C Debug --output-on-failure`. Expected: all three new scripts pass and the full suite remains green.
 
-- [ ] **Step 5: Commit global semantics**
+- [x] **Step 5: Commit global semantics**
 
 ```bash
 git add src/compiler/ms_compiler.c tests/ms/variables/global_stmt.ms tests/ms/variables/err_global_conflict.ms tests/ms/variables/err_global_conflict.exit tests/ms/variables/err_global_conflict.err tests/ms/variables/err_global_decl_conflict.ms tests/ms/variables/err_global_decl_conflict.exit tests/ms/variables/err_global_decl_conflict.err
@@ -857,7 +865,7 @@ git commit -m '✨ feat(scope): implement global declarations'
 - Test: `tests/ms/variables/err_local_overflow.ms`, `.exit`, `.err`
 - Test: `tests/ms/variables/err_scope_depth.ms`, `.exit`, `.err`
 
-- [ ] **Step 1: Add scope and slot-reuse scripts**
+- [x] **Step 1: Add scope and slot-reuse scripts**
 
 Create `block_scope.ms`:
 
@@ -906,7 +914,7 @@ items := range(3)
 items[0] = 9
 ```
 
-- [ ] **Step 2: Generate the two defensive-limit fixtures**
+- [x] **Step 2: Generate the two defensive-limit fixtures**
 
 Generate 300 same-block declarations and 128 nested bare blocks with Python, writing UTF-8/LF source files and their companions:
 
@@ -927,11 +935,11 @@ root.joinpath('err_scope_depth.err').write_text('error E306:\n', encoding='utf-8
 PY
 ```
 
-- [ ] **Step 3: Run the scope fixtures before changing code**
+- [x] **Step 3: Run the scope fixtures before changing code**
 
 Run all six scripts. Expected: block scope, slot reuse, undefined read, and limits may already pass after Task 1; indexed assignment must fail with the new explicit E301 rather than the old generic task-11 E307. If another result differs, make the smallest compiler correction covered by that fixture and rerun it.
 
-- [ ] **Step 4: Run the full Debug suite**
+- [x] **Step 4: Run the full Debug suite**
 
 ```bash
 cmake --build build --config Debug
@@ -941,7 +949,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: every discovered script and all 14 CTests pass.
 
-- [ ] **Step 5: Commit scope coverage and any required fix**
+- [x] **Step 5: Commit scope coverage and any required fix**
 
 ```bash
 git add src/compiler/ms_compiler.c tests/ms/variables
@@ -957,13 +965,13 @@ If no compiler change was needed, the commit contains only the tests.
 - Modify: `docs/tasks/README.md:52`
 - Modify: `docs/superpowers/plans/2026-11-06-task-11-variables-scope.md`
 
-- [ ] **Step 1: Record actual behavior and verification**
+- [x] **Step 1: Record actual behavior and verification**
 
 Change task 11's status to `✅` in both files. Check only acceptance items verified in this worktree. Align the task's interface assumptions with actual names (`msStringNew`, `msNewList`, `msListLen`, direct checked `items` access, `MsScopeCtx`), record that function `global` is active now, and remove no longer accurate statements that multi-RHS star collection waits for task 16. Preserve future task boundaries for upvalues, general iterables, and indexed/attribute targets.
 
 Mark executed plan checkboxes `[x]`; if execution required a code-level deviation, add a short note beside the affected step with the actual behavior and reason.
 
-- [ ] **Step 2: Check documentation consistency and formatting**
+- [x] **Step 2: Check documentation consistency and formatting**
 
 Run:
 
@@ -974,7 +982,7 @@ python tools/check_build_artifacts.py .
 
 Expected: no whitespace errors and no artifacts outside `build/`.
 
-- [ ] **Step 3: Verify Debug and Release end to end**
+- [x] **Step 3: Verify Debug and Release end to end**
 
 Run:
 
@@ -988,7 +996,7 @@ python run_tests.py --mslang build/Debug/mslang.exe
 
 Expected: both configurations build without warnings, all 14 CTests pass in each configuration, and every script passes through the direct driver. Do not claim ASAN verification on this MSVC toolchain.
 
-- [ ] **Step 4: Inspect the final diff and repository state**
+- [x] **Step 4: Inspect the final diff and repository state**
 
 Run:
 
@@ -999,7 +1007,7 @@ git status --short
 
 Expected: only planned source, test, and documentation files are in the change set; build output is ignored; no unexpected files are untracked.
 
-- [ ] **Step 5: Commit completion documentation**
+- [x] **Step 5: Commit completion documentation**
 
 ```bash
 git add docs/tasks/11-variables-scope.md docs/tasks/README.md docs/superpowers/plans/2026-11-06-task-11-variables-scope.md

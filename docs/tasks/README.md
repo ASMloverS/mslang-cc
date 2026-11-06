@@ -49,7 +49,7 @@
 | ✅ | 08 | v0.1 | [VM 执行核心](08-vm-core.md) |
 | ✅ | 09 | v0.1 | [最小可运行解释器（里程碑）](09-minimal-interpreter.md) |
 | ✅ | 10 | v0.1 | [内建函数](10-builtin-functions.md) |
-| ⬜ | 11 | v0.1 | [变量与作用域（`:=`/`=`、global）](11-variables-scope.md) |
+| ✅ | 11 | v0.1 | [变量与作用域（`:=`/`=`、global）](11-variables-scope.md) |
 | ⬜ | 12 | v0.1 | [控制流语句](12-control-flow.md) |
 | ⬜ | 13 | v0.1 | [函数与调用](13-functions-calls.md) |
 | ⬜ | 14 | v0.1 | [闭包与 upvalue](14-closures.md) |
