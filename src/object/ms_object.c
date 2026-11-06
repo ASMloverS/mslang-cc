@@ -275,9 +275,22 @@ bool msObjectValueEquals(const struct MsObject* a, const struct MsObject* b) {
       return ((const struct MsFloat*)a)->value == ((const struct MsFloat*)b)->value;
     case MS_TYPE_STRING:
       return msStringEquals((const struct MsString*)a, (const struct MsString*)b);
+    case MS_TYPE_LIST: {
+      const struct MsList* lhs = (const struct MsList*)a;
+      const struct MsList* rhs = (const struct MsList*)b;
+      if (lhs->len != rhs->len) {
+        return false;
+      }
+      for (int64_t i = 0; i < lhs->len; ++i) {
+        if (!msObjectValueEquals(lhs->items[i], rhs->items[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
     default:
-      // Value semantics for containers/instances land in tasks 16/25 inside
-      // this function; callers see no change.
+      // Value semantics for remaining containers/instances land in tasks 16/25
+      // inside this function; callers see no change.
       return false;
   }
 }

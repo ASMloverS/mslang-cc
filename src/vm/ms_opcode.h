@@ -5,6 +5,8 @@
 
 #include "core/ms_common.h"
 
+#define MS_UNPACK_NO_STAR 0xFFFFu
+
 typedef enum {
   MS_OPFMT_ABC,    // opcode(8) | A(8) | Bx(16)
   MS_OPFMT_SAX     // opcode(8) | sAx(24, signed two's complement)

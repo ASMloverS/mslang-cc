@@ -850,7 +850,11 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
   const struct MsAstList* targets = &node->as.decl.targets;
   const struct MsAstList* values = &node->as.decl.values;
   int starIndex = msCompilerStarTarget(targets);
-  if (starIndex >= 0) {
+  if (targets->count > 255) {
+    msCompilerFail(c, node, MS_ERROR_SYNTAX, 306, "too many assignment targets");
+    return;
+  }
+  if (starIndex >= 0 && targets->count < 2) {
     msCompilerReport(c, node, 307, "unpacking is not implemented yet");
     return;
   }
@@ -860,18 +864,41 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
       return;
     }
   }
-  if (values->count > 1 && values->count != targets->count) {
+  if (values->count > 1
+      && ((starIndex < 0 && values->count != targets->count)
+          || (starIndex >= 0 && values->count + 1 < targets->count))) {
     msDiagReport(c->diags, node->line, node->column, 303, "cannot assign %zu values to %zu targets",
         values->count, targets->count);
     c->sticky = MS_ERROR_SYNTAX;
     return;
   }
   if (values->count == 1 && targets->count > 1) {
-    msCompilerReport(c, node, 307, "unpacking is not implemented yet");
-    return;
-  }
-  for (size_t i = 0; i < values->count; ++i) {
-    msCompilerCompileExpr(c, values->items[i]);
+    msCompilerCompileExpr(c, values->items[0]);
+    msCompilerEmitABC(c, MS_OP_UNPACK, (uint8_t)targets->count,
+        starIndex < 0 ? MS_UNPACK_NO_STAR : (uint16_t)starIndex, (int)targets->count - 1);
+    if (c->sticky == MS_OK && c->fn->stackMax < c->fn->stackDepth + 1) {
+      c->fn->stackMax = c->fn->stackDepth + 1;
+    }
+  } else if (starIndex >= 0) {
+    size_t middleCount = values->count - targets->count + 1;
+    if (middleCount > 255) {
+      msCompilerReport(c, node, 312, "more than 255 container items");
+      return;
+    }
+    for (int i = 0; i < starIndex; ++i) {
+      msCompilerCompileExpr(c, values->items[i]);
+    }
+    for (size_t i = 0; i < middleCount; ++i) {
+      msCompilerCompileExpr(c, values->items[starIndex + i]);
+    }
+    msCompilerEmitABC(c, MS_OP_BUILD_LIST, (uint8_t)middleCount, 0, 1 - (int)middleCount);
+    for (size_t i = starIndex + middleCount; i < values->count; ++i) {
+      msCompilerCompileExpr(c, values->items[i]);
+    }
+  } else {
+    for (size_t i = 0; i < values->count; ++i) {
+      msCompilerCompileExpr(c, values->items[i]);
+    }
   }
   if (c->sticky != MS_OK) {
     return;

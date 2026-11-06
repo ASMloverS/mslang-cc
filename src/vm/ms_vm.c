@@ -769,6 +769,77 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
         co->stack[co->stackTop++] = container;
         break;
       }
+      case MS_OP_UNPACK: {
+        int count = msOpDecodeA(instr);
+        int star = msOpDecodeBx(instr);
+        if (!msVmCanPop(co, frame)) {
+          result = msVmErrorAt(L, frame, "evaluation stack underflow");
+          break;
+        }
+        struct MsObject* source = co->stack[co->stackTop - 1];
+        if (msObjectTag(source) != MS_TYPE_LIST) {
+          const struct MsString* typeName = msHeapType(&L->heap, msObjectTag(source))->name;
+          msRaiseTypeError(L, "cannot unpack non-list '%s'", msStringData(typeName));
+          result = msVmPropagatedErrorAt(L, frame);
+          break;
+        }
+        struct MsList* list = (struct MsList*)source;
+        int64_t length = msListLen(list);
+        bool valid = star == MS_UNPACK_NO_STAR ? length == count : length >= count - 1;
+        if (!valid) {
+          if (star == MS_UNPACK_NO_STAR) {
+            msRaiseValueError(L, "expected %d values to unpack, got %lld", count, (long long)length);
+          } else {
+            msRaiseValueError(L, "expected at least %d values to unpack, got %lld",
+                count - 1, (long long)length);
+          }
+          result = msVmPropagatedErrorAt(L, frame);
+          break;
+        }
+        if (count < 1 || (star != MS_UNPACK_NO_STAR && (star < 0 || star >= count))
+            || co->stackTop - 1 + count >= windowEnd) {
+          result = msVmErrorAt(L, frame, "invalid unpack instruction");
+          break;
+        }
+        int sourceIndex = co->stackTop - 1;
+        int64_t middleLen = star == MS_UNPACK_NO_STAR ? 0 : length - (count - 1);
+        for (int i = 0; i < count; ++i) {
+          struct MsObject* value = NULL;
+          if (i == star) {
+            value = msNewList(L, middleLen);
+            if (value == NULL) {
+              result = msVmPropagatedErrorAt(L, frame);
+              break;
+            }
+            co->stack[sourceIndex + 1 + i] = value;
+            for (int64_t j = 0; j < middleLen; ++j) {
+              result = msListAppend(L, (struct MsList*)value, list->items[star + j]);
+              if (result != MS_OK) {
+                result = msVmPropagatedErrorAt(L, frame);
+                break;
+              }
+            }
+          } else {
+            int64_t index = star != MS_UNPACK_NO_STAR && i > star
+                ? length - (count - i)
+                : i;
+            value = list->items[index];
+            co->stack[sourceIndex + 1 + i] = value;
+          }
+          if (result != MS_OK) {
+            break;
+          }
+        }
+        if (result != MS_OK) {
+          break;
+        }
+        co->stack[sourceIndex] = co->stack[sourceIndex + 1];
+        for (int i = 1; i < count; ++i) {
+          co->stack[sourceIndex + i] = co->stack[sourceIndex + i + 1];
+        }
+        co->stackTop = sourceIndex + count;
+        break;
+      }
       case MS_OP_CALL: {
         // safepoint: scheduler preemption and GC handshake.
         int argc = msOpDecodeA(instr);
