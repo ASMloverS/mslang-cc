@@ -11,4 +11,9 @@ fifth = 5
 sixth = 6
 assert(value == 5)
 assert(first + second + fifth + sixth == 14)
+{
+    global blockDeclared
+}
+blockDeclared := 4
+assert(blockDeclared == 4)
 print("global_stmt ok")

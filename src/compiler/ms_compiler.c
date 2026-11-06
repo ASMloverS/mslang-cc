@@ -1165,7 +1165,7 @@ static void msCompilerCompileGlobal(struct MsCompiler* c, const struct MsAst* no
     if (name == NULL) {
       return;
     }
-    bool isNewModuleGlobal = c->fn->isModule && c->fn->scope.scopeDepth == 0
+    bool isNewModuleGlobal = c->fn->isModule
         && !msScopeIsMarkedGlobal(&c->fn->scope, name);
     MsResult result = msScopeMarkGlobal(&c->fn->scope, name);
     if (result == MS_ERROR_SYNTAX) {
@@ -1396,6 +1396,10 @@ static bool msCompilerBuildFunctionProto(struct MsCompiler* c, const struct MsAs
 static void msCompilerBindFunctionName(struct MsCompiler* c, const struct MsAst* node) {
   struct MsString* name = msCompilerNameFromSlice(c, node->as.func.name, node->as.func.nameLen);
   if (name == NULL) {
+    return;
+  }
+  if (!c->fn->isModule && msScopeIsMarkedGlobal(&c->fn->scope, name)) {
+    msCompilerFail(c, node, MS_ERROR_SYNTAX, 304, "name is local before global declaration");
     return;
   }
   if (c->fn->isModule && c->fn->scope.scopeDepth == 0) {
