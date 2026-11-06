@@ -829,58 +829,100 @@ static void msCompilerEmitStoreName(struct MsCompiler* c, struct MsString* name)
   msCompilerEmitABC(c, MS_OP_STORE_GLOBAL, 0, (uint16_t)index, -1);
 }
 
+static const struct MsAst* msCompilerTargetIdent(const struct MsAst* target) {
+  if (target->kind == MS_AST_UNARY && target->as.unary.op == MS_TOKEN_STAR) {
+    target = target->as.unary.operand;
+  }
+  return target->kind == MS_AST_IDENT ? target : NULL;
+}
+
+static int msCompilerStarTarget(const struct MsAstList* targets) {
+  for (size_t i = 0; i < targets->count; ++i) {
+    const struct MsAst* target = targets->items[i];
+    if (target->kind == MS_AST_UNARY && target->as.unary.op == MS_TOKEN_STAR) {
+      return (int)i;
+    }
+  }
+  return -1;
+}
+
 static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsAst* node) {
-  if (node->as.decl.targets.count != 1 || node->as.decl.values.count != 1
-      || node->as.decl.targets.items[0]->kind != MS_AST_IDENT) {
+  const struct MsAstList* targets = &node->as.decl.targets;
+  const struct MsAstList* values = &node->as.decl.values;
+  int starIndex = msCompilerStarTarget(targets);
+  for (size_t i = 0; i < targets->count; ++i) {
+    if (msCompilerTargetIdent(targets->items[i]) == NULL) {
+      msCompilerReport(c, targets->items[i], 301, "indexed/attribute assignment belongs to task 15/16");
+      return;
+    }
+  }
+  if (values->count > 1) {
+    bool arityMatches = starIndex < 0 ? values->count == targets->count : values->count >= targets->count - 1;
+    if (!arityMatches) {
+      msDiagReport(c->diags, node->line, node->column, 303, "cannot assign %zu values to %zu targets",
+          values->count, targets->count);
+      c->sticky = MS_ERROR_SYNTAX;
+      return;
+    }
+  }
+  if ((values->count == 1 && targets->count > 1) || (values->count > 1 && starIndex >= 0)) {
     msCompilerReport(c, node, 307, "multiple or non-identifier assignment belongs to task 11");
     return;
   }
-  msCompilerCompileExpr(c, node->as.decl.values.items[0]);
+  for (size_t i = 0; i < values->count; ++i) {
+    msCompilerCompileExpr(c, values->items[i]);
+  }
   if (c->sticky != MS_OK) {
     return;
   }
-  const struct MsAst* target = node->as.decl.targets.items[0];
-  struct MsString* name = msCompilerNameFromSlice(c, target->as.literal.start, target->as.literal.length);
-  if (name == NULL) {
-    return;
-  }
-  if (node->kind == MS_AST_ASSIGN) {
-    if (msCompilerValidateStore(c, name, target)) {
-      msCompilerEmitStoreName(c, name);
+  bool declaredAny = false;
+  if (node->kind == MS_AST_DECL) {
+    for (size_t i = 0; i < targets->count; ++i) {
+      const struct MsAst* target = msCompilerTargetIdent(targets->items[i]);
+      struct MsString* name = msCompilerNameFromSlice(c, target->as.literal.start, target->as.literal.length);
+      if (name == NULL) {
+        return;
+      }
+      if (c->fn->isModule && c->fn->scope.scopeDepth == 0) {
+        if (!msScopeIsMarkedGlobal(&c->fn->scope, name)) {
+          MsResult result = msScopeMarkGlobal(&c->fn->scope, name);
+          if (result != MS_OK) {
+            msCompilerFail(c, node, result, 0, "out of memory");
+            return;
+          }
+          declaredAny = true;
+        }
+        continue;
+      }
+      if (!c->fn->isModule && msScopeIsMarkedGlobal(&c->fn->scope, name)) {
+        msCompilerFail(c, node, MS_ERROR_SYNTAX, 304, "name is local before global declaration");
+        return;
+      }
+      if (!msScopeHasLocalAtDepth(&c->fn->scope, name)) {
+        int slot = msCompilerDeclareLocal(c, name);
+        if (slot < 0) {
+          return;
+        }
+        declaredAny = true;
+      }
     }
-    return;
   }
-  if (c->fn->isModule && c->fn->scope.scopeDepth == 0) {
-    if (msScopeIsMarkedGlobal(&c->fn->scope, name)) {
-      msCompilerEmitStoreName(c, name);
-      msCompilerFail(c, node, MS_ERROR_SYNTAX, 302, "no new variables on left side of :=");
+  for (size_t i = targets->count; i > 0; --i) {
+    const struct MsAst* target = msCompilerTargetIdent(targets->items[i - 1]);
+    struct MsString* name = msCompilerNameFromSlice(c, target->as.literal.start, target->as.literal.length);
+    if (name == NULL) {
       return;
     }
-    MsResult result = msScopeMarkGlobal(&c->fn->scope, name);
-    if (result != MS_OK) {
-      msCompilerFail(c, node, result, 0, "out of memory");
+    if (node->kind == MS_AST_ASSIGN && !msCompilerValidateStore(c, name, target)) {
       return;
     }
-    int index = msProtoAddConst(&c->fn->builder, (struct MsObject*)name);
-    if (index >= 0) {
-      msCompilerEmitABC(c, MS_OP_STORE_GLOBAL, 0, (uint16_t)index, -1);
-    } else {
-      msCompilerSyncBuilder(c);
-    }
-    return;
-  }
-  if (!c->fn->isModule && msScopeIsMarkedGlobal(&c->fn->scope, name)) {
-    msCompilerFail(c, node, MS_ERROR_SYNTAX, 304, "name is local before global declaration");
-    return;
-  }
-  if (msScopeHasLocalAtDepth(&c->fn->scope, name)) {
     msCompilerEmitStoreName(c, name);
-    msCompilerFail(c, node, MS_ERROR_SYNTAX, 302, "no new variables on left side of :=");
-    return;
+    if (c->sticky != MS_OK) {
+      return;
+    }
   }
-  int slot = msCompilerDeclareLocal(c, name);
-  if (slot >= 0) {
-    msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+  if (node->kind == MS_AST_DECL && !declaredAny) {
+    msCompilerFail(c, node, MS_ERROR_SYNTAX, 302, "no new variables on left side of :=");
   }
 }
 

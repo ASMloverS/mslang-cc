@@ -725,7 +725,6 @@ MS_TEST(compiler, unsupportedAndLimitDiagnostics) {
     {"b\"x\";", 307, 1},
     {"a < b < c;", 307, 3},
     {"f(x = 1);", 307, 2},
-    {"a, b := 1, 2;", 307, 1},
     {"func f() { return 1, 2; }", 307, 12}
   };
   for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
