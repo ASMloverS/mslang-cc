@@ -850,10 +850,6 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
   const struct MsAstList* targets = &node->as.decl.targets;
   const struct MsAstList* values = &node->as.decl.values;
   int starIndex = msCompilerStarTarget(targets);
-  if (targets->count > 255) {
-    msCompilerFail(c, node, MS_ERROR_SYNTAX, 306, "too many assignment targets");
-    return;
-  }
   if (starIndex >= 0 && targets->count < 2) {
     msCompilerReport(c, node, 307, "unpacking is not implemented yet");
     return;
@@ -873,6 +869,10 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
     return;
   }
   if (values->count == 1 && targets->count > 1) {
+    if (targets->count > 255) {
+      msCompilerFail(c, node, MS_ERROR_SYNTAX, 306, "too many assignment targets");
+      return;
+    }
     msCompilerCompileExpr(c, values->items[0]);
     msCompilerEmitABC(c, MS_OP_UNPACK, (uint8_t)targets->count,
         starIndex < 0 ? MS_UNPACK_NO_STAR : (uint16_t)starIndex, (int)targets->count - 1);

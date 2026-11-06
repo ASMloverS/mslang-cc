@@ -812,6 +812,7 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
               break;
             }
             co->stack[sourceIndex + 1 + i] = value;
+            co->stackTop = sourceIndex + i + 2;
             for (int64_t j = 0; j < middleLen; ++j) {
               result = msListAppend(L, (struct MsList*)value, list->items[star + j]);
               if (result != MS_OK) {
@@ -825,6 +826,7 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
                 : i;
             value = list->items[index];
             co->stack[sourceIndex + 1 + i] = value;
+            co->stackTop = sourceIndex + i + 2;
           }
           if (result != MS_OK) {
             break;
