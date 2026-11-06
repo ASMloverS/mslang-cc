@@ -850,23 +850,24 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
   const struct MsAstList* targets = &node->as.decl.targets;
   const struct MsAstList* values = &node->as.decl.values;
   int starIndex = msCompilerStarTarget(targets);
+  if (starIndex >= 0) {
+    msCompilerReport(c, node, 307, "unpacking is not implemented yet");
+    return;
+  }
   for (size_t i = 0; i < targets->count; ++i) {
     if (msCompilerTargetIdent(targets->items[i]) == NULL) {
       msCompilerReport(c, targets->items[i], 301, "indexed/attribute assignment belongs to task 15/16");
       return;
     }
   }
-  if (values->count > 1) {
-    bool arityMatches = starIndex < 0 ? values->count == targets->count : values->count >= targets->count - 1;
-    if (!arityMatches) {
-      msDiagReport(c->diags, node->line, node->column, 303, "cannot assign %zu values to %zu targets",
-          values->count, targets->count);
-      c->sticky = MS_ERROR_SYNTAX;
-      return;
-    }
+  if (values->count > 1 && values->count != targets->count) {
+    msDiagReport(c->diags, node->line, node->column, 303, "cannot assign %zu values to %zu targets",
+        values->count, targets->count);
+    c->sticky = MS_ERROR_SYNTAX;
+    return;
   }
-  if ((values->count == 1 && targets->count > 1) || (values->count > 1 && starIndex >= 0)) {
-    msCompilerReport(c, node, 307, "multiple or non-identifier assignment belongs to task 11");
+  if (values->count == 1 && targets->count > 1) {
+    msCompilerReport(c, node, 307, "unpacking is not implemented yet");
     return;
   }
   for (size_t i = 0; i < values->count; ++i) {

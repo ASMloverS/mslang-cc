@@ -17,4 +17,18 @@ right := 2
 left, right = left + right, left - right
 assert(left == 3)
 assert(right == -1)
+isReady := true
+{
+    left, right := isReady and 1, isReady or 2
+    assert(left == 1)
+    assert(right == true)
+    left, localThird := 3, 4
+    assert(left == 3)
+    assert(localThird == 4)
+    left, right = right, left
+    assert(left == true)
+    assert(right == 3)
+}
+assert(left == 3)
+assert(right == -1)
 print("multi_assign ok")
