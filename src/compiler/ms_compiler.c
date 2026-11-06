@@ -872,6 +872,7 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
     return;
   }
   if (msScopeHasLocalAtDepth(&c->fn->scope, name)) {
+    msCompilerEmitStoreName(c, name);
     msCompilerFail(c, node, MS_ERROR_SYNTAX, 302, "no new variables on left side of :=");
     return;
   }
