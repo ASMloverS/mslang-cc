@@ -59,6 +59,17 @@ static void msCompilerFail(struct MsCompiler* c, const struct MsAst* node,
   c->sticky = result;
 }
 
+static void msCompilerFailName(struct MsCompiler* c, const struct MsAst* node,
+    MsResult result, uint32_t code, const char* format, const struct MsString* name) {
+  if (c->sticky != MS_OK) {
+    return;
+  }
+  uint32_t line = node != NULL ? node->line : 0;
+  uint32_t column = node != NULL ? node->column : 0;
+  msDiagReport(c->diags, line, column, code, format, msStringData(name));
+  c->sticky = result;
+}
+
 static void msCompilerSyncBuilder(struct MsCompiler* c) {
   MsResult result = c->fn->builder.error;
   if (result == MS_ERROR_OOM) {
@@ -979,9 +990,8 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
         continue;
       }
       if (!c->fn->isModule && msScopeIsMarkedGlobal(&c->fn->scope, name)) {
-        msDiagReport(c->diags, node->line, node->column, 304,
-            "name '%s' is global before local declaration", msStringData(name));
-        c->sticky = MS_ERROR_SYNTAX;
+        msCompilerFailName(c, node, MS_ERROR_SYNTAX, 304,
+            "name '%s' is global before local declaration", name);
         return;
       }
       if (!msScopeHasLocalAtDepth(&c->fn->scope, name)) {
@@ -1171,9 +1181,8 @@ static void msCompilerCompileGlobal(struct MsCompiler* c, const struct MsAst* no
         && !msScopeIsMarkedGlobal(&c->fn->scope, name);
     MsResult result = msScopeMarkGlobal(&c->fn->scope, name);
     if (result == MS_ERROR_SYNTAX) {
-      msDiagReport(c->diags, item->line, item->column, 304,
-          "name '%s' is local before global declaration", msStringData(name));
-      c->sticky = result;
+      msCompilerFailName(c, item, result, 304,
+          "name '%s' is local before global declaration", name);
     } else if (result != MS_OK) {
       msCompilerFail(c, item, result, 0, "out of memory");
     } else if (isNewModuleGlobal) {
@@ -1403,9 +1412,8 @@ static void msCompilerBindFunctionName(struct MsCompiler* c, const struct MsAst*
     return;
   }
   if (!c->fn->isModule && msScopeIsMarkedGlobal(&c->fn->scope, name)) {
-    msDiagReport(c->diags, node->line, node->column, 304,
-        "name '%s' is global before function declaration", msStringData(name));
-    c->sticky = MS_ERROR_SYNTAX;
+    msCompilerFailName(c, node, MS_ERROR_SYNTAX, 304,
+        "name '%s' is global before function declaration", name);
     return;
   }
   if (c->fn->isModule && c->fn->scope.scopeDepth == 0) {
@@ -1415,9 +1423,8 @@ static void msCompilerBindFunctionName(struct MsCompiler* c, const struct MsAst*
       return;
     }
     if (result != MS_OK) {
-      msDiagReport(c->diags, node->line, node->column, 304,
-          "name '%s' is global before function declaration", msStringData(name));
-      c->sticky = result;
+      msCompilerFailName(c, node, result, 304,
+          "name '%s' is global before function declaration", name);
       return;
     }
     int index = msProtoAddConst(&c->fn->builder, (struct MsObject*)name);

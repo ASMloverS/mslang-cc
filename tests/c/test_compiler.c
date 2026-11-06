@@ -896,6 +896,15 @@ MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
     msTestFixtureDestroy(&fix);
   }
   MS_ASSERT_TRUE(sawSuccess);
+
+  const char* conflict = "func outer() { global callback; func callback() { pass; } }";
+  for (int64_t failAfter = 0; failAfter < 16; ++failAfter) {
+    MsTestFixture fix;
+    msTestCompileWithFailAfter(&fix, conflict, MS_COMPILE_DEFAULT, failAfter);
+    MS_ASSERT_EQ(MS_ERROR_OOM, fix.result);
+    MS_ASSERT_TRUE(fix.proto == NULL);
+    msTestFixtureDestroy(&fix);
+  }
 }
 
 static const MsTestCase msTestCases[] = {
