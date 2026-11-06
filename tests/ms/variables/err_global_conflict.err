@@ -1,1 +1,1 @@
-error E304:
+error E304: name 'value' is local before global declaration

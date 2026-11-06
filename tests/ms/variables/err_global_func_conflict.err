@@ -1,1 +1,1 @@
-error E304:
+error E304: name 'callback' is global before function declaration

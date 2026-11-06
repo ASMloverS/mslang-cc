@@ -1,1 +1,1 @@
-error E307: unpacking is not implemented yet
+error E307: lone-star requires at least two unpack targets
