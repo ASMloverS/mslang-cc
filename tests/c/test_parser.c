@@ -803,9 +803,9 @@ MS_TEST(parser, augAssignOps) {
 }
 
 MS_TEST(parser, augAssignMultiTarget) {
-  // Augmented assignment is strictly single-target: extra targets are E205
+  // Augmented assignment is strictly single-target: extra targets are E305
   // (the node is still built from the first pair, so the tree stays whole).
-  static const uint32_t codes[] = { 205 };
+  static const uint32_t codes[] = { 305 };
   msTestExpectDiags("a, b += 1", codes, 1);
 }
 

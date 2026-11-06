@@ -11,6 +11,7 @@ struct MsAst;
 struct MsFuncCtx;
 struct MsHeap;
 struct MsProto;
+struct MsState;
 
 typedef enum {
   MS_COMPILE_DEFAULT = 0,
@@ -19,6 +20,7 @@ typedef enum {
 
 struct MsCompiler {
   struct MsHeap* heap;
+  struct MsState* state;
   struct MsDiagList* diags;
   const char* sourceFile;
   uint32_t flags;
@@ -29,6 +31,7 @@ struct MsCompiler {
 
 void msCompilerInit(struct MsCompiler* c, struct MsHeap* heap, struct MsDiagList* diags,
     const char* sourceFile, uint32_t flags);
+void msCompilerSetState(struct MsCompiler* c, struct MsState* state);
 void msCompilerDestroy(struct MsCompiler* c);
 MsResult msCompilerCompile(struct MsCompiler* c, const struct MsAst* root, struct MsProto** out);
 

@@ -14,6 +14,7 @@
 #include "parser/ms_ast.h"
 #include "vm/ms_opcode.h"
 #include "vm/ms_proto.h"
+#include "vm/ms_state_internal.h"
 
 #define MS_COMPILER_MAX_NODE_DEPTH 512
 
@@ -741,6 +742,25 @@ static MsResolveKind msCompilerResolveName(struct MsCompiler* c, const struct Ms
   return MS_RESOLVE_GLOBAL;
 }
 
+static bool msCompilerValidateStore(struct MsCompiler* c, struct MsString* name) {
+  int slot = -1;
+  MsResolveKind kind = msCompilerResolveName(c, name, &slot);
+  if (kind != MS_RESOLVE_GLOBAL || msScopeIsMarkedGlobal(&c->fn->scope, name)) {
+    return true;
+  }
+  if (c->state != NULL && msStateGetGlobal(c->state, name) != NULL) {
+    return true;
+  }
+  if (c->sticky == MS_OK) {
+    uint32_t line = c->fn->currentNode != NULL ? c->fn->currentNode->line : 0;
+    uint32_t column = c->fn->currentNode != NULL ? c->fn->currentNode->column : 0;
+    msDiagReport(c->diags, line, column, 301, "assignment to undeclared name '%s'",
+        msStringData(name));
+    c->sticky = MS_ERROR_SYNTAX;
+  }
+  return false;
+}
+
 static int msCompilerDeclareLocal(struct MsCompiler* c, struct MsString* name) {
   struct MsFuncCtx* fn = c->fn;
   if (fn->scope.localCount >= MS_SCOPE_MAX_LOCALS) {
@@ -824,16 +844,35 @@ static void msCompilerCompileDeclOrAssign(struct MsCompiler* c, const struct MsA
     return;
   }
   if (node->kind == MS_AST_ASSIGN) {
-    msCompilerEmitStoreName(c, name);
+    if (msCompilerValidateStore(c, name)) {
+      msCompilerEmitStoreName(c, name);
+    }
     return;
   }
   if (c->fn->isModule && c->fn->scope.scopeDepth == 0) {
+    if (msScopeIsMarkedGlobal(&c->fn->scope, name)) {
+      msCompilerFail(c, node, MS_ERROR_SYNTAX, 302, "no new variables on left side of :=");
+      return;
+    }
+    MsResult result = msScopeMarkGlobal(&c->fn->scope, name);
+    if (result != MS_OK) {
+      msCompilerFail(c, node, result, 0, "out of memory");
+      return;
+    }
     int index = msProtoAddConst(&c->fn->builder, (struct MsObject*)name);
     if (index >= 0) {
       msCompilerEmitABC(c, MS_OP_STORE_GLOBAL, 0, (uint16_t)index, -1);
     } else {
       msCompilerSyncBuilder(c);
     }
+    return;
+  }
+  if (!c->fn->isModule && msScopeIsMarkedGlobal(&c->fn->scope, name)) {
+    msCompilerFail(c, node, MS_ERROR_SYNTAX, 304, "name is local before global declaration");
+    return;
+  }
+  if (msScopeHasLocalAtDepth(&c->fn->scope, name)) {
+    msCompilerFail(c, node, MS_ERROR_SYNTAX, 302, "no new variables on left side of :=");
     return;
   }
   int slot = msCompilerDeclareLocal(c, name);
@@ -854,7 +893,7 @@ static void msCompilerCompileAugAssign(struct MsCompiler* c, const struct MsAst*
     return;
   }
   struct MsString* name = msCompilerNameFromSlice(c, target->as.literal.start, target->as.literal.length);
-  if (name == NULL) {
+  if (name == NULL || !msCompilerValidateStore(c, name)) {
     return;
   }
   msCompilerEmitLoadName(c, name);
@@ -1243,12 +1282,17 @@ static void msCompilerCompileFunction(struct MsCompiler* c, const struct MsAst* 
 void msCompilerInit(struct MsCompiler* c, struct MsHeap* heap, struct MsDiagList* diags,
     const char* sourceFile, uint32_t flags) {
   c->heap = heap;
+  c->state = NULL;
   c->diags = diags;
   c->sourceFile = sourceFile;
   c->flags = flags;
   c->fn = NULL;
   c->nodeDepth = 0;
   c->sticky = MS_OK;
+}
+
+void msCompilerSetState(struct MsCompiler* c, struct MsState* state) {
+  c->state = state;
 }
 
 void msCompilerDestroy(struct MsCompiler* c) {

@@ -114,6 +114,7 @@ MsResult msEvalFile(MsState* L, const char* path) {
   msAstArenaInit(&arena);
   msParserInit(&parser, &lexer, &arena, &diags);
   msCompilerInit(&compiler, &L->heap, &diags, path, MS_COMPILE_DEFAULT);
+  msCompilerSetState(&compiler, L);
 
   result = msParserParse(&parser, &root);
   if (result == MS_OK) {
