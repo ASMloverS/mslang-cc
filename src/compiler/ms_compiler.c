@@ -1173,6 +1173,24 @@ static void msCompilerCompileAugAssign(struct MsCompiler* c, const struct MsAst*
   msCompilerEmitStoreName(c, name);
 }
 
+static void msCompilerCompileIncDec(struct MsCompiler* c, const struct MsAst* node) {
+  const struct MsAst* target = node->as.augAssign.target;
+  if (target == NULL || target->kind != MS_AST_IDENT) {
+    msCompilerReport(c, node, 307, "indexed/attribute inc/dec belongs to task 15/16");
+    return;
+  }
+  struct MsString* name = msCompilerNameFromSlice(c, target->as.literal.start, target->as.literal.length);
+  if (name == NULL || !msCompilerValidateStore(c, name, target)) {
+    return;
+  }
+  msCompilerEmitLoadName(c, name);
+  msCompilerEmitConstObject(c, (struct MsObject*)msIntNew(c->heap, 1));
+  MsOpCode op = node->as.augAssign.op == MS_TOKEN_PLUS_PLUS ? MS_OP_ADD : MS_OP_SUB;
+  MS_ASSERT(node->as.augAssign.op == MS_TOKEN_PLUS_PLUS || node->as.augAssign.op == MS_TOKEN_MINUS_MINUS);
+  msCompilerEmitABC(c, op, 0, 0, -1);
+  msCompilerEmitStoreName(c, name);
+}
+
 static void msCompilerCompileContainer(struct MsCompiler* c, const struct MsAst* node) {
   bool isDict = node->kind == MS_AST_DICT_LIT;
   size_t count = node->as.block.count;
@@ -1302,18 +1320,23 @@ static void msCompilerCompileBareFor(struct MsCompiler* c, const struct MsAst* n
 }
 
 static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node) {
-  if (node->as.forStmt.forKind == MS_FOR_IN) {
-    msCompilerReport(c, node, 307, "for-in iteration belongs to task 26");
-    return;
-  }
   if (node->as.forStmt.forKind == MS_FOR_BARE) {
     msCompilerCompileBareFor(c, node);
     return;
   }
+  if (node->as.forStmt.forKind != MS_FOR_CLAUSE) {
+    msCompilerReport(c, node, 307, "for-in iteration belongs to task 26");
+    return;
+  }
+  int baseDepth = c->fn->stackDepth;
+  msCompilerPushScope(c);
+  if (c->sticky != MS_OK) {
+    return;
+  }
   msCompilerCompileStmt(c, node->as.forStmt.init);
   int loopHead = msCompilerCurrentPc(c);
-  int baseDepth = c->fn->stackDepth;
   if (!msCompilerLoopEnter(c, loopHead, false)) {
+    msCompilerPopScope(c);
     return;
   }
   msCompilerCompileExpr(c, node->as.forStmt.cond);
@@ -1323,6 +1346,7 @@ static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node)
   msCompilerCompileStmt(c, node->as.forStmt.post);
   msCompilerEmitBackEdge(c, loopHead);
   msCompilerLoopLeave(c, exitJump, baseDepth);
+  msCompilerPopScope(c);
 }
 
 static void msCompilerCompileGlobal(struct MsCompiler* c, const struct MsAst* node) {
@@ -1381,6 +1405,9 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
       break;
     case MS_AST_AUG_ASSIGN:
       msCompilerCompileAugAssign(c, node);
+      break;
+    case MS_AST_INC_DEC:
+      msCompilerCompileIncDec(c, node);
       break;
     case MS_AST_BLOCK: {
       int oldDepth = c->fn->scope.scopeDepth;
