@@ -55,7 +55,7 @@ VM 将 `IN` 纳入普通比较分派，并允许 `CMP_CHAIN` 的 A 操作数使�
 - `while`、裸 `for`、三段式 `for`、递增/递减及循环变量作用域；
 - `break`/`continue`、深层 if、嵌套循环最内层语义，以及三段式 `for` 的 post 必执行；
 - 条件表达式真/假路径与右结合；
-- 数值比较链、长链、`IS`/`IN` 与取反段通用展开、失败短路；
+- 数值比较链、长链、`IS` 与取反段通用展开、失败短路；`IN` 仅扩展指令接纳，容器成员语义留给任务 16；
 - 循环外 `break`/`continue` 编译负例。
 
 实现采用脚本先行的小步 TDD。最终在 worktree 内完成 Debug 和 Release 构建、对应完整 CTest、直接 `python run_tests.py`、`git diff --check` 和根产物检查。当前环境为 Windows MSVC，不声称已验证 Linux/macOS 或 ASAN。完成后只勾选实际验证的任务 12 验收项，并更新任务索引。
