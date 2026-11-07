@@ -459,6 +459,8 @@ git add src/compiler/ms_compiler.c tests/ms/control_flow
 git commit -m '✨ feat(compiler): add loop control flow'
 ```
 
+**Execution note:** Follow-up coverage executes three-part-`for` break/continue with `i += 1` post statements in both loop-nesting directions. The existing compiler OOM fixture now grows loop and patch-list storage beyond eight entries, covers deferred continues and nested-function loop cleanup, and iterates fail-after injection until compilation succeeds.
+
 ### Task 3: Complete three-part for and inc/dec
 
 **Files:**

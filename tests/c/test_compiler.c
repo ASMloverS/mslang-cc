@@ -882,9 +882,21 @@ MS_TEST(compiler, protoConstLimitReportsE309) {
 }
 
 MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
-  const char* source = "func outer() { x := 1; func inner(a) { return a + 2; } }";
+  const char* source =
+      "while true { while true { while true { "
+      "while true { while true { while true { "
+      "while true { while true { while true { "
+      "for index := 0; index < 1; index += 1 { "
+      "if true { break; } if true { break; } if true { break; } "
+      "if true { break; } if true { break; } if true { break; } "
+      "if true { break; } if true { break; } if true { break; } "
+      "if true { continue; } if true { continue; } if true { continue; } "
+      "if true { continue; } if true { continue; } if true { continue; } "
+      "if true { continue; } if true { continue; } if true { continue; } "
+      "} } } } } } } } } } "
+      "func outer() { x := 1; func inner(a) { return a + 2; while false { break; continue; } } }";
   bool sawSuccess = false;
-  for (int64_t failAfter = 0; failAfter < 80 && !sawSuccess; ++failAfter) {
+  for (int64_t failAfter = 0; failAfter < 512 && !sawSuccess; ++failAfter) {
     MsTestFixture fix;
     msTestCompileWithFailAfter(&fix, source, MS_COMPILE_DEFAULT, failAfter);
     if (fix.result == MS_OK) {
