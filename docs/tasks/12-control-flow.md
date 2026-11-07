@@ -2,7 +2,7 @@
 
 | 阶段 | 状态 | 依赖任务 |
 |---|---|---|
-| v0.1 | ⬜ | [09 最小可运行解释器](09-minimal-interpreter.md) |
+| v0.1 | ✅ | [09 最小可运行解释器](09-minimal-interpreter.md) |
 
 ## 任务目标
 
@@ -36,7 +36,7 @@
 - [09 最小可运行解释器](09-minimal-interpreter.md)：`tests/ms/` + `run_tests.py` 测试设施（`<name>.exit` 同伴文件声明预期退出码）；内建 `assert`/`print`；编译错误 → 退出码 2、运行时错误 → 退出码 1 的链路。
 - [10-c-style.md](../language/10-c-style.md)：全部 C 接口遵循其规范（2 空格缩进、120 列行宽、K&R 括号、指针星号贴类型、`ms`/`Ms`/`MS_` 命名、内部结构体不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`）。
 - [11-project-layout.md](../language/11-project-layout.md) §4：任务 09 起一律用 ms 脚本测试；任务 40（testing 模块）之前用内建 `assert` + `print`。
-- 任务 07（编译器：作用域解析与字节码生成）的文档尚未存在。本文假定其提供：`struct MsCompiler`（内嵌任务 05 的 `struct MsProtoBuilder` 与当前行号登记）、语句/表达式分派入口 `msCompileStmt` / `msCompileExpr`、块作用域的进入/退出钩子和局部槽分配接口。上述接口名为本文假定命名，实现时以对应任务文档定名为准。
+- 任务 07/11 已提供实际编译接口：`struct MsCompiler` 以 `struct MsFuncCtx` 保存当前 `MsProtoBuilder`、行号、循环与栈深状态，语句/表达式入口为 `msCompilerCompileStmt` / `msCompilerCompileExpr`；`MsScopeCtx` 与 `msCompilerPushScope` / `msCompilerPopScope` 管理块作用域，`msCompilerAllocHiddenLocal` 经 `msScopeAllocHiddenLocal` 分配隐藏局部槽。
 
 对规范歧义与空白的显式处理（实现与评审时以此为据）：
 
@@ -48,7 +48,7 @@
 
 ### 模块边界
 
-本任务不新增模块与公开头文件，全部改动落在任务 07 的编译器模块内部（假定 `src/compiler/ms_compiler.c`，路径以任务 07 文档为准）：新增的内部结构体与辅助函数一律文件内 `static`。唯一需要任务 07 配合的是在 `struct MsCompiler` 中嵌入循环上下文栈字段（见下）。
+本任务不新增模块与公开头文件。生产代码改动落在 `src/compiler/ms_compiler.c` 和 `src/vm/ms_vm.c` 的既有比较分派中；新增编译器辅助函数均为文件内 `static`，循环上下文栈存放在函数级 `struct MsFuncCtx` 中。
 
 ### 跳转原语：占位发射与回填
 
@@ -62,17 +62,17 @@ static int msCompilerEmitJumpPlaceholder(struct MsCompiler* c, MsOpCode op);
 
 // Back-patches the jump at jumpPc so that it lands on the instruction that
 // will be emitted next (i.e. the current pc): sAx = curPc - (jumpPc + 1).
-static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc);
+static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc, int expectedStackDepth);
 
 // Emits a back edge: MS_OP_JUMP whose sAx points back to targetPc
 // (sAx = targetPc - (pc + 1), negative).
 static void msCompilerEmitBackEdge(struct MsCompiler* c, int targetPc);
 
 // Current pc (next instruction index) of the proto under construction.
-static int msCompilerCurrentPc(const struct MsCompiler* c);
+static int msCompilerCurrentPc(struct MsCompiler* c);
 ```
 
-条件跳转（`JUMP_IF_FALSE` 等）弹栈顶判定，故编译条件表达式后栈上恰好留一个待弹值，每个分支入口的栈深度一致——这是各生成模式共同的栈平衡不变量。
+条件跳转（`JUMP_IF_FALSE` 等）弹栈顶判定，故编译条件表达式后栈上恰好留一个待弹值，每个分支入口的栈深度一致——这是各生成模式共同的栈平衡不变量。回填助手的 `expectedStackDepth` 用 `MS_ASSERT` 校验该不变量。
 
 死跳转消除（08-vm-internals §1 允许的唯一跳转类窥孔）：`msCompilerPatchToCurrent` 回填无条件 `JUMP` 时若目标恰为 `jumpPc + 1`（跳转到下一条指令），把该指令改写为 `MS_OP_NOP`。**条件跳转不做此改写**——它有弹栈副作用，删掉会打破栈平衡。
 
@@ -96,8 +96,8 @@ struct MsLoopContext {
   bool continueIsHead;         // true：continue 直接回边到 loopHead（while / 裸 for）
 };
 
-// struct MsCompiler 内新增字段（任务 07 配合嵌入）：
-//   struct MsLoopContext* loops;   // msAlloc'd dynamic array, capacity-grown
+// struct MsFuncCtx 内的函数级字段：
+//   struct MsLoopContext* loops;   // msRealloc'd dynamic array, capacity-grown
 //   int loopDepth;
 //   int loopCap;
 ```
@@ -107,27 +107,27 @@ struct MsLoopContext {
 ```c
 // Pushes a loop context; loopHead must already be known (it is the pc of the
 // first instruction of the condition or, for a bare loop, of the body).
-static MsResult msCompilerLoopEnter(struct MsCompiler* c, int loopHead, bool continueIsHead);
+static bool msCompilerLoopEnter(struct MsCompiler* c, int loopHead, bool continueIsHead);
 
-// Patches breaks to the current pc and releases the top context. The caller
-// must have resolved continues already (MS_ASSERT(continues.count == 0)).
-static void msCompilerLoopLeave(struct MsCompiler* c);
+// Patches the conditional exit and breaks, then releases the top context. The
+// caller must have resolved continues already (continues.count == 0).
+static void msCompilerLoopLeave(struct MsCompiler* c, int exitJump, int expectedStackDepth);
 
 // MS_AST_BREAK / MS_AST_CONTINUE codegen. loopDepth == 0 is a programming
 // error (the parser already rejected it with E209) — MS_ASSERT'd.
-static void msCompilerEmitBreak(struct MsCompiler* c);
-static void msCompilerEmitContinue(struct MsCompiler* c);
+static void msCompilerCompileBreak(struct MsCompiler* c);
+static void msCompilerCompileContinue(struct MsCompiler* c);
 
 // Patches the top context's continue list to the current pc; called by the
 // three-part-for codegen when it reaches the post-statement position.
-static void msCompilerResolveContinues(struct MsCompiler* c);
+static void msCompilerResolveContinues(struct MsCompiler* c, int expectedStackDepth);
 ```
 
 语义要点：
 
-- 嵌套循环：`break`/`continue` 只作用于栈顶上下文（最内层循环），与 03-syntax 的常规语义一致；进入函数体编译时循环栈随 `struct MsCompiler` 的函数级状态重置（属任务 13 的挂接点，此处声明依赖），保证循环内的闭包不能 `break` 穿透——parser 的 `loopDepth` 复位已先行拒绝此类源码。
-- `continue` 的两类目标：`while`/裸 `for` 的目标（循环头）在进入循环时已知，`msCompilerEmitContinue` 直接 `msCompilerEmitBackEdge(c, loopHead)`，不使用暂存列表；三段式 `for` 的目标（后置语句起点）在编译循环体时未知，暂存于 `continues`，编译到后置语句位置时经 `msCompilerResolveContinues` 统一回填。`continueIsHead` 标记区分两种策略。
-- 容量：`loops` 数组与两个暂存列表均按需倍增增长，无固定嵌套上限；增长失败返回 `MS_ERROR_OOM`（沿任务 07 的错误路径上抛）。
+- 嵌套循环：`break`/`continue` 只作用于栈顶上下文（最内层循环），与 03-syntax 的常规语义一致；每个函数使用独立的 `MsFuncCtx` 循环栈，保证循环内的闭包不能 `break` 穿透——parser 的 `loopDepth` 复位已先行拒绝此类源码。
+- `continue` 的两类目标：`while`/裸 `for` 的目标（循环头）在进入循环时已知，`msCompilerCompileContinue` 直接 `msCompilerEmitBackEdge(c, loopHead)`，不使用暂存列表；三段式 `for` 的目标（后置语句起点）在编译循环体时未知，暂存于 `continues`，编译到后置语句位置时经 `msCompilerResolveContinues` 统一回填。`continueIsHead` 标记区分两种策略。
+- 容量：`loops` 数组与两个暂存列表均按需倍增增长，无固定嵌套上限；增长失败经粘性错误路径报告 `MS_ERROR_OOM`。
 - 本任务不新增编译错误码：循环外 `break`/`continue` 已由 parser E209 拒绝；跳转偏移超 sAx 24 位范围由构建器报 `MS_ERROR_SYNTAX`。
 
 ### if / else if / else 生成模式
@@ -135,7 +135,7 @@ static void msCompilerResolveContinues(struct MsCompiler* c);
 `MS_AST_IF`（else-if 链即 `elseBranch` 再挂 `MS_AST_IF`）递归生成：
 
 ```
-<cond>                        # msCompileExpr(cond)
+<cond>                        # msCompilerCompileExpr(cond)
 JUMP_IF_FALSE -> Lelse        # 占位，弹栈顶判定
 <thenBlock>                   # 块作用域进出走任务 07 钩子
 JUMP -> Lend                  # 仅当 elseBranch 非空时发射；else-if 链上每个
@@ -188,7 +188,7 @@ Lend:                         # loopLeave：回填 JUMP_IF_FALSE 与全部 break
 
 - `continue` 落在 `post` **之前**：保证 `for i := 0; i < 10; i++` 中 `continue` 仍执行 `i++`，与 Go/C 语义一致。这是三段式 `for` 必须使用 `continues` 暂存列表而不能直接回边到 `loopHead` 的原因。
 - `MS_AST_INC_DEC`（`i++`/`i--`，仅出现于 `post` 位置，parser 已限定）：编译为「载入目标 → 压入常量 1 → `MS_OP_ADD`/`MS_OP_SUB` → 存回目标」，读写目标走任务 07 的名字解析结论（全局 `LOAD_GLOBAL`/`STORE_GLOBAL` 或局部槽）；该节点不产生栈残留。
-- `init`/`post` 的语句级编译复用任务 07 的 `msCompileStmt`，本任务只提供循环骨架与回填时序。
+- `init`/`post` 的语句级编译复用任务 07 的 `msCompilerCompileStmt`，本任务只提供循环骨架与回填时序。
 
 ### 条件表达式生成模式
 
@@ -227,27 +227,28 @@ Lend:                         # 把所有 CMP_CHAIN 的 Bx 回填到此处
                               # （Bx = Lend - (chainPc + 1)，前向无符号）
 ```
 
-`MsCompareOp` → `MsOpCode` 映射为编译器内 `static const` 表；`MS_CMP_IS`/`MS_CMP_IN` 映射到 `MS_OP_IS`/`MS_OP_IN`（见「设计依据」歧义说明第 3 条，实现时与任务 08 的 `CMP_CHAIN` 分支对齐）。
+`MsCompareOp` → `MsOpCode` 由文件内 `static` 函数 `msCompilerComparisonOpcode` 的 switch 完成；`MS_CMP_IS`/`MS_CMP_IN` 映射到 `MS_OP_IS`/`MS_OP_IN`（见「设计依据」歧义说明第 3 条，实现时与任务 08 的 `CMP_CHAIN` 分支对齐）。
 
 **通用展开（链中含 `MS_CMP_IS_NOT` 或 `MS_CMP_NOT_IN` 段）**：此类段需要取反，`CMP_CHAIN` 无法表达，整条链改用「隐藏临时槽 + 条件跳转」展开，语义与 `and` 连接等价且中间操作数仍只求值一次：
 
 ```
-<operands[0]>                 # 栈：left
-<operands[1]>                 # 栈：left right
+<operands[0]>                 # 仅首段直接生成 left
+Lsegment:
+<operands[i+1]>               # 栈：left right
 STORE_LOCAL tmp               # tmp = right（编译器预留的隐藏槽）；栈：left
 LOAD_LOCAL tmp                # 栈：left right
-<op0 对应二元指令>            # IS_NOT/NOT_IN 段先发射 IS/IN 再补一条 MS_OP_NOT
+<opi 对应二元指令>            # IS_NOT/NOT_IN 段先发射 IS/IN 再补一条 MS_OP_NOT
 JUMP_IF_FALSE -> Lfalse       # 短路：任一段失败即结束
-LOAD_LOCAL tmp                # right 成为下一段 left
-<operands[2]>
-...                           # 逐段重复（每段各自预留/复用 tmp 槽）
+LOAD_LOCAL tmp                # 仅非末段成功路径：right 成为下一段 left
+...                           # 回到 Lsegment；单条链逐段复用同一 tmp
+LOAD_TRUE                     # 全部段成功后的最终布尔结果
 JUMP -> Lend
 Lfalse:
-LOAD_FALSE                    # 失败路径的结果值
-Lend:                         # 栈上恰留一个布尔
+LOAD_FALSE                    # 任一段失败后的最终布尔结果
+Lend:                         # 两条路径都恰留一个布尔，而非保存的 right
 ```
 
-隐藏临时槽是编译器在当前帧窗口内保留的匿名局部槽（不计入脚本可见名字），经任务 07 的局部槽分配接口获取（假定钩子 `msCompilerAllocHiddenLocal`，实现时以任务 07 文档定名为准）；一个 Proto 内按链的最大并发需求复用，计入 `localCount`——这修正了任务 09「无嵌套函数时 `localCount` 可为 0」的简化：顶层代码若含走通用展开的链式比较，`localCount` 可大于 0。单条链逐段复用同一槽即可（段间不并行），嵌套链各自占槽。
+隐藏临时槽是编译器在当前帧窗口内保留的匿名局部槽（不计入脚本可见名字），经实际钩子 `msCompilerAllocHiddenLocal` 调用 `msScopeAllocHiddenLocal` 获取；一个 Proto 内按链的最大并发需求复用，计入 `localCount`——这修正了任务 09「无嵌套函数时 `localCount` 可为 0」的简化：顶层代码若含走通用展开的链式比较，`localCount` 可大于 0。单条链逐段复用同一槽即可（段间不并行），嵌套链各自占槽。
 
 ### 行号登记
 
@@ -261,35 +262,36 @@ Lend:                         # 栈上恰留一个布尔
 4. 实现 `break`/`continue`（两类 continue 策略）与嵌套循环。验证：`break_continue.ms` 全绿。
 5. 实现三段式 `for` 骨架与 `MS_AST_INC_DEC`（含 `continues` 在后置语句位置的回填时序）。验证：`for_clause.ms` 全绿，含 `continue` 仍执行 `i++` 的用例。
 6. 实现条件表达式生成。验证：`cond_expr.ms` 全绿（含右结合嵌套）。
-7. 实现链式比较主路径（`MsCompareOp` 映射表、`CMP_CHAIN` 序列、末段普通比较、Bx 回填）并与任务 08 的 `CMP_CHAIN` 分支对齐 IS/IN 扩展。验证：`chain_compare.ms` 的数值链用例全绿。
+7. 实现链式比较主路径（`msCompilerComparisonOpcode`、`CMP_CHAIN` 序列、末段普通比较、Bx 回填）并与任务 08 的 `CMP_CHAIN` 分支对齐 IS/IN 扩展。验证：`chain_compare.ms` 的数值链用例全绿。
 8. 实现含 `is not`/`not in` 段的通用展开与隐藏临时槽复用。验证：`chain_compare.ms` 的 `is not` 链用例全绿。
-9. 负向用例与回归：循环外 `break`/`continue` 的退出码 2 用例；任务 09–11 既有脚本全数保持通过；`python run_tests.py` 全绿；Win/Linux/macOS × Debug/Release 构建通过，Debug 构建（ASAN / `/RTC`）无内存错误与泄漏报告（`msCloseState` 后无残余分配计数）。
+9. 负向用例与回归：循环外 `break`/`continue` 的退出码 2 用例；任务 09–11 既有脚本全数保持通过；`python run_tests.py` 全绿；Windows MSVC Debug/Release 构建及完整 CTest 通过，编译器 OOM 注入 fixture 以零存活分配结束。Linux/macOS 与 ASAN 留待相应环境验证。
 
 ## 测试方案
 
-本任务位于任务 09 之后，一律用 ms 脚本测试（任务 40 之前用内建 `assert` + `print`；脚本由仓库根 `run_tests.py` 调用 `mslang` CLI 驱动，负向用例配 `<name>.exit` 同伴文件）。测试目录 `tests/ms/control_flow/`（本任务只交付本设计文档，脚本随实现任务编写）。本任务阶段可用类型限于 nil/bool/int/float/str（容器属任务 16、函数属任务 13），用例设计不依赖二者。
+本任务位于任务 09 之后，脚本测试一律用内建 `assert` + `print`（任务 40 之前），由仓库根 `run_tests.py` 调用 `mslang` CLI 驱动，负向用例配 `.exit`、`.err` 同伴文件。脚本位于 `tests/ms/control_flow/`，字节码形状和分配失败路径由 `tests/c/test_compiler.c` 补充验证。本任务阶段脚本使用 nil/bool/int/float/str，不依赖任务 13 的函数或任务 16 的容器执行语义。
 
-覆盖清单：
+实际覆盖清单：
 
-- `if_else.ms`：`if` 单分支、双分支、三段以上 else-if 链的逐分支命中与全不落；条件按真值规则判定（`0`、`0.0`、`""`、`nil` 为假；`1`、`-1`、`"x"` 为真）；嵌套 `if`；分支内声明同名变量互不干扰；末尾 `print("if else ok")`。
-- `while_loop.ms`：`while` 累加（如 1..100 得 5050）；条件首轮即假（循环体零次执行）；条件含复合表达式；嵌套 `while` 各层计数；`print("while ok")`。
-- `bare_for.ms`：`for { ... break }` 的有限次执行；裸 `for` 内 `continue` 回到循环头；`print("bare for ok")`。
-- `for_clause.ms`：`for i := 0; i < 10; i++` 求和得 45；`i--` 倒计数；`i += 2` 步进；首轮条件即假零次执行；循环变量在循环后可重声明同名（块作用域）；`print("for clause ok")`。
-- `break_continue.ms`：`while` 与三段式 `for` 中的 `break` 立即退出；`continue` 跳过本轮剩余语句；三段式 `for` 中 `continue` 仍执行后置语句（`i++` 不被跳过——用「跳过偶数累加奇数」验证计数正确）；双重嵌套循环中 `break`/`continue` 只作用于最内层（外层循环计数不受影响）；`break` 位于深层嵌套 `if` 内仍能跳出循环；`print("break continue ok")`。
-- `cond_expr.ms`：`x := 1 if true else 2` 等真/假两路径；条件按真值判定；右结合链 `a if c1 else b if c2 else d` 的归组正确；条件表达式嵌套在算术与比较表达式中（优先级 14 低于 `or`）；`print("cond expr ok")`。
-- `chain_compare.ms`：`1 < 2 < 3` 为真、`1 < 2 > 3` 为假、`3 > 2 > 1` 为真、`1 == 1 == 1` 为真、`1 < 2 <= 2` 为真；变量参与（`x := 5; assert(1 < x < 10)`）；四段以上长链；短路验证：`assert((2 < 1 < 1 / 0) == false)`——首段失败后 `1 / 0` 不求值（若求值将除零报错、退出码 1，脚本即失败）；`is not` 段走通用展开（`x := nil; assert((x is nil is not false) == ...)` 按真值表核定，具体断言以实现期可用语义为准）；`print("chain compare ok")`。
-- 负向用例（各配 `.exit` 同伴文件）：`err_break_outside.ms`（顶层 `break`，parser E209，预期退出码 2）；`err_continue_outside.ms`（函数外/循环外 `continue`，预期退出码 2）。
+- `if_else.ms`：单分支、双分支、else-if 链、真值规则、嵌套 `if` 与块作用域。
+- `while_loop.ms`：累加、首轮即假、嵌套 `while`；`bare_for.ms`：裸循环的 `break`/`continue`。
+- `for_clause.ms`：`i++`/`i--`、`+=` 步进、零次循环、循环变量重声明及外层同名变量遮蔽、全局索引 `=` 初始化；`break_continue.ms`：深层 if、两种循环方向嵌套、最内层语义，以及三段式 `for` 的 post 执行或跳过。
+- `cond_expr.ms`：真/假路径、右结合、算术与比较优先级；以变量条件覆盖未被常量折叠的运行期条件跳转。
+- `chain_compare.ms`：数值与 `IS` 直接链、含 `is not` 的通用链、超过八个非末段的长链；首段和后续段失败均以 `1 / 0` 验证短路。
+- `tests/c/test_compiler.c`：直接链 `CMP_CHAIN` A/Bx 与栈元数据、非法操作码预检；九层循环和超过八项的跳转列表、延迟 continue、嵌套函数清理、长链及 `index++` 的逐点 OOM 注入，迭代至成功并检查零存活分配。
+- 负向用例：循环外 `break`/`continue` 的 E209；`err_for_inc_dec_undeclared.ms` 的 E301、`err_for_inc_dec_indexed.ms` 的 E307；`err_for_clause_scope.ms` 的循环后未定义 `i`；`err_in_numeric.ms` 与 `err_chain_in_numeric.ms` 的普通/链式数值 `IN` TypeError。
 
-中间操作数「只求值一次」的直证需要副作用表达式（函数调用），属任务 13 之后的能力；本任务以上述除零短路用例覆盖「不重复/不越界求值」的可观测部分，并在任务 13 落地后于本文件补一条计数函数用例（此处显式标注该跟进项）。
+中间操作数在两条比较链路径中均只生成一次求值代码；带副作用函数的精确调用计数直证留待任务 13。`for ... in` 仍由任务 26 实现；数值 `IN` 负例只证明当前 TypeError 边界，容器成员执行仍属任务 16。
 
 ## 验收标准
 
-- [ ] `if`/`else if`/`else`、`while`、裸 `for`、三段式 `for`、`break`/`continue`、条件表达式、链式比较的生成模式与本文「详细设计」一致；全部改动在编译器模块内部，辅助结构体与函数文件内 `static`，风格通过 10-c-style 检查（2 空格缩进、120 列、K&R、星号贴类型、内部结构体不 typedef、堆分配只经 `msAlloc`/`msRealloc`/`msFree`）。
-- [ ] 跳转统一经占位发射 + `msProtoPatchSAx` 回填，sAx 偏移约定（相对下一条指令）与任务 05/08 一致；无条件 `JUMP` 跳转到下一条指令时改写为 `MS_OP_NOP`，条件跳转不改写。
-- [ ] 循环上下文栈支持任意深度嵌套（动态增长，无固定上限）；`break` 跳到最内层循环末尾；`continue` 在 `while`/裸 `for` 中回到循环头、在三段式 `for` 中落在后置语句之前（`i++` 必执行）。
-- [ ] 链式比较主路径按任务 08 的 `CMP_CHAIN` 约定生成（含本文声明的 IS/IN 操作数扩展）；含 `is not`/`not in` 段的链走隐藏临时槽通用展开；两种路径的中间操作数都只求值一次、失败短路。
-- [ ] `for ... in` 与 n == 1 的普通比较不在本任务生成（分别属任务 26 与任务 07），遇到时走既定路径而非误生成。
-- [ ] 循环外 `break`/`continue` 编译失败、CLI 退出码为 2（诊断含文件/行/列与 E209）。
-- [ ] `python run_tests.py` 发现含 `tests/ms/control_flow/` 在内的全部脚本并全数通过，进程退出码为 0；任务 09–11 的既有脚本无回归。
-- [ ] Win/Linux/macOS 三平台 Debug/Release 构建通过，Debug 构建（ASAN / `/RTC`）无内存错误与泄漏报告（循环上下文栈与暂存列表在编译结束与错误路径均释放，`msCloseState` 后无残余分配计数）；构建产物只落在 `build/`。
-- [ ] 无 TBD/TODO 占位；对任务 07 的接口假定（`struct MsCompiler`、`msCompileStmt`/`msCompileExpr`、隐藏槽分配钩子）在实现时已按任务 07 文档对齐，对任务 08 的 `CMP_CHAIN` IS/IN 扩展已与其 VM 分支对齐。
+- [x] `if`/`else if`/`else`、`while`、裸 `for`、三段式 `for`、`break`/`continue`、条件表达式、链式比较的生成模式与本文「详细设计」一致；生产改动限编译器及 VM 既有比较分派，新增编译辅助函数为文件内 `static`，遵循 10-c-style。
+- [x] 跳转统一经占位发射 + `msProtoPatchSAx` 回填，sAx 偏移约定（相对下一条指令）与任务 05/08 一致；无条件 `JUMP` 跳转到下一条指令时改写为 `MS_OP_NOP`，条件跳转不改写。
+- [x] 循环上下文栈按需动态增长；`break` 跳到最内层循环末尾；`continue` 在 `while`/裸 `for` 中回到循环头、在三段式 `for` 中落在后置语句之前（`i++` 必执行）。
+- [x] 直接链按 `CMP_CHAIN` 约定生成并接纳 IS/IN；含 `is not`/`not in` 的链走隐藏临时槽通用展开，非末段成功重载 right、全成功压入 true、失败压入 false；两条路径均只生成一次中间操作数求值代码并失败短路。
+- [x] `for ... in` 保持任务 26 的明确 E307 边界，n == 1 的普通比较沿用二元指令路径；普通及链式数值 `IN` 保持 TypeError，容器成员执行不在本任务范围。
+- [x] 循环外 `break`/`continue` 编译失败、CLI 退出码为 2，诊断含文件/行/列与 E209；递增/递减未声明目标、索引目标及循环变量作用域负例通过。
+- [x] `python run_tests.py --mslang build/Debug/mslang.exe` 发现含 `tests/ms/control_flow/` 在内的全部脚本并全数通过，任务 09–11 既有脚本无回归。
+- [x] 当前 Windows MSVC 主机的 Debug/Release 构建与各自完整 CTest 通过；循环、比较链和隐藏槽的 OOM/错误路径由编译器 fixture 覆盖并检查零存活分配；构建产物只落在 `build/`。
+- [x] 无 TBD/TODO 占位；实际 `MsFuncCtx`、`msCompilerCompileStmt`/`msCompilerCompileExpr`、隐藏槽分配钩子已与代码对齐，VM 的 `CMP_CHAIN` IS/IN 扩展已对齐。
+- [ ] 任务 13 后以带副作用函数精确验证中间操作数调用次数。
+- [ ] Linux/macOS Debug/Release 与 ASAN 验证；当前 Windows MSVC worktree 未执行，不作完成声明。

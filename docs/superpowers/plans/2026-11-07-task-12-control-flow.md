@@ -30,7 +30,7 @@ Run all commands from the worktree root. The clean baseline is 14/14 Debug CTest
 - Create: `tests/ms/control_flow/if_else.ms`
 - Create: `tests/ms/control_flow/cond_expr.ms`
 
-- [ ] **Step 1: Add the branch fixture**
+- [x] **Step 1: Add the branch fixture**
 
 Create `if_else.ms`:
 
@@ -74,7 +74,7 @@ assert(value == 1)
 print("if else ok")
 ```
 
-- [ ] **Step 2: Add the conditional-expression fixture**
+- [x] **Step 2: Add the conditional-expression fixture**
 
 Create `cond_expr.ms`:
 
@@ -100,7 +100,7 @@ assert((1 if false else 2) < 3)
 print("cond expr ok")
 ```
 
-- [ ] **Step 3: Run the fixtures before changing production code**
+- [x] **Step 3: Run the fixtures before changing production code**
 
 Run:
 
@@ -111,7 +111,7 @@ python run_tests.py --filter 'control_flow/cond_expr.ms'
 
 Expected: both pass because these two paths already exist. If either fails, record the actual diagnostic and make the smallest correction in the existing `msCompilerCompileIf` or `msCompilerCompileConditional`; do not rewrite working code.
 
-- [ ] **Step 4: Run regression tests and commit the coverage**
+- [x] **Step 4: Run regression tests and commit the coverage**
 
 Run:
 
@@ -139,7 +139,7 @@ If no compiler correction was needed, do not stage `src/compiler/ms_compiler.c`;
 - Create: `tests/ms/control_flow/err_break_outside.ms`, `.exit`, `.err`
 - Create: `tests/ms/control_flow/err_continue_outside.ms`, `.exit`, `.err`
 
-- [ ] **Step 1: Write the loop and loop-control fixtures**
+- [x] **Step 1: Write the loop and loop-control fixtures**
 
 Create `while_loop.ms`:
 
@@ -244,7 +244,7 @@ continue
 
 Both `.exit` files contain `2`; both `.err` files contain `error E209:`.
 
-- [ ] **Step 2: Verify the new behavior is red**
+- [x] **Step 2: Verify the new behavior is red**
 
 Run:
 
@@ -257,7 +257,7 @@ python run_tests.py --filter 'control_flow/err_*_outside.ms'
 
 Expected: the positive scripts fail with E307 or break/continue unsupported diagnostics; the two negative scripts already pass with parser E209 and exit code 2.
 
-- [ ] **Step 3: Add function-local loop storage and patch-list helpers**
+- [x] **Step 3: Add function-local loop storage and patch-list helpers**
 
 Add `#include <limits.h>` and `#include <stdint.h>` as needed. Define these private types near `MsGlobalDecl`:
 
@@ -401,7 +401,7 @@ static void msCompilerCompileContinue(struct MsCompiler* c) {
 }
 ```
 
-- [ ] **Step 4: Compile while and bare-for with structured cleanup**
+- [x] **Step 4: Compile while and bare-for with structured cleanup**
 
 Add:
 
@@ -433,11 +433,11 @@ static void msCompilerCompileBareFor(struct MsCompiler* c, const struct MsAst* n
 
 In the statement dispatcher, add `MS_AST_WHILE`, `MS_AST_BREAK`, and `MS_AST_CONTINUE` cases calling the helpers. Route `MS_FOR_BARE` to `msCompilerCompileBareFor`; keep `MS_FOR_IN` on an E307 path with message `for-in iteration belongs to task 26`.
 
-- [ ] **Step 5: Release loop storage on every function-context exit**
+- [x] **Step 5: Release loop storage on every function-context exit**
 
 In both successful `msCompilerPopFunc` cleanup and `msCompilerAbortFunc`, assert `fn->loopDepth == 0` and call `msFree(fn->loops)` before `msFree(fn)`. All loop compile functions must reach `msCompilerLoopLeave` after a successful enter, including when a child sets `c->sticky`.
 
-- [ ] **Step 6: Build and verify loop behavior**
+- [x] **Step 6: Build and verify loop behavior**
 
 Run:
 
@@ -452,7 +452,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: all selected scripts and 14/14 CTests pass, with no live-allocation increase in compiler fixtures.
 
-- [ ] **Step 7: Commit loop support**
+- [x] **Step 7: Commit loop support**
 
 ```bash
 git add src/compiler/ms_compiler.c tests/ms/control_flow
@@ -467,7 +467,7 @@ git commit -m '✨ feat(compiler): add loop control flow'
 - Modify: `src/compiler/ms_compiler.c` loop and statement helpers
 - Create: `tests/ms/control_flow/for_clause.ms`
 
-- [ ] **Step 1: Write the three-part-for fixture**
+- [x] **Step 1: Write the three-part-for fixture**
 
 Create `for_clause.ms`:
 
@@ -514,7 +514,7 @@ print("for clause ok")
 
 The second one-iteration loop proves the earlier loop variable is out of scope and can be redeclared.
 
-- [ ] **Step 2: Verify the fixture fails before implementation**
+- [x] **Step 2: Verify the fixture fails before implementation**
 
 Run:
 
@@ -524,7 +524,7 @@ python run_tests.py --filter 'control_flow/for_clause.ms'
 
 Expected: FAIL with an unsupported inc/dec statement or a repeated loop-variable declaration, depending on which old path is reached first.
 
-- [ ] **Step 3: Compile inc/dec through existing name resolution**
+- [x] **Step 3: Compile inc/dec through existing name resolution**
 
 Add:
 
@@ -550,7 +550,7 @@ static void msCompilerCompileIncDec(struct MsCompiler* c, const struct MsAst* no
 
 Dispatch `MS_AST_INC_DEC` to this helper.
 
-- [ ] **Step 4: Replace the old three-part-for skeleton**
+- [x] **Step 4: Replace the old three-part-for skeleton**
 
 Use this complete structure:
 
@@ -588,7 +588,7 @@ static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node)
 
 Do not return early between successful loop entry and loop leave. The body and post must still be visited under the sticky-error model so cleanup remains structured.
 
-- [ ] **Step 5: Verify for semantics and regressions**
+- [x] **Step 5: Verify for semantics and regressions**
 
 Run:
 
@@ -601,7 +601,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: all control-flow scripts and 14/14 CTests pass. In particular, `continue` executes `i++`, `break` skips it, and loop variables can be redeclared.
 
-- [ ] **Step 6: Commit three-part-for support**
+- [x] **Step 6: Commit three-part-for support**
 
 ```bash
 git add src/compiler/ms_compiler.c tests/ms/control_flow/for_clause.ms
@@ -617,7 +617,7 @@ git commit -m '✨ feat(compiler): complete three-part for loops'
 - Modify: `src/vm/ms_vm.c:669-704`
 - Create: `tests/ms/control_flow/chain_compare.ms`
 
-- [ ] **Step 1: Write direct-chain and short-circuit fixtures**
+- [x] **Step 1: Write direct-chain and short-circuit fixtures**
 
 Create `chain_compare.ms`:
 
@@ -638,7 +638,7 @@ print("chain compare ok")
 
 Do not add a successful `IN` script here: list/dict membership execution belongs to task 16. This task only widens the VM's chain-opcode validation to include `IN`.
 
-- [ ] **Step 2: Verify the fixture is red**
+- [x] **Step 2: Verify the fixture is red**
 
 Run:
 
@@ -648,7 +648,7 @@ python run_tests.py --filter 'control_flow/chain_compare.ms'
 
 Expected: FAIL with `comparison chains belong to task 12` before the new tests execute.
 
-- [ ] **Step 3: Add shared comparison mapping**
+- [x] **Step 3: Add shared comparison mapping**
 
 Replace the local switch with file-private helpers:
 
@@ -676,7 +676,7 @@ static bool msCompilerComparisonIsNegated(MsCompareOp compare) {
 
 Keep single-segment behavior unchanged except for calling these helpers and emitting `NOT` for negated comparisons.
 
-- [ ] **Step 4: Add Bx patching and direct-chain generation**
+- [x] **Step 4: Add Bx patching and direct-chain generation**
 
 Add:
 
@@ -724,7 +724,7 @@ static void msCompilerCompileDirectChain(struct MsCompiler* c, const struct MsAs
 
 In `msCompilerCompileComparison`, validate `operands.count == opCount + 1`; route `opCount == 1` through the existing single comparison and `opCount > 1` with no negated segment through this helper. Leave negated multi-chains to Task 5, initially reporting E307 without emitting a partial expression.
 
-- [ ] **Step 5: Align VM comparison dispatch**
+- [x] **Step 5: Align VM comparison dispatch**
 
 Add `case MS_OP_IN:` beside `case MS_OP_IS:` for ordinary comparisons. Change chain validation to:
 
@@ -737,7 +737,7 @@ Add `case MS_OP_IN:` beside `case MS_OP_IS:` for ordinary comparisons. Change ch
 
 This reuses `msVmCompare`; it does not implement list/dict membership, which remains task 16.
 
-- [ ] **Step 6: Verify direct chains and regressions**
+- [x] **Step 6: Verify direct chains and regressions**
 
 Run:
 
@@ -750,7 +750,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: all selected tests pass. The `1 / 0` operand is not evaluated after the first comparison fails.
 
-- [ ] **Step 7: Commit direct comparison chains**
+- [x] **Step 7: Commit direct comparison chains**
 
 ```bash
 git add src/compiler/ms_compiler.c src/vm/ms_vm.c tests/ms/control_flow/chain_compare.ms
@@ -765,7 +765,7 @@ git commit -m '✨ feat(compiler): add short-circuit comparison chains'
 - Modify: `src/compiler/ms_compiler.c` comparison generator
 - Modify: `tests/ms/control_flow/chain_compare.ms`
 
-- [ ] **Step 1: Add negated-chain and generic-path short-circuit assertions**
+- [x] **Step 1: Add negated-chain and generic-path short-circuit assertions**
 
 Insert before the final `print` in `chain_compare.ms`:
 
@@ -778,7 +778,7 @@ assert((1 < 0 is not 1 / 0) == false)
 
 The first three prove success and result types through mixed direct/negated segments; the fourth proves the generic path also skips unevaluated operands after failure.
 
-- [ ] **Step 2: Verify the negated cases fail**
+- [x] **Step 2: Verify the negated cases fail**
 
 Run:
 
@@ -788,7 +788,7 @@ python run_tests.py --filter 'control_flow/chain_compare.ms'
 
 Expected: FAIL with the Task 4 placeholder E307 for a negated multi-segment chain.
 
-- [ ] **Step 3: Implement the generic expansion**
+- [x] **Step 3: Implement the generic expansion**
 
 Add this helper and route every multi-segment chain containing `IS_NOT` or `NOT_IN` to it:
 
@@ -842,7 +842,7 @@ static void msCompilerCompileGenericChain(struct MsCompiler* c, const struct MsA
 
 Every successful non-final iteration begins with one saved right operand; every conditional jump returns compilation to `baseDepth`. The true and false paths each push exactly one boolean before the common end.
 
-- [ ] **Step 4: Verify all comparison-chain paths**
+- [x] **Step 4: Verify all comparison-chain paths**
 
 Run:
 
@@ -855,7 +855,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 Expected: all selected tests pass and compiler fixtures report no leaked allocations.
 
-- [ ] **Step 5: Commit generic comparison chains**
+- [x] **Step 5: Commit generic comparison chains**
 
 ```bash
 git add src/compiler/ms_compiler.c tests/ms/control_flow/chain_compare.ms
@@ -870,11 +870,11 @@ git commit -m '✨ feat(compiler): support negated comparison chains'
 - Modify: `docs/superpowers/specs/2026-11-07-task-12-control-flow-design.md`
 - Modify: `docs/superpowers/plans/2026-11-07-task-12-control-flow.md`
 
-- [ ] **Step 1: Record actual behavior and verified limits**
+- [x] **Step 1: Record actual behavior and verified limits**
 
 Change task 12's status to `✅` in both task files. Check only acceptance items verified in this worktree. Preserve these boundaries: `for ... in` belongs to task 26, side-effect call counting for middle operands follows task 13, container membership execution belongs to task 16, and Linux/macOS/ASAN are not claimed on this Windows MSVC host. Mark executed plan checkboxes `[x]` and record any code-level deviation beside the affected step.
 
-- [ ] **Step 2: Check documentation consistency and formatting**
+- [x] **Step 2: Check documentation consistency and formatting**
 
 Run:
 
@@ -885,7 +885,7 @@ python tools/check_build_artifacts.py .
 
 Expected: no whitespace errors and no artifacts outside `build/`.
 
-- [ ] **Step 3: Verify Debug and Release end to end**
+- [x] **Step 3: Verify Debug and Release end to end**
 
 Run:
 
@@ -899,7 +899,9 @@ python run_tests.py --mslang build/Debug/mslang.exe
 
 Expected: both configurations build without warnings, all 14 CTests pass in each configuration, and every script passes through the direct driver. Do not claim ASAN verification on this MSVC toolchain.
 
-- [ ] **Step 4: Inspect the final diff and repository state**
+**Execution note:** `git diff --check` and the root-artifact check were clean. Windows MSVC Debug and Release built without warnings and each passed 14/14 CTests; the direct driver passed 66/66 scripts, including 14/14 control-flow scripts. Linux/macOS and ASAN were not run. Exact side-effect call counting remains task 13 follow-up, and container membership execution remains task 16.
+
+- [x] **Step 4: Inspect the final diff and repository state**
 
 Run:
 
@@ -910,7 +912,7 @@ git status --short
 
 Expected: only planned source, test, and documentation files are in the change set; build output is ignored; no unexpected files are untracked.
 
-- [ ] **Step 5: Commit completion documentation**
+- [x] **Step 5: Commit completion documentation**
 
 ```bash
 git add docs/tasks/12-control-flow.md docs/tasks/README.md docs/superpowers/specs/2026-11-07-task-12-control-flow-design.md docs/superpowers/plans/2026-11-07-task-12-control-flow.md
