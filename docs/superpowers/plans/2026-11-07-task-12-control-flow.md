@@ -901,6 +901,8 @@ Expected: both configurations build without warnings, all 14 CTests pass in each
 
 **Execution note:** `git diff --check` and the root-artifact check were clean. Windows MSVC Debug and Release built without warnings and each passed 14/14 CTests; the direct driver passed 66/66 scripts, including 14/14 control-flow scripts. Linux/macOS and ASAN were not run. Exact side-effect call counting remains task 13 follow-up, and container membership execution remains task 16.
 
+**Execution note (quality review):** The shared iterate-until-success OOM source now includes an eleven-comparison generic `IS_NOT` chain, growing its failure patch list beyond eight entries while retaining zero-live-blocks checks. Conditional exits, end jumps, and loop back edges now reset line metadata to their owning AST node before emission; focused compiler coverage exercises multiline children for every corrected site. All verification limitations above remain unchanged.
+
 - [x] **Step 4: Inspect the final diff and repository state**
 
 Run:

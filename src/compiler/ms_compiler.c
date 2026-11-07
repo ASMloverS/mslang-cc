@@ -703,6 +703,7 @@ static void msCompilerCompileConditional(struct MsCompiler* c, const struct MsAs
     c->fn->stackDepth = baseDepth;
     return;
   }
+  msProtoSetLine(&c->fn->builder, node->line);
   int elseJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
   if (c->sticky != MS_OK) {
     c->fn->stackDepth = baseDepth;
@@ -714,6 +715,7 @@ static void msCompilerCompileConditional(struct MsCompiler* c, const struct MsAs
     c->fn->stackDepth = baseDepth;
     return;
   }
+  msProtoSetLine(&c->fn->builder, node->line);
   int endJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
   if (c->sticky != MS_OK) {
     c->fn->stackDepth = baseDepth;
@@ -1394,9 +1396,11 @@ static void msCompilerCompileExpr(struct MsCompiler* c, const struct MsAst* node
 static void msCompilerCompileIf(struct MsCompiler* c, const struct MsAst* node) {
   int baseDepth = c->fn->stackDepth;
   msCompilerCompileExpr(c, node->as.ifStmt.cond);
+  msProtoSetLine(&c->fn->builder, node->line);
   int elseJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
   msCompilerCompileStmt(c, node->as.ifStmt.thenBlock);
   if (node->as.ifStmt.elseBranch != NULL) {
+    msProtoSetLine(&c->fn->builder, node->line);
     int endJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
     msCompilerPatchToCurrent(c, elseJump, baseDepth);
     msCompilerCompileStmt(c, node->as.ifStmt.elseBranch);
@@ -1413,8 +1417,10 @@ static void msCompilerCompileWhile(struct MsCompiler* c, const struct MsAst* nod
     return;
   }
   msCompilerCompileExpr(c, node->as.whileStmt.cond);
+  msProtoSetLine(&c->fn->builder, node->line);
   int exitJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
   msCompilerCompileStmt(c, node->as.whileStmt.body);
+  msProtoSetLine(&c->fn->builder, node->line);
   msCompilerEmitBackEdge(c, loopHead);
   msCompilerLoopLeave(c, exitJump, baseDepth);
 }
@@ -1426,6 +1432,7 @@ static void msCompilerCompileBareFor(struct MsCompiler* c, const struct MsAst* n
     return;
   }
   msCompilerCompileStmt(c, node->as.forStmt.body);
+  msProtoSetLine(&c->fn->builder, node->line);
   msCompilerEmitBackEdge(c, loopHead);
   msCompilerLoopLeave(c, -1, baseDepth);
 }
@@ -1451,10 +1458,12 @@ static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node)
     return;
   }
   msCompilerCompileExpr(c, node->as.forStmt.cond);
+  msProtoSetLine(&c->fn->builder, node->line);
   int exitJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
   msCompilerCompileStmt(c, node->as.forStmt.body);
   msCompilerResolveContinues(c, baseDepth);
   msCompilerCompileStmt(c, node->as.forStmt.post);
+  msProtoSetLine(&c->fn->builder, node->line);
   msCompilerEmitBackEdge(c, loopHead);
   msCompilerLoopLeave(c, exitJump, baseDepth);
   msCompilerPopScope(c);

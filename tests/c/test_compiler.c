@@ -933,6 +933,7 @@ MS_TEST(compiler, protoConstLimitReportsE309) {
 MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
   const char* source =
       "0 < 1 < 2 < 3 < 4 < 5 < 6 < 7 < 8 < 9 < 10; "
+      "0 < 1 is not 2 is not 3 is not 4 is not 5 is not 6 is not 7 is not 8 is not 9 is not 10 is not 11; "
       "while true { while true { while true { "
       "while true { while true { while true { "
       "while true { while true { while true { "
@@ -969,6 +970,60 @@ MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
   }
 }
 
+MS_TEST(compiler, controlFlowJumpLinesUseOwningNodes) {
+  MsTestFixture fix;
+  msTestCompile(&fix,
+      "if (c +\n"
+      "1) {\n"
+      "  nil;\n"
+      "} else {\n"
+      "  nil;\n"
+      "}\n"
+      "(a +\n"
+      "1) if (c +\n"
+      "1) else b;\n"
+      "while (c +\n"
+      "1) {\n"
+      "  nil;\n"
+      "}\n"
+      "for {\n"
+      "  nil;\n"
+      "}\n"
+      "for i := 0; (i < 1 +\n"
+      "1); i++ {\n"
+      "  nil;\n"
+      "}\n",
+      MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, fix.result);
+  static const uint32_t falseJumpLines[] = {1, 8, 10, 17};
+  static const uint32_t jumpLines[] = {1, 8, 10, 14, 17};
+  size_t falseJumpCount = 0;
+  size_t jumpCount = 0;
+  MS_ASSERT_TRUE(fix.proto != NULL && fix.proto->code != NULL);
+  if (fix.proto != NULL && fix.proto->code != NULL) {
+    for (int pc = 0; pc < fix.proto->codeLen; ++pc) {
+      MsOpCode op = msOpDecodeOp(fix.proto->code[pc]);
+      if (op == MS_OP_JUMP_IF_FALSE) {
+        MS_ASSERT_TRUE(falseJumpCount < sizeof(falseJumpLines) / sizeof(falseJumpLines[0]));
+        if (falseJumpCount < sizeof(falseJumpLines) / sizeof(falseJumpLines[0])) {
+          MS_ASSERT_EQ((long long)falseJumpLines[falseJumpCount],
+              (long long)msProtoLineAt(fix.proto, pc));
+        }
+        ++falseJumpCount;
+      } else if (op == MS_OP_JUMP) {
+        MS_ASSERT_TRUE(jumpCount < sizeof(jumpLines) / sizeof(jumpLines[0]));
+        if (jumpCount < sizeof(jumpLines) / sizeof(jumpLines[0])) {
+          MS_ASSERT_EQ((long long)jumpLines[jumpCount], (long long)msProtoLineAt(fix.proto, pc));
+        }
+        ++jumpCount;
+      }
+    }
+  }
+  MS_ASSERT_EQ((long long)(sizeof(falseJumpLines) / sizeof(falseJumpLines[0])), (long long)falseJumpCount);
+  MS_ASSERT_EQ((long long)(sizeof(jumpLines) / sizeof(jumpLines[0])), (long long)jumpCount);
+  msTestFixtureDestroy(&fix);
+}
+
 static const MsTestCase msTestCases[] = {
   {"Compiler.EmptyModule", testcompileremptyModule},
   {"Compiler.ScalarLiteralsAndDedup", testcompilerscalarLiteralsAndDedup},
@@ -998,6 +1053,7 @@ static const MsTestCase msTestCases[] = {
   {"Compiler.ReplPrintsOnlyLastExpression", testcompilerreplPrintsOnlyLastExpression},
   {"Compiler.AssignmentUsesResolvedStore", testcompilerassignmentUsesResolvedStore},
   {"Compiler.LineTableFollowsStatements", testcompilerlineTableFollowsStatements},
+  {"Compiler.ControlFlowJumpLinesUseOwningNodes", testcompilercontrolFlowJumpLinesUseOwningNodes},
   {"Compiler.UnsupportedAndLimitDiagnostics", testcompilerunsupportedAndLimitDiagnostics},
   {"Compiler.CallArgumentLimit", testcompilercallArgumentLimit},
   {"Compiler.DiagnosticCapStopsAtTwenty", testcompilerdiagnosticCapStopsAtTwenty},

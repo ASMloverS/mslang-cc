@@ -55,9 +55,9 @@
 所有控制流共用一组跳转助手，封装任务 05 的构建器（粘性错误经构建器汇聚，助手不单独返回错误）：
 
 ```c
-// Emits a JUMP-family instruction with placeholder sAx = 0; returns its pc
-// for later patching. op must be one of MS_OP_JUMP / MS_OP_JUMP_IF_FALSE /
-// MS_OP_JUMP_IF_TRUE / MS_OP_JUMP_IF_NIL (MS_ASSERT'd).
+// Emits caller-selected op with placeholder sAx = 0 and returns its pc. No
+// opcode-domain assertion is performed; JUMP preserves stack depth, every
+// other op decrements it, and the resulting depth is asserted nonnegative.
 static int msCompilerEmitJumpPlaceholder(struct MsCompiler* c, MsOpCode op);
 
 // Back-patches the jump at jumpPc so that it lands on the instruction that
@@ -136,13 +136,13 @@ static void msCompilerResolveContinues(struct MsCompiler* c, int expectedStackDe
 
 ```
 <cond>                        # msCompilerCompileExpr(cond)
-JUMP_IF_FALSE -> Lelse        # 占位，弹栈顶判定
+JUMP_IF_FALSE -> Lelse        # 本层占位，弹栈顶判定
 <thenBlock>                   # 块作用域进出走任务 07 钩子
-JUMP -> Lend                  # 仅当 elseBranch 非空时发射；else-if 链上每个
-                              # 分支的此跳转 pc 收集到本层局部列表，链尾统一回填
-Lelse:                        # patchToCurrent(JUMP_IF_FALSE)
-<elseBranch>                  # else 块，或嵌套 MS_AST_IF 递归（else if）
-Lend:                         # 逐一回填收集到的 JUMP
+JUMP -> Lend                  # 仅当本层 elseBranch 非空时发射
+Lelse:                        # patchToCurrent(本层 JUMP_IF_FALSE)
+<elseBranch>                  # else 块，或嵌套 MS_AST_IF 递归（else if）；
+                              # 嵌套层独立发射并回填自己的结束跳转
+Lend:                         # elseBranch 返回后立即回填本层 JUMP
 ```
 
 无 `else` 时不发射 `JUMP -> Lend`，`Lelse` 与 `Lend` 重合。条件即真值判定，不要求布尔类型（02-types §2）。
@@ -252,12 +252,12 @@ Lend:                         # 两条路径都恰留一个布尔，而非保存
 
 ### 行号登记
 
-每条语句/表达式发射首条指令前，以 AST 节点的 `line` 调 `msProtoSetLine`（任务 05 构建器的游程编码自动去重）；条件跳转与回边登记所属语句行，保证任务 08 的错误行号与将来的调试信息准确。
+每条语句/表达式发射首条指令前，以 AST 节点的 `line` 调 `msProtoSetLine`（任务 05 构建器的游程编码自动去重）。条件出口跳转、分支结束跳转与循环回边在发射前重新设置为其所属控制流节点的 `line`，避免多行子表达式或正文遗留子节点行号，保证任务 08 的错误行号与将来的调试信息准确。
 
 ## 实现步骤
 
 1. 在编译器模块内实现跳转原语四助手（占位发射、`patchToCurrent`、回边、当前 pc）与无条件 `JUMP` 的死跳转 NOP 改写。验证：临时挂接 `if` 最简路径后，`if true { print("a") }` 脚本通过。
-2. 实现 `MS_AST_IF` 生成（含 else-if 链的 JUMP 收集与链尾统一回填）。验证：`tests/ms/control_flow/if_else.ms` 全绿。
+2. 实现 `MS_AST_IF` 生成（else-if 递归编译嵌套节点，每层在自己的 else 分支返回后立即回填本层结束 JUMP）。验证：`tests/ms/control_flow/if_else.ms` 全绿。
 3. 实现循环上下文栈（动态数组 + 两个暂存列表的生命周期）与 `MS_AST_WHILE`、`MS_FOR_BARE` 生成。验证：`while_loop.ms`、`bare_for.ms` 全绿。
 4. 实现 `break`/`continue`（两类 continue 策略）与嵌套循环。验证：`break_continue.ms` 全绿。
 5. 实现三段式 `for` 骨架与 `MS_AST_INC_DEC`（含 `continues` 在后置语句位置的回填时序）。验证：`for_clause.ms` 全绿，含 `continue` 仍执行 `i++` 的用例。
@@ -277,7 +277,7 @@ Lend:                         # 两条路径都恰留一个布尔，而非保存
 - `for_clause.ms`：`i++`/`i--`、`+=` 步进、零次循环、循环变量重声明及外层同名变量遮蔽、全局索引 `=` 初始化；`break_continue.ms`：深层 if、两种循环方向嵌套、最内层语义，以及三段式 `for` 的 post 执行或跳过。
 - `cond_expr.ms`：真/假路径、右结合、算术与比较优先级；以变量条件覆盖未被常量折叠的运行期条件跳转。
 - `chain_compare.ms`：数值与 `IS` 直接链、含 `is not` 的通用链、超过八个非末段的长链；首段和后续段失败均以 `1 / 0` 验证短路。
-- `tests/c/test_compiler.c`：直接链 `CMP_CHAIN` A/Bx 与栈元数据、非法操作码预检；九层循环和超过八项的跳转列表、延迟 continue、嵌套函数清理、长链及 `index++` 的逐点 OOM 注入，迭代至成功并检查零存活分配。
+- `tests/c/test_compiler.c`：直接链 `CMP_CHAIN` A/Bx 与栈元数据、非法操作码预检；含十一段比较的 `IS_NOT` 通用链、九层循环和超过八项的跳转列表、延迟 continue、嵌套函数清理及 `index++` 的逐点 OOM 注入，迭代至成功并检查零存活分配；多行子表达式/正文下全部控制流跳转的所属节点行号。
 - 负向用例：循环外 `break`/`continue` 的 E209；`err_for_inc_dec_undeclared.ms` 的 E301、`err_for_inc_dec_indexed.ms` 的 E307；`err_for_clause_scope.ms` 的循环后未定义 `i`；`err_in_numeric.ms` 与 `err_chain_in_numeric.ms` 的普通/链式数值 `IN` TypeError。
 
 中间操作数在两条比较链路径中均只生成一次求值代码；带副作用函数的精确调用计数直证留待任务 13。`for ... in` 仍由任务 26 实现；数值 `IN` 负例只证明当前 TypeError 边界，容器成员执行仍属任务 16。
