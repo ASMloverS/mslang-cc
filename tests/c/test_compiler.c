@@ -524,6 +524,56 @@ MS_TEST(compiler, comparisonExpansion) {
     }
     msTestFixtureDestroy(&fix);
   }
+
+  MsTestFixture chain;
+  msTestCompile(&chain, "a < b < c;", MS_COMPILE_DEFAULT);
+  MS_ASSERT_EQ(MS_OK, chain.result);
+  static const MsOpCode expected[] = {
+    MS_OP_LOAD_GLOBAL, MS_OP_LOAD_GLOBAL, MS_OP_CMP_CHAIN, MS_OP_LOAD_GLOBAL,
+    MS_OP_LT, MS_OP_STORE_LOCAL, MS_OP_LOAD_NIL, MS_OP_RETURN
+  };
+  msTestAssertOps(chain.proto, expected, sizeof(expected) / sizeof(expected[0]));
+  uint32_t instruction = msTestCodeAt(chain.proto, 2);
+  MS_ASSERT_EQ(MS_OP_LT, msOpDecodeA(instruction));
+  MS_ASSERT_EQ(2, msOpDecodeBx(instruction));
+  if (chain.proto != NULL) {
+    MS_ASSERT_EQ(2, chain.proto->stackSize);
+  }
+  msTestFixtureDestroy(&chain);
+}
+
+MS_TEST(compiler, comparisonChainRejectsInvalidOp) {
+  for (size_t invalidIndex = 0; invalidIndex < 2; ++invalidIndex) {
+    MsTestFixture fix;
+    memset(&fix, 0, sizeof(fix));
+    msMemResetStats();
+    MS_ASSERT_EQ(MS_OK, msHeapInit(&fix.heap));
+    MS_ASSERT_EQ(MS_OK, msDiagListInit(&fix.diags, "test.ms"));
+    msAstArenaInit(&fix.arena);
+    const char* source = "a < b < c;";
+    msLexerInit(&fix.lexer, source, strlen(source), "test.ms", &fix.diags);
+    msParserInit(&fix.parser, &fix.lexer, &fix.arena, &fix.diags);
+    msCompilerInit(&fix.compiler, &fix.heap, &fix.diags, "test.ms", MS_COMPILE_DEFAULT);
+    fix.result = msParserParse(&fix.parser, &fix.root);
+    msLexerDestroy(&fix.lexer);
+    MS_ASSERT_EQ(MS_OK, fix.result);
+    struct MsAst* comparison = fix.root->as.block.items[0]->as.exprStmt.expr;
+    MS_ASSERT_EQ(MS_AST_COMPARE_CHAIN, comparison->kind);
+    comparison->as.compareChain.ops[invalidIndex] = (MsCompareOp)-1;
+    fix.result = msCompilerCompile(&fix.compiler, fix.root, &fix.proto);
+    MS_ASSERT_EQ(MS_ERROR_SYNTAX, fix.result);
+    MS_ASSERT_TRUE(fix.proto == NULL);
+    MS_ASSERT_EQ(1, (long long)msDiagListCount(&fix.diags));
+    const struct MsDiag* diag = NULL;
+    if (msDiagListCount(&fix.diags) > 0) {
+      diag = msDiagListAt(&fix.diags, 0);
+    }
+    MS_ASSERT_TRUE(diag != NULL);
+    if (diag != NULL) {
+      MS_ASSERT_EQ(307, (long long)diag->code);
+    }
+    msTestFixtureDestroy(&fix);
+  }
 }
 
 MS_TEST(compiler, positionalCallShape) {
@@ -883,6 +933,7 @@ MS_TEST(compiler, protoConstLimitReportsE309) {
 
 MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
   const char* source =
+      "0 < 1 < 2 < 3 < 4 < 5 < 6 < 7 < 8 < 9 < 10; "
       "while true { while true { while true { "
       "while true { while true { while true { "
       "while true { while true { while true { "
@@ -955,6 +1006,7 @@ static const MsTestCase msTestCases[] = {
   {"Compiler.LocalAndScopeLimits", testcompilerlocalAndScopeLimits},
   {"Compiler.ProtoConstLimitReportsE309", testcompilerprotoConstLimitReportsE309},
   {"Compiler.NestedProtoOomPathsHaveNoLeaks", testcompilernestedProtoOomPathsHaveNoLeaks},
+  {"Compiler.ComparisonChainRejectsInvalidOp", testcompilercomparisonChainRejectsInvalidOp},
 };
 
 MS_TEST_MAIN(msTestCases)

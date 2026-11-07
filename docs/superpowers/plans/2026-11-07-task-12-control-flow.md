@@ -701,7 +701,7 @@ Add a direct-chain helper. It must leave one result on both success and failure 
 ```c
 static void msCompilerCompileDirectChain(struct MsCompiler* c, const struct MsAst* node) {
   size_t count = node->as.compareChain.opCount;
-  struct MsJumpPatchList chains = { NULL, 0, 0 };
+  struct MsJumpPatchList chains = { .pcs = NULL, .count = 0, .cap = 0 };
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[1]);
   for (size_t i = 0; i + 1 < count && c->sticky == MS_OK; ++i) {
@@ -757,6 +757,8 @@ git add src/compiler/ms_compiler.c src/vm/ms_vm.c tests/ms/control_flow/chain_co
 git commit -m '✨ feat(compiler): add short-circuit comparison chains'
 ```
 
+**Execution note (quality review):** The VM numeric fast path is restricted to `EQ`, `NE`, `LT`, `LE`, `GT`, and `GE`; numeric `IN` falls through to `msObjectBinaryOp` and reports TypeError until task 16 implements membership. Negative scripts cover ordinary and chained `1 in 2`. Additional coverage exercises malformed operator prevalidation, CMP_CHAIN A/Bx and stack metadata, more than eight non-final segments, a later-segment short circuit, and chain-list allocation/cleanup in the iterate-until-success OOM compiler fixture. Direct and generic chain patch-list snippets use designated initializers.
+
 ### Task 5: Compile negated chains with a hidden local
 
 **Files:**
@@ -796,7 +798,7 @@ static void msCompilerCompileGenericChain(struct MsCompiler* c, const struct MsA
   int baseDepth = c->fn->stackDepth;
   int savedLocals = c->fn->scope.localCount;
   int slot = msCompilerAllocHiddenLocal(c);
-  struct MsJumpPatchList failures = { NULL, 0, 0 };
+  struct MsJumpPatchList failures = { .pcs = NULL, .count = 0, .cap = 0 };
   if (slot < 0) {
     return;
   }

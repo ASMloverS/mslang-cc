@@ -774,7 +774,7 @@ static void msCompilerPatchChainToCurrent(struct MsCompiler* c, int chainPc) {
 
 static void msCompilerCompileDirectChain(struct MsCompiler* c, const struct MsAst* node) {
   size_t count = node->as.compareChain.opCount;
-  struct MsJumpPatchList chains = { NULL, 0, 0 };
+  struct MsJumpPatchList chains = { .pcs = NULL, .count = 0, .cap = 0 };
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[1]);
   for (size_t i = 0; i + 1 < count && c->sticky == MS_OK; ++i) {
@@ -802,6 +802,10 @@ static void msCompilerCompileComparison(struct MsCompiler* c, const struct MsAst
   }
   if (count > 1) {
     for (size_t i = 0; i < count; ++i) {
+      if (msCompilerComparisonOpcode(node->as.compareChain.ops[i]) == MS_OP_COUNT) {
+        msCompilerFail(c, node, MS_ERROR_SYNTAX, 307, "comparison operator is not implemented");
+        return;
+      }
       if (msCompilerComparisonIsNegated(node->as.compareChain.ops[i])) {
         msCompilerFail(c, node, MS_ERROR_SYNTAX, 307, "negated comparison chains belong to task 5");
         return;

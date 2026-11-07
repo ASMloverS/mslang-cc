@@ -480,7 +480,7 @@ static MsResult msVmCompare(MsState* L, struct MsCoroutine* co, const struct MsC
     *out = lhs == rhs;
     return MS_OK;
   }
-  if (msVmIsNumeric(lhs) && msVmIsNumeric(rhs)) {
+  if (op >= MS_OP_EQ && op <= MS_OP_GE && msVmIsNumeric(lhs) && msVmIsNumeric(rhs)) {
     *out = msVmCompareNumeric(op, lhs, rhs);
     return MS_OK;
   }
