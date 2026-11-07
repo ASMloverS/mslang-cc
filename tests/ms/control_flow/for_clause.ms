@@ -19,6 +19,21 @@ for i := 0; i < 0; i++ {
 for i := 0; i < 1; i++ {
     pass
 }
+i := 99
+for i := 0; i < 1; i++ {
+    assert(i == 0)
+}
+assert(i == 99)
+for i = 0; i < 5; i++ {
+    continue
+}
+assert(i == 5)
+for i = 0; i < 10; i++ {
+    if i == 4 {
+        break
+    }
+}
+assert(i == 4)
 oddSum := 0
 for i := 0; i < 10; i++ {
     if i % 2 == 0 {

@@ -886,7 +886,7 @@ MS_TEST(compiler, nestedProtoOomPathsHaveNoLeaks) {
       "while true { while true { while true { "
       "while true { while true { while true { "
       "while true { while true { while true { "
-      "for index := 0; index < 1; index += 1 { "
+      "for index := 0; index < 1; index++ { "
       "if true { break; } if true { break; } if true { break; } "
       "if true { break; } if true { break; } if true { break; } "
       "if true { break; } if true { break; } if true { break; } "

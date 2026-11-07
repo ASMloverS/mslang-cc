@@ -608,6 +608,8 @@ git add src/compiler/ms_compiler.c tests/ms/control_flow/for_clause.ms
 git commit -m '✨ feat(compiler): complete three-part for loops'
 ```
 
+**Execution note:** Follow-up coverage drives the nested-proto OOM fixture through `index++` with iterate-until-success and zero-live-blocks checks; adds E301/E307 inc/dec diagnostics and post-loop undefined-`i` scope coverage; verifies shadowing preserves the outer `i`; and uses global-index continue/break loops with `=` init and `i++` posts to prove post execution and skipping.
+
 ### Task 4: Emit direct comparison chains and align VM opcodes
 
 **Files:**
