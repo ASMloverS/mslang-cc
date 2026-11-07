@@ -1,7 +1,9 @@
 #include "compiler/ms_compiler.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,10 +19,24 @@
 #include "vm/ms_state_internal.h"
 
 #define MS_COMPILER_MAX_NODE_DEPTH 512
+#define MS_COMPILER_LOOP_INIT_CAP 8
 
 struct MsGlobalDecl {
   struct MsGlobalDecl* next;
   struct MsString* name;
+};
+
+struct MsJumpPatchList {
+  int* pcs;
+  int count;
+  int cap;
+};
+
+struct MsLoopContext {
+  int loopHead;
+  struct MsJumpPatchList breaks;
+  struct MsJumpPatchList continues;
+  bool continueIsHead;
 };
 
 struct MsFuncCtx {
@@ -30,6 +46,9 @@ struct MsFuncCtx {
   const struct MsAst* currentNode;
   struct MsScopeCtx scope;
   struct MsGlobalDecl* pendingGlobalDecls;
+  struct MsLoopContext* loops;
+  int loopDepth;
+  int loopCap;
   int stackDepth;
   int stackMax;
   bool isModule;
@@ -131,6 +150,117 @@ static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc, int expec
   MsResult result = msProtoPatchSAx(&fn->builder, jumpPc, target - (jumpPc + 1));
   if (result != MS_OK) {
     msCompilerSyncBuilder(c);
+  }
+}
+
+static void msCompilerEmitBackEdge(struct MsCompiler* c, int targetPc) {
+  int jumpPc = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+  if (jumpPc < 0 || c->sticky != MS_OK) {
+    return;
+  }
+  MsResult result = msProtoPatchSAx(&c->fn->builder, jumpPc, targetPc - (jumpPc + 1));
+  if (result != MS_OK) {
+    msCompilerSyncBuilder(c);
+  }
+}
+
+static void msCompilerPatchListDestroy(struct MsJumpPatchList* list) {
+  msFree(list->pcs);
+  memset(list, 0, sizeof(*list));
+}
+
+static bool msCompilerPatchListAppend(struct MsCompiler* c, struct MsJumpPatchList* list, int pc) {
+  if (pc < 0 || c->sticky != MS_OK) {
+    return false;
+  }
+  if (list->count == list->cap) {
+    if (list->cap > INT_MAX / 2) {
+      msCompilerFail(c, c->fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+      return false;
+    }
+    int newCap = list->cap == 0 ? MS_COMPILER_LOOP_INIT_CAP : list->cap * 2;
+    if ((size_t)newCap > SIZE_MAX / sizeof(*list->pcs)) {
+      msCompilerFail(c, c->fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+      return false;
+    }
+    int* pcs = msRealloc(list->pcs, (size_t)newCap * sizeof(*pcs));
+    if (pcs == NULL) {
+      msCompilerFail(c, c->fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+      return false;
+    }
+    list->pcs = pcs;
+    list->cap = newCap;
+  }
+  list->pcs[list->count++] = pc;
+  return true;
+}
+
+static bool msCompilerLoopEnter(struct MsCompiler* c, int loopHead, bool continueIsHead) {
+  struct MsFuncCtx* fn = c->fn;
+  if (fn->loopDepth == fn->loopCap) {
+    if (fn->loopCap > INT_MAX / 2) {
+      msCompilerFail(c, fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+      return false;
+    }
+    int newCap = fn->loopCap == 0 ? MS_COMPILER_LOOP_INIT_CAP : fn->loopCap * 2;
+    if ((size_t)newCap > SIZE_MAX / sizeof(*fn->loops)) {
+      msCompilerFail(c, fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+      return false;
+    }
+    struct MsLoopContext* loops = msRealloc(fn->loops, (size_t)newCap * sizeof(*loops));
+    if (loops == NULL) {
+      msCompilerFail(c, fn->currentNode, MS_ERROR_OOM, 0, "out of memory");
+      return false;
+    }
+    fn->loops = loops;
+    fn->loopCap = newCap;
+  }
+  struct MsLoopContext* loop = &fn->loops[fn->loopDepth++];
+  memset(loop, 0, sizeof(*loop));
+  loop->loopHead = loopHead;
+  loop->continueIsHead = continueIsHead;
+  return true;
+}
+
+static void msCompilerResolveContinues(struct MsCompiler* c, int expectedStackDepth) {
+  struct MsLoopContext* loop = &c->fn->loops[c->fn->loopDepth - 1];
+  MS_ASSERT(!loop->continueIsHead);
+  for (int i = 0; i < loop->continues.count; ++i) {
+    msCompilerPatchToCurrent(c, loop->continues.pcs[i], expectedStackDepth);
+  }
+  msCompilerPatchListDestroy(&loop->continues);
+}
+
+static void msCompilerLoopLeave(struct MsCompiler* c, int exitJump, int expectedStackDepth) {
+  struct MsFuncCtx* fn = c->fn;
+  MS_ASSERT(fn->loopDepth > 0);
+  struct MsLoopContext* loop = &fn->loops[fn->loopDepth - 1];
+  MS_ASSERT(loop->continues.count == 0);
+  if (exitJump >= 0) {
+    msCompilerPatchToCurrent(c, exitJump, expectedStackDepth);
+  }
+  for (int i = 0; i < loop->breaks.count; ++i) {
+    msCompilerPatchToCurrent(c, loop->breaks.pcs[i], expectedStackDepth);
+  }
+  msCompilerPatchListDestroy(&loop->breaks);
+  msCompilerPatchListDestroy(&loop->continues);
+  --fn->loopDepth;
+}
+
+static void msCompilerCompileBreak(struct MsCompiler* c) {
+  MS_ASSERT(c->fn->loopDepth > 0);
+  int jump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+  msCompilerPatchListAppend(c, &c->fn->loops[c->fn->loopDepth - 1].breaks, jump);
+}
+
+static void msCompilerCompileContinue(struct MsCompiler* c) {
+  MS_ASSERT(c->fn->loopDepth > 0);
+  struct MsLoopContext* loop = &c->fn->loops[c->fn->loopDepth - 1];
+  if (loop->continueIsHead) {
+    msCompilerEmitBackEdge(c, loop->loopHead);
+  } else {
+    int jump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+    msCompilerPatchListAppend(c, &loop->continues, jump);
   }
 }
 
@@ -1147,26 +1277,52 @@ static void msCompilerCompileIf(struct MsCompiler* c, const struct MsAst* node) 
   }
 }
 
+static void msCompilerCompileWhile(struct MsCompiler* c, const struct MsAst* node) {
+  int baseDepth = c->fn->stackDepth;
+  int loopHead = msCompilerCurrentPc(c);
+  if (!msCompilerLoopEnter(c, loopHead, true)) {
+    return;
+  }
+  msCompilerCompileExpr(c, node->as.whileStmt.cond);
+  int exitJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
+  msCompilerCompileStmt(c, node->as.whileStmt.body);
+  msCompilerEmitBackEdge(c, loopHead);
+  msCompilerLoopLeave(c, exitJump, baseDepth);
+}
+
+static void msCompilerCompileBareFor(struct MsCompiler* c, const struct MsAst* node) {
+  int baseDepth = c->fn->stackDepth;
+  int loopHead = msCompilerCurrentPc(c);
+  if (!msCompilerLoopEnter(c, loopHead, true)) {
+    return;
+  }
+  msCompilerCompileStmt(c, node->as.forStmt.body);
+  msCompilerEmitBackEdge(c, loopHead);
+  msCompilerLoopLeave(c, -1, baseDepth);
+}
+
 static void msCompilerCompileFor(struct MsCompiler* c, const struct MsAst* node) {
-  if (node->as.forStmt.forKind != MS_FOR_CLAUSE) {
-    msCompilerReport(c, node, 307, "only three-part for is implemented in task 09");
+  if (node->as.forStmt.forKind == MS_FOR_IN) {
+    msCompilerReport(c, node, 307, "for-in iteration belongs to task 26");
+    return;
+  }
+  if (node->as.forStmt.forKind == MS_FOR_BARE) {
+    msCompilerCompileBareFor(c, node);
     return;
   }
   msCompilerCompileStmt(c, node->as.forStmt.init);
   int loopHead = msCompilerCurrentPc(c);
   int baseDepth = c->fn->stackDepth;
+  if (!msCompilerLoopEnter(c, loopHead, false)) {
+    return;
+  }
   msCompilerCompileExpr(c, node->as.forStmt.cond);
   int exitJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
   msCompilerCompileStmt(c, node->as.forStmt.body);
+  msCompilerResolveContinues(c, baseDepth);
   msCompilerCompileStmt(c, node->as.forStmt.post);
-  int backJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
-  if (backJump >= 0 && c->sticky == MS_OK) {
-    MsResult result = msProtoPatchSAx(&c->fn->builder, backJump, loopHead - (backJump + 1));
-    if (result != MS_OK) {
-      msCompilerSyncBuilder(c);
-    }
-  }
-  msCompilerPatchToCurrent(c, exitJump, baseDepth);
+  msCompilerEmitBackEdge(c, loopHead);
+  msCompilerLoopLeave(c, exitJump, baseDepth);
 }
 
 static void msCompilerCompileGlobal(struct MsCompiler* c, const struct MsAst* node) {
@@ -1240,6 +1396,9 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
     case MS_AST_IF:
       msCompilerCompileIf(c, node);
       break;
+    case MS_AST_WHILE:
+      msCompilerCompileWhile(c, node);
+      break;
     case MS_AST_FOR:
       msCompilerCompileFor(c, node);
       break;
@@ -1247,6 +1406,12 @@ static void msCompilerCompileStmt(struct MsCompiler* c, const struct MsAst* node
       msCompilerCompileGlobal(c, node);
       break;
     case MS_AST_PASS:
+      break;
+    case MS_AST_BREAK:
+      msCompilerCompileBreak(c);
+      break;
+    case MS_AST_CONTINUE:
+      msCompilerCompileContinue(c);
       break;
     case MS_AST_RETURN:
       msCompilerCompileReturn(c, node);
@@ -1268,6 +1433,8 @@ static void msCompilerAbortFunc(struct MsCompiler* c) {
   msProtoBuilderDestroy(&fn->builder);
   msCompilerFreePendingGlobalDecls(fn);
   msScopeCtxDestroy(&fn->scope);
+  MS_ASSERT(fn->loopDepth == 0);
+  msFree(fn->loops);
   msFree(fn);
 }
 
@@ -1335,6 +1502,8 @@ static MsResult msCompilerPopFunc(struct MsCompiler* c, struct MsProto** out) {
     c->fn = fn->parent;
     msCompilerFreePendingGlobalDecls(fn);
     msScopeCtxDestroy(&fn->scope);
+    MS_ASSERT(fn->loopDepth == 0);
+    msFree(fn->loops);
     msFree(fn);
     *out = proto;
     return MS_OK;
