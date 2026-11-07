@@ -1,0 +1,12 @@
+assert(1 < 2 < 3)
+assert((1 < 2 > 3) == false)
+assert(3 > 2 > 1)
+assert(1 == 1 == 1)
+assert(1 < 2 <= 2)
+value := 5
+assert(1 < value < 10)
+assert(-2 < -1 < 0 < 1 < 2)
+assert(nil is nil is nil)
+assert((nil is nil is false) == false)
+assert((2 < 1 < 1 / 0) == false)
+print("chain compare ok")

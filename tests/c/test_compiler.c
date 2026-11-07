@@ -723,7 +723,7 @@ MS_TEST(compiler, unsupportedAndLimitDiagnostics) {
     uint32_t column;
   } cases[] = {
     {"b\"x\";", 307, 1},
-    {"a < b < c;", 307, 3},
+    {"a < b is not c;", 307, 3},
     {"f(x = 1);", 307, 2},
     {"func f() { return 1, 2; }", 307, 12}
   };

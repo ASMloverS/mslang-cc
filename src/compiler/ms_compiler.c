@@ -738,35 +738,88 @@ static void msCompilerCompileConditional(struct MsCompiler* c, const struct MsAs
   }
 }
 
+static MsOpCode msCompilerComparisonOpcode(MsCompareOp compare) {
+  switch (compare) {
+    case MS_CMP_LT: return MS_OP_LT;
+    case MS_CMP_LE: return MS_OP_LE;
+    case MS_CMP_GT: return MS_OP_GT;
+    case MS_CMP_GE: return MS_OP_GE;
+    case MS_CMP_EQ: return MS_OP_EQ;
+    case MS_CMP_NE: return MS_OP_NE;
+    case MS_CMP_IN:
+    case MS_CMP_NOT_IN: return MS_OP_IN;
+    case MS_CMP_IS:
+    case MS_CMP_IS_NOT: return MS_OP_IS;
+    default: return MS_OP_COUNT;
+  }
+}
+
+static bool msCompilerComparisonIsNegated(MsCompareOp compare) {
+  return compare == MS_CMP_NOT_IN || compare == MS_CMP_IS_NOT;
+}
+
+static void msCompilerPatchChainToCurrent(struct MsCompiler* c, int chainPc) {
+  if (chainPc < 0 || c->sticky != MS_OK) {
+    return;
+  }
+  int offset = msCompilerCurrentPc(c) - (chainPc + 1);
+  if (offset < 0 || offset > UINT16_MAX) {
+    msCompilerFail(c, c->fn->currentNode, MS_ERROR_SYNTAX, 309, "comparison chain size limit exceeded");
+    return;
+  }
+  uint32_t* instruction = &c->fn->builder.proto.code[chainPc];
+  MS_ASSERT(msOpDecodeOp(*instruction) == MS_OP_CMP_CHAIN);
+  *instruction = msOpEncodeABC(MS_OP_CMP_CHAIN, msOpDecodeA(*instruction), (uint16_t)offset);
+}
+
+static void msCompilerCompileDirectChain(struct MsCompiler* c, const struct MsAst* node) {
+  size_t count = node->as.compareChain.opCount;
+  struct MsJumpPatchList chains = { NULL, 0, 0 };
+  msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
+  msCompilerCompileExpr(c, node->as.compareChain.operands.items[1]);
+  for (size_t i = 0; i + 1 < count && c->sticky == MS_OK; ++i) {
+    int chain = msCompilerEmitABC(c, MS_OP_CMP_CHAIN,
+        (uint8_t)msCompilerComparisonOpcode(node->as.compareChain.ops[i]), 0, -1);
+    if (!msCompilerPatchListAppend(c, &chains, chain)) {
+      break;
+    }
+    msCompilerCompileExpr(c, node->as.compareChain.operands.items[i + 2]);
+  }
+  if (c->sticky == MS_OK) {
+    msCompilerEmitABC(c, msCompilerComparisonOpcode(node->as.compareChain.ops[count - 1]), 0, 0, -1);
+  }
+  for (int i = 0; i < chains.count; ++i) {
+    msCompilerPatchChainToCurrent(c, chains.pcs[i]);
+  }
+  msCompilerPatchListDestroy(&chains);
+}
+
 static void msCompilerCompileComparison(struct MsCompiler* c, const struct MsAst* node) {
-  if (node->as.compareChain.opCount != 1 || node->as.compareChain.operands.count != 2) {
-    msCompilerReport(c, node, 307, "comparison chains belong to task 12");
-    msCompilerEmitABC(c, MS_OP_LOAD_NIL, 0, 0, 1);
+  size_t count = node->as.compareChain.opCount;
+  if (count == 0 || node->as.compareChain.operands.count != count + 1) {
+    msCompilerReport(c, node, 307, "invalid comparison chain");
+    return;
+  }
+  if (count > 1) {
+    for (size_t i = 0; i < count; ++i) {
+      if (msCompilerComparisonIsNegated(node->as.compareChain.ops[i])) {
+        msCompilerFail(c, node, MS_ERROR_SYNTAX, 307, "negated comparison chains belong to task 5");
+        return;
+      }
+    }
+    msCompilerCompileDirectChain(c, node);
     return;
   }
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[1]);
   MsCompareOp compare = node->as.compareChain.ops[0];
-  MsOpCode op = MS_OP_COUNT;
-  switch (compare) {
-    case MS_CMP_LT: op = MS_OP_LT; break;
-    case MS_CMP_LE: op = MS_OP_LE; break;
-    case MS_CMP_GT: op = MS_OP_GT; break;
-    case MS_CMP_GE: op = MS_OP_GE; break;
-    case MS_CMP_EQ: op = MS_OP_EQ; break;
-    case MS_CMP_NE: op = MS_OP_NE; break;
-    case MS_CMP_IN:
-    case MS_CMP_NOT_IN: op = MS_OP_IN; break;
-    case MS_CMP_IS:
-    case MS_CMP_IS_NOT: op = MS_OP_IS; break;
-    default: break;
-  }
+  MsOpCode op = msCompilerComparisonOpcode(compare);
   if (op == MS_OP_COUNT) {
     msCompilerReport(c, node, 307, "comparison operator is not implemented");
     return;
   }
   msCompilerEmitABC(c, op, 0, 0, -1);
-  if (compare == MS_CMP_NOT_IN || compare == MS_CMP_IS_NOT) {
+  if (msCompilerComparisonIsNegated(compare)) {
     msCompilerEmitABC(c, MS_OP_NOT, 0, 0, 0);
   }
 }

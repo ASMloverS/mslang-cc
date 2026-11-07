@@ -672,7 +672,8 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
       case MS_OP_LE:
       case MS_OP_GT:
       case MS_OP_GE:
-      case MS_OP_IS: {
+      case MS_OP_IS:
+      case MS_OP_IN: {
         bool compared = false;
         result = msVmCompare(L, co, frame, msOpDecodeOp(instr), &compared);
         if (result == MS_OK) {
@@ -682,7 +683,7 @@ MsResult msVmRun(MsState* L, struct MsCoroutine* co, int stopAt) {
       }
       case MS_OP_CMP_CHAIN: {
         MsOpCode op = (MsOpCode)msOpDecodeA(instr);
-        if (op < MS_OP_EQ || op > MS_OP_GE) {
+        if (op < MS_OP_EQ || op > MS_OP_IN) {
           result = msVmErrorAt(L, frame, "invalid comparison chain opcode");
           break;
         }
