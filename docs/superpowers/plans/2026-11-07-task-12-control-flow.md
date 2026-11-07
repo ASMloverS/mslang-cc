@@ -903,6 +903,8 @@ Expected: both configurations build without warnings, all 14 CTests pass in each
 
 **Execution note (quality review):** The shared iterate-until-success OOM source now includes an eleven-comparison generic `IS_NOT` chain, growing its failure patch list beyond eight entries while retaining zero-live-blocks checks. Conditional exits, end jumps, and loop back edges now reset line metadata to their owning AST node before emission; focused compiler coverage exercises multiline children for every corrected site. All verification limitations above remain unchanged.
 
+**Execution note (final review):** Direct `CMP_CHAIN` and final comparison instructions, plus generic-chain failure and end jumps, now reset owning-node line metadata before emission. The focused fixture asserts exact lines for multiline direct and generic chains; platform and future-task limitations remain unchanged.
+
 - [x] **Step 4: Inspect the final diff and repository state**
 
 Run:

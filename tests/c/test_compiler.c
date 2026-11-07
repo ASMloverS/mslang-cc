@@ -992,13 +992,22 @@ MS_TEST(compiler, controlFlowJumpLinesUseOwningNodes) {
       "for i := 0; (i < 1 +\n"
       "1); i++ {\n"
       "  nil;\n"
-      "}\n",
+      "}\n"
+      "0 <\n"
+      "1 <\n"
+      "2;\n"
+      "0 <\n"
+      "1 is not\n"
+      "2 is not\n"
+      "3;\n",
       MS_COMPILE_DEFAULT);
   MS_ASSERT_EQ(MS_OK, fix.result);
-  static const uint32_t falseJumpLines[] = {1, 8, 10, 17};
-  static const uint32_t jumpLines[] = {1, 8, 10, 14, 17};
+  static const uint32_t falseJumpLines[] = {1, 8, 10, 17, 24, 24, 24};
+  static const uint32_t jumpLines[] = {1, 8, 10, 14, 17, 24};
   size_t falseJumpCount = 0;
   size_t jumpCount = 0;
+  size_t directChainCount = 0;
+  int directChainPc = -1;
   MS_ASSERT_TRUE(fix.proto != NULL && fix.proto->code != NULL);
   if (fix.proto != NULL && fix.proto->code != NULL) {
     for (int pc = 0; pc < fix.proto->codeLen; ++pc) {
@@ -1016,11 +1025,21 @@ MS_TEST(compiler, controlFlowJumpLinesUseOwningNodes) {
           MS_ASSERT_EQ((long long)jumpLines[jumpCount], (long long)msProtoLineAt(fix.proto, pc));
         }
         ++jumpCount;
+      } else if (op == MS_OP_CMP_CHAIN) {
+        MS_ASSERT_EQ(21, (long long)msProtoLineAt(fix.proto, pc));
+        ++directChainCount;
+        directChainPc = pc;
       }
     }
   }
   MS_ASSERT_EQ((long long)(sizeof(falseJumpLines) / sizeof(falseJumpLines[0])), (long long)falseJumpCount);
   MS_ASSERT_EQ((long long)(sizeof(jumpLines) / sizeof(jumpLines[0])), (long long)jumpCount);
+  MS_ASSERT_EQ(1, (long long)directChainCount);
+  MS_ASSERT_TRUE(fix.proto != NULL && directChainPc >= 0 && directChainPc + 2 < fix.proto->codeLen);
+  if (fix.proto != NULL && directChainPc >= 0 && directChainPc + 2 < fix.proto->codeLen) {
+    MS_ASSERT_EQ(MS_OP_LT, msOpDecodeOp(msTestCodeAt(fix.proto, directChainPc + 2)));
+    MS_ASSERT_EQ(21, (long long)msProtoLineAt(fix.proto, directChainPc + 2));
+  }
   msTestFixtureDestroy(&fix);
 }
 

@@ -780,6 +780,7 @@ static void msCompilerCompileDirectChain(struct MsCompiler* c, const struct MsAs
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[1]);
   for (size_t i = 0; i + 1 < count && c->sticky == MS_OK; ++i) {
+    msProtoSetLine(&c->fn->builder, node->line);
     int chain = msCompilerEmitABC(c, MS_OP_CMP_CHAIN,
         (uint8_t)msCompilerComparisonOpcode(node->as.compareChain.ops[i]), 0, -1);
     if (!msCompilerPatchListAppend(c, &chains, chain)) {
@@ -788,6 +789,7 @@ static void msCompilerCompileDirectChain(struct MsCompiler* c, const struct MsAs
     msCompilerCompileExpr(c, node->as.compareChain.operands.items[i + 2]);
   }
   if (c->sticky == MS_OK) {
+    msProtoSetLine(&c->fn->builder, node->line);
     msCompilerEmitABC(c, msCompilerComparisonOpcode(node->as.compareChain.ops[count - 1]), 0, 0, -1);
   }
   for (int i = 0; i < chains.count; ++i) {
@@ -822,6 +824,7 @@ static void msCompilerCompileGenericChain(struct MsCompiler* c, const struct MsA
     if (msCompilerComparisonIsNegated(node->as.compareChain.ops[i])) {
       msCompilerEmitABC(c, MS_OP_NOT, 0, 0, 0);
     }
+    msProtoSetLine(&c->fn->builder, node->line);
     int failure = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
     if (!msCompilerPatchListAppend(c, &failures, failure)) {
       break;
@@ -830,6 +833,7 @@ static void msCompilerCompileGenericChain(struct MsCompiler* c, const struct MsA
   if (c->sticky == MS_OK) {
     msCompilerEmitABC(c, MS_OP_LOAD_TRUE, 0, 0, 1);
   }
+  msProtoSetLine(&c->fn->builder, node->line);
   int endJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
   c->fn->stackDepth = baseDepth;
   for (int i = 0; i < failures.count; ++i) {
