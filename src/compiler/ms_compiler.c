@@ -794,6 +794,56 @@ static void msCompilerCompileDirectChain(struct MsCompiler* c, const struct MsAs
   msCompilerPatchListDestroy(&chains);
 }
 
+static void msCompilerCompileGenericChain(struct MsCompiler* c, const struct MsAst* node) {
+  size_t count = node->as.compareChain.opCount;
+  int baseDepth = c->fn->stackDepth;
+  int savedLocals = c->fn->scope.localCount;
+  int slot = msCompilerAllocHiddenLocal(c);
+  struct MsJumpPatchList failures = {
+    .pcs = NULL,
+    .count = 0,
+    .cap = 0,
+  };
+  if (slot < 0) {
+    return;
+  }
+  for (size_t i = 0; i < count && c->sticky == MS_OK; ++i) {
+    if (i == 0) {
+      msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
+    } else {
+      msCompilerEmitABC(c, MS_OP_LOAD_LOCAL, (uint8_t)slot, 0, 1);
+    }
+    msCompilerCompileExpr(c, node->as.compareChain.operands.items[i + 1]);
+    msCompilerEmitABC(c, MS_OP_STORE_LOCAL, (uint8_t)slot, 0, -1);
+    msCompilerEmitABC(c, MS_OP_LOAD_LOCAL, (uint8_t)slot, 0, 1);
+    msCompilerEmitABC(c, msCompilerComparisonOpcode(node->as.compareChain.ops[i]), 0, 0, -1);
+    if (msCompilerComparisonIsNegated(node->as.compareChain.ops[i])) {
+      msCompilerEmitABC(c, MS_OP_NOT, 0, 0, 0);
+    }
+    int failure = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP_IF_FALSE);
+    if (!msCompilerPatchListAppend(c, &failures, failure)) {
+      break;
+    }
+  }
+  if (c->sticky == MS_OK) {
+    msCompilerEmitABC(c, MS_OP_LOAD_TRUE, 0, 0, 1);
+  }
+  int endJump = msCompilerEmitJumpPlaceholder(c, MS_OP_JUMP);
+  c->fn->stackDepth = baseDepth;
+  for (int i = 0; i < failures.count; ++i) {
+    msCompilerPatchToCurrent(c, failures.pcs[i], baseDepth);
+  }
+  if (c->sticky == MS_OK) {
+    msCompilerEmitABC(c, MS_OP_LOAD_FALSE, 0, 0, 1);
+  }
+  msCompilerPatchToCurrent(c, endJump, baseDepth + 1);
+  msCompilerPatchListDestroy(&failures);
+  c->fn->scope.localCount = savedLocals;
+  if (c->sticky != MS_OK) {
+    c->fn->stackDepth = baseDepth;
+  }
+}
+
 static void msCompilerCompileComparison(struct MsCompiler* c, const struct MsAst* node) {
   size_t count = node->as.compareChain.opCount;
   if (count == 0 || node->as.compareChain.operands.count != count + 1) {
@@ -801,17 +851,21 @@ static void msCompilerCompileComparison(struct MsCompiler* c, const struct MsAst
     return;
   }
   if (count > 1) {
+    bool hasNegated = false;
     for (size_t i = 0; i < count; ++i) {
       if (msCompilerComparisonOpcode(node->as.compareChain.ops[i]) == MS_OP_COUNT) {
         msCompilerFail(c, node, MS_ERROR_SYNTAX, 307, "comparison operator is not implemented");
         return;
       }
       if (msCompilerComparisonIsNegated(node->as.compareChain.ops[i])) {
-        msCompilerFail(c, node, MS_ERROR_SYNTAX, 307, "negated comparison chains belong to task 5");
-        return;
+        hasNegated = true;
       }
     }
-    msCompilerCompileDirectChain(c, node);
+    if (hasNegated) {
+      msCompilerCompileGenericChain(c, node);
+    } else {
+      msCompilerCompileDirectChain(c, node);
+    }
     return;
   }
   msCompilerCompileExpr(c, node->as.compareChain.operands.items[0]);
