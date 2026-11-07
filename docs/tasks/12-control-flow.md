@@ -69,7 +69,7 @@ static void msCompilerPatchToCurrent(struct MsCompiler* c, int jumpPc, int expec
 static void msCompilerEmitBackEdge(struct MsCompiler* c, int targetPc);
 
 // Current pc (next instruction index) of the proto under construction.
-static int msCompilerCurrentPc(struct MsCompiler* c);
+static int msCompilerCurrentPc(const struct MsCompiler* c);
 ```
 
 条件跳转（`JUMP_IF_FALSE` 等）弹栈顶判定，故编译条件表达式后栈上恰好留一个待弹值，每个分支入口的栈深度一致——这是各生成模式共同的栈平衡不变量。回填助手的 `expectedStackDepth` 用 `MS_ASSERT` 校验该不变量。
